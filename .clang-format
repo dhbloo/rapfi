@@ -1,0 +1,89 @@
+---
+# Common settings
+BasedOnStyle: LLVM
+IndentWidth: '4'
+TabWidth: '4'
+UseTab: Never
+ColumnLimit: '100'
+
+AccessModifierOffset: '-4'
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: 'true'
+AlignConsecutiveAssignments: 'true'
+AlignConsecutiveDeclarations: 'true'
+AlignEscapedNewlines: Left
+AlignOperands: 'true'
+AlignTrailingComments: 'true'
+AllowAllArgumentsOnNextLine: 'false'
+AllowAllConstructorInitializersOnNextLine: 'false'
+AllowAllParametersOfDeclarationOnNextLine: 'false'
+AllowShortBlocksOnASingleLine: 'true'
+AllowShortCaseLabelsOnASingleLine: 'true'
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: 'false'
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: 'false'
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: 'false'
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: 'false'
+BinPackParameters: 'false'
+BreakBeforeBinaryOperators: NonAssignment
+
+# Configure each individual brace in BraceWrapping
+BreakBeforeBraces: Custom
+# Control of individual brace wrapping cases
+BraceWrapping: {
+    AfterClass: 'true'
+    AfterControlStatement: 'false'
+    AfterEnum : 'false'
+    AfterFunction : 'true'
+    AfterNamespace : 'false'
+    AfterStruct : 'true'
+    AfterUnion : 'false'
+    BeforeCatch : 'true'
+    BeforeElse : 'true'
+    IndentBraces : 'false'
+    AfterExternBlock : 'false'
+    SplitEmptyFunction : 'false'
+    SplitEmptyRecord : 'false'
+    SplitEmptyNamespace : 'false'
+}
+
+BreakBeforeTernaryOperators: 'true'
+BreakConstructorInitializers: BeforeComma
+BreakInheritanceList: BeforeComma
+BreakStringLiterals: 'true'
+CompactNamespaces: 'false'
+ConstructorInitializerAllOnOneLineOrOnePerLine: 'true'
+Cpp11BracedListStyle: 'true'
+DerivePointerAlignment: 'false'
+FixNamespaceComments: 'true'
+IncludeBlocks: Regroup
+IndentCaseLabels: 'false'
+IndentPPDirectives: BeforeHash
+KeepEmptyLinesAtTheStartOfBlocks: 'false'
+Language: Cpp
+NamespaceIndentation: Inner
+PointerAlignment: Right
+ReflowComments: 'true'
+SortIncludes: 'true'
+SortUsingDeclarations: 'true'
+SpaceAfterCStyleCast: 'false'
+SpaceAfterLogicalNot: 'false'
+SpaceAfterTemplateKeyword: 'true'
+SpaceBeforeAssignmentOperators: 'true'
+SpaceBeforeCpp11BracedList: 'true'
+SpaceBeforeCtorInitializerColon: 'true'
+SpaceBeforeInheritanceColon: 'true'
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: 'true'
+SpacesBeforeTrailingComments: 2
+SpaceInEmptyParentheses: 'false'
+SpacesInAngles: 'false'
+SpacesInCStyleCastParentheses: 'false'
+SpacesInContainerLiterals: 'false'
+SpacesInParentheses: 'false'
+SpacesInSquareBrackets: 'false'
+
+...

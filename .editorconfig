@@ -1,0 +1,15 @@
+root = true
+
+[*]
+end_of_line = crlf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{c,cpp,h,hpp}]
+indent_style = space
+indent_size = 4
+cpp_generate_documentation_comments = doxygen_triple_slash
+
+[Makefile]
+indent_style = tab

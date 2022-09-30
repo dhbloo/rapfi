@@ -1,0 +1,104 @@
+/*
+ *  Rapfi, a Gomoku/Renju playing engine supporting piskvork protocol.
+ *  Copyright (C) 2022  Rapfi developers
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include "argutils.h"
+
+#define CXXOPTS_NO_REGEX
+#include <cxxopts.hpp>
+#include <string>
+
+Rule Command::parseRule(std::string_view ruleStr)
+{
+    if (ruleStr == "freestyle" || ruleStr == "Freestyle" || ruleStr == "f" || ruleStr == "F"
+        || ruleStr == "0")
+        return Rule::FREESTYLE;
+    else if (ruleStr == "standard" || ruleStr == "Standard" || ruleStr == "s" || ruleStr == "S"
+             || ruleStr == "1")
+        return Rule::STANDARD;
+    else if (ruleStr == "renju" || ruleStr == "Renju" || ruleStr == "r" || ruleStr == "R"
+             || ruleStr == "2" || ruleStr == "4")
+        return Rule::RENJU;
+    else
+        throw std::invalid_argument("unknown rule " + std::string(ruleStr));
+}
+
+Opening::OpeningGenConfig Command::parseOpengenConfig(const cxxopts::ParseResult &result)
+{
+    Opening::OpeningGenConfig cfg;
+
+    cfg.minMoves      = result["min-move"].as<int>();
+    cfg.maxMoves      = result["max-move"].as<int>();
+    cfg.localSizeMin  = result["min-area-size"].as<int>();
+    cfg.localSizeMax  = result["max-area-size"].as<int>();
+    cfg.balance1Nodes = result["balance1-node"].as<size_t>();
+    cfg.balance2Nodes = result["balance2-node"].as<size_t>();
+    cfg.balanceWindow = Value(result["balance-window"].as<int>());
+
+    if (cfg.minMoves <= 0 || cfg.maxMoves < cfg.minMoves)
+        throw std::invalid_argument("condition 0 < minMove <= maxMove does no satisfy");
+    if (cfg.localSizeMin < 0 || cfg.localSizeMax < cfg.localSizeMin)
+        throw std::invalid_argument("condition 0 < minAreaSize <= maxAreaSize does no satisfy");
+    if (cfg.balanceWindow < 0)
+        throw std::invalid_argument("balancewindow must be greater than 0");
+
+    return cfg;
+}
+
+std::vector<Pos>
+Command::parsePositionString(std::string_view positionString, int boardWidth, int boardHeight)
+{
+    // Convert Pos format to int string
+    std::stringstream ss;
+    for (char ch : positionString) {
+        if (ch >= 'a' && ch <= 'z')
+            ss << ' ' << int(ch - 'a' + 1) << ' ';
+        else if (ch >= '0' && ch <= '9')
+            ss << ch;
+        else
+            throw std::invalid_argument("invalid position string " + std::string(positionString));
+    }
+
+    // Read coordinates from stream
+    std::vector<int> coords;
+    int              coord = 0;
+    while (ss >> coord) {
+        int size = coords.size() % 2 == 0 ? boardWidth : boardHeight;
+        if (coord <= 0 || coord > size)
+            throw std::invalid_argument("invalid position coord " + std::to_string(coord) + " in "
+                                        + std::string(positionString));
+        coords.push_back(coord - 1);
+    }
+
+    // Num coords must be even
+    if (coords.size() % 2 != 0)
+        throw std::invalid_argument("incomplete position string " + std::string(positionString));
+
+    // Convert coords to pos vector
+    std::vector<Pos> position;
+    position.reserve(coords.size() / 2);
+    for (size_t i = 0; i < coords.size(); i += 2) {
+        int x = coords[i], y = coords[i + 1];
+        Pos pos {x, y};
+        if (std::find(position.begin(), position.end(), pos) != position.end())
+            throw std::invalid_argument("duplicate position coord in "
+                                        + std::string(positionString));
+        position.push_back(pos);
+    }
+
+    return position;
+}
