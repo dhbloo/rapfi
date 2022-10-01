@@ -125,6 +125,8 @@ public:
     /// Estimate the occupation ratio of the tt table during a search.
     /// @return A percentage representing the hash is x permill full.
     int hashUsage() const;
+    /// Return the memory usage of the transposition table in KiB.
+    size_t hashSizeKB() const { return numBuckets * sizeof(Bucket) / 1024; }
 };
 
 extern HashTable TT;

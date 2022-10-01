@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "../core/hash.h"
 #include "../core/iohelper.h"
@@ -23,99 +23,144 @@
 #include "../game/board.h"
 #include "../search/hashtable.h"
 #include "../search/searchthread.h"
+#include "argutils.h"
 #include "command.h"
 
 #include <iostream>
 #include <memory>
 #include <vector>
 
-struct BenchSet
+constexpr size_t         TotalMoveTestNum = 2000000;
+constexpr size_t         TTSizeMB         = 16;
+constexpr CandidateRange CandRange        = CandidateRange::SQUARE3_LINE4;
+
+struct BenchEntry
 {
-    Rule             rule;
-    int              boardSize;
-    int              searchDepth;
-    std::vector<Pos> position;
+    Rule        rule;
+    int         boardSize;
+    int         searchDepth;
+    std::string positionString;
 };
 
-static const BenchSet benchSets[] = {
-    {FREESTYLE, 20, 9, {Pos(7, 7), Pos(7, 6), Pos(7, 3), Pos(7, 10), Pos(6, 10)}},
-    {FREESTYLE, 20, 11, {Pos(3, 2), Pos(4, 4), Pos(4, 5), Pos(5, 6)}},
-    {FREESTYLE,
-     15,
-     12,
-     {Pos(4, 1), Pos(5, 1), Pos(7, 2), Pos(6, 2), Pos(6, 5), Pos(7, 4), Pos(5, 8)}},
-    {FREESTYLE, 15, 13, {Pos(10, 3), Pos(10, 4), Pos(9, 1)}},
-    {FREESTYLE, 15, 14, {Pos(7, 9), Pos(10, 8), Pos(8, 11), Pos(9, 11), Pos(10, 12)}},
-    {STANDARD, 15, 11, {Pos(3, 2), Pos(4, 4), Pos(4, 5), Pos(5, 6)}},
-    {STANDARD, 15, 12, {Pos(7, 7), Pos(7, 6), Pos(7, 3), Pos(7, 10), Pos(6, 10)}},
-    {RENJU, 15, 9, {Pos(6, 6), Pos(7, 7), Pos(8, 8)}},
-    {RENJU, 15, 11, {Pos(3, 2), Pos(4, 4), Pos(4, 5), Pos(5, 6)}},
-    {RENJU, 15, 12, {Pos(7, 7), Pos(7, 6), Pos(7, 3), Pos(7, 10), Pos(6, 10)}},
+static const std::vector<BenchEntry> benchSet = {
+    // Freestyle positions
+    {FREESTYLE, 15, 15, "h8g7f6g8g9"},
+    {FREESTYLE, 15, 16, "h2h5h4f6"},
+    {FREESTYLE, 20, 15, "e2f2h3g3g6h5f9"},
+    {FREESTYLE, 20, 16, "f5e3b7h5g3g4i6e4h4d4f2i5f4f6e5d6d7e7f8"},
+
+    // Standard positions
+    {STANDARD, 15, 15, "h8h7j6i7f7"},
+    {STANDARD, 15, 16, "f6i9h8"},
+    {STANDARD, 15, 16, "b3k10g2f6"},
+
+    // Renju positions
+    {RENJU, 15, 15, "h8i9j10i8i7g9"},
+    {RENJU, 15, 16, "h8h9j9j8f8i7g7i9h6e9f6k7l6i10i6f9g9g11h10i11i8"},
+    {RENJU, 15, 16, "h8h9h6i10i6i9g9g8j11i7"},
 };
 
-constexpr size_t TotalMoveTestNum = 1000000;
-constexpr size_t TTSizeMB         = 16;
+struct EngineState
+{
+    size_t  threadNum;
+    size_t  hashSizeKB;
+    bool    aspirationWindow;
+    int     numIterationAfterSingularRoot;
+    int     numIterationAfterMate;
+    MsgMode messageMode;
+};
+
+EngineState saveEngineStateForBenckmark()
+{
+    EngineState state;
+
+    state.threadNum                     = Search::Threads.size();
+    state.hashSizeKB                    = Search::TT.hashSizeKB();
+    state.aspirationWindow              = Config::AspirationWindow;
+    state.numIterationAfterSingularRoot = Config::NumIterationAfterSingularRoot;
+    state.numIterationAfterMate         = Config::NumIterationAfterMate;
+    state.messageMode                   = Config::MessageMode;
+
+    return state;
+}
+
+void recoverEngineState(EngineState state)
+{
+    Search::Threads.setNumThreads(state.threadNum);
+    Search::TT.resize(state.hashSizeKB);
+    Config::MessageMode                   = state.messageMode;
+    Config::AspirationWindow              = state.aspirationWindow;
+    Config::NumIterationAfterSingularRoot = state.numIterationAfterSingularRoot;
+    Config::NumIterationAfterMate         = state.numIterationAfterMate;
+}
 
 void Command::benchmark()
 {
     std::unique_ptr<Board> board;
-    size_t                 savedThreadNum        = Search::Threads.size();
-    bool                   savedAspirationWindow = Config::AspirationWindow;
-    bool    savedNumIterationAfterSingularRoot   = Config::NumIterationAfterSingularRoot;
-    bool    savedNumIterationAfterMate           = Config::NumIterationAfterMate;
-    MsgMode savedMessageMode                     = Config::MessageMode;
-    Search::Threads.setNumThreads(1);
+    EngineState            backupState = saveEngineStateForBenckmark();
 
     // Benchmark for Board::move() and Board::undo()
     MESSAGEL("==========Move Bench==========");
-    Time             startTime = now();
-    size_t           moveCnt   = 0;
-    constexpr size_t TestNum   = TotalMoveTestNum / arraySize(benchSets);
-    for (const auto &benchSet : benchSets) {
-        board = std::make_unique<Board>(benchSet.boardSize);
-        board->newGame(benchSet.rule);
+    Time   duration        = 0;
+    size_t moveCount       = 0;
+    size_t testNumPerEntry = TotalMoveTestNum / benchSet.size();
+    for (const auto &benchEntry : benchSet) {
+        board = std::make_unique<Board>(benchEntry.boardSize, CandRange);
+        board->newGame(benchEntry.rule);
+        std::vector<Pos> position =
+            parsePositionString(benchEntry.positionString, board->size(), board->size());
 
-        for (size_t test = 0; test < TestNum; test++) {
-            for (Pos p : benchSet.position)
-                board->move(benchSet.rule, p);
+        Time   startTime = now();
+        size_t testNum   = testNumPerEntry / position.size();
+        for (size_t test = 0; test < testNum; test++) {
+            for (size_t i = 0; i < position.size(); i++)
+                board->move(benchEntry.rule, position[i]);
 
-            for (size_t i = 0; i < benchSet.position.size(); i++)
-                board->undo(benchSet.rule);
+            for (size_t i = 0; i < position.size(); i++)
+                board->undo(benchEntry.rule);
         }
-        moveCnt += TestNum * benchSet.position.size();
+        Time endTime = now();
+
+        duration += endTime - startTime;
+        moveCount += testNum * position.size();
     }
-    Time endTime  = now();
-    Time duration = endTime - startTime;
+
     MESSAGEL("Total Time (ms): " << duration);
-    MESSAGEL("Moves/s: " << moveCnt * 1000 / std::max<size_t>(duration, 1));
+    MESSAGEL("Moves/s: " << moveCount * 1000 / std::max<size_t>(duration, 1));
 
     MESSAGEL("=========Search Bench=========");
     Config::MessageMode                   = MsgMode::NONE;
     Config::AspirationWindow              = true;
     Config::NumIterationAfterSingularRoot = 0;
     Config::NumIterationAfterMate         = 0;
+    Search::Threads.setNumThreads(1);
     Search::TT.resize(TTSizeMB * 1024);
     Search::SearchOptions options;
     options.infoMode            = Search::SearchOptions::INFO_NONE;
     options.disableOpeningQuery = true;
-    duration                    = (Time)0;
+    duration                    = 0;
     size_t searchNodes          = 0;
 
     Hash::XXHasher hasher(TTSizeMB);
 
-    for (const auto &benchSet : benchSets) {
-        board = std::make_unique<Board>(benchSet.boardSize);
-        board->newGame(benchSet.rule);
-        for (Pos p : benchSet.position)
-            board->move(benchSet.rule, p);
+    for (const auto &benchEntry : benchSet) {
+        board = std::make_unique<Board>(benchEntry.boardSize, CandRange);
+        board->newGame(benchEntry.rule);
+        std::vector<Pos> position =
+            parsePositionString(benchEntry.positionString, board->size(), board->size());
 
-        options.rule     = {benchSet.rule, GameRule::FREEOPEN};
-        options.maxDepth = benchSet.searchDepth;
+        for (Pos p : position)
+            board->move(benchEntry.rule, p);
+
+        options.rule     = {benchEntry.rule, GameRule::FREEOPEN};
+        options.maxDepth = benchEntry.searchDepth;
         Search::Threads.clear(true);
-        startTime = now();
+
+        Time startTime = now();
         Search::Threads.startThinking(*board, options, true);
         Search::Threads.waitForIdle();
-        endTime = now();
+        Time endTime = now();
+
         duration += endTime - startTime;
 
         size_t nodes = Search::Threads.nodesSearched();
@@ -123,19 +168,15 @@ void Command::benchmark()
 
         // Hash from nodes searched
         hasher << nodes;
-
         // Hash from entire TT
         hasher((void *)Search::TT.firstEntry(0), TTSizeMB * 1024 * 1024);
     }
 
-    Config::MessageMode                   = savedMessageMode;
-    Config::AspirationWindow              = savedAspirationWindow;
-    Config::NumIterationAfterSingularRoot = savedNumIterationAfterSingularRoot;
-    Config::NumIterationAfterMate         = savedNumIterationAfterMate;
-    Search::Threads.setNumThreads(savedThreadNum);
-
+    uint32_t hash32 = (uint64_t(hasher) >> 32) ^ uint64_t(hasher);
     MESSAGEL("Total Time (ms): " << duration);
     MESSAGEL("Nodes: " << searchNodes);
     MESSAGEL("Nodes/s: " << searchNodes * 1000 / std::max<size_t>(duration, 1));
-    MESSAGEL("Hash: " << std::hex << hasher << std::dec);
+    MESSAGEL("Hash: " << std::hex << hash32 << std::dec);
+
+    recoverEngineState(backupState);
 }
