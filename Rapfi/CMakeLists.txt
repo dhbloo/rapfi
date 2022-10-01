@@ -28,6 +28,7 @@ endif()
 # Rapfi Compiling
 
 set(CORE_SOURCES
+    command/argutils.cpp
     command/benchmark.cpp
     command/command.cpp
     command/gomocup.cpp
@@ -68,7 +69,6 @@ set(CORE_SOURCES
 )
 
 set(MODULE_SOURCES
-    command/argutils.cpp
     command/database.cpp
     command/dataprep.cpp
     command/opengen.cpp

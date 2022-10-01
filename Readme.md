@@ -1,5 +1,7 @@
 # Rapfi
 
+![Workflow Status](https://github.com/dhbloo/rapfi/actions/workflows/rapfi.yml/badge.svg)
+
 ## Overview
 
 Rapfi is a powerful Gomoku/Renju (Five in a row) playing engine supporting [Piskvork protocol](http://petr.lastovicka.sweb.cz/protocl2en.htm). Since Piskvork protocol requires AI to communicate through standard input and output, in order to use it comfortably, you may need the compatible GUI such as [Piskvork](https://github.com/wind23/piskvork_renju) or [Yixin-Board](https://github.com/dhbloo/Yixin-Board). Piskvork interface can be  downloaded from [here](https://raw.githubusercontent.com/wind23/piskvork_renju/master/Release/piskvork_renju.zip).

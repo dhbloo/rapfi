@@ -21,7 +21,6 @@
 #include "iohelper.h"
 
 #include <cassert>
-#include <malloc.h>
 #include <vector>
 
 #ifdef _WIN32

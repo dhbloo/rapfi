@@ -1,0 +1,117 @@
+name: Rapfi
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  Rapfi:
+    name: ${{ matrix.target.name }}-${{ matrix.arch.name }}
+    runs-on: ${{ matrix.target.os }}
+    env:
+      CC: ${{ matrix.target.c_compiler }}
+      CXX: ${{ matrix.target.cxx_compiler }}
+    strategy:
+      matrix:
+        target:
+          - {
+              name: linux-gcc,
+              os: ubuntu-20.04,
+              c_compiler: gcc,
+              cxx_compiler: g++,
+              cmake_command: "",
+              shell: "bash {0}"
+            }
+          - {
+              name: linux-clang,
+              os: ubuntu-20.04,
+              c_compiler: clang,
+              cxx_compiler: clang++,
+              cmake_command: "",
+              shell: "bash {0}"
+            }
+          - {
+              name: windows-gcc,
+              os: windows-latest,
+              c_compiler: gcc,
+              cxx_compiler: g++,
+              cmake_command: "",
+              msys_sys: 'mingw64',
+              msys_env: 'x86_64',
+              shell: "msys2 {0}"
+            }
+          - {
+              name: windows-clang,
+              os: windows-latest,
+              c_compiler: clang,
+              cxx_compiler: clang++,
+              cmake_command: "",
+              msys_sys: 'mingw64',
+              msys_env: 'x86_64',
+              shell: "msys2 {0}"
+            }
+        arch:
+          - { name: avx2, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=ON -DUSE_AVX=ON -DUSE_SSE=ON" }
+          - { name: avx, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=OFF -DUSE_AVX=ON -DUSE_SSE=ON" }
+          - { name: sse, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=OFF -DUSE_AVX=OFF -DUSE_SSE=ON" }
+
+    defaults:
+      run:
+        working-directory: Rapfi
+        shell: ${{ matrix.target.shell }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Download required linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install -y libtbb-dev valgrind
+
+      - name: Setup msys and install required packages
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{matrix.target.msys_sys}}
+          install: mingw-w64-${{matrix.target.msys_env}}-${{matrix.target.c_compiler}} mingw-w64-${{matrix.target.msys_env}}-intel-tbb make cmake git
+
+      - name: Extract the bench hash from the commit history
+        run: |
+          git log HEAD | grep "\b[Bb]ench\s*[a-f0-9]\{8\}" | head -n 1 | sed "s/\s*[Bb]ench\s*\([a-f0-9]\{8\}\).*/\1/g" > git_sig
+          [ -s git_sig ] && echo "commit_bench=$(cat git_sig)" >> $GITHUB_ENV && echo "Reference bench:" $(cat git_sig) || echo "No bench found"
+
+      - name: Build
+        run: |
+          rm -rf build && mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release ${{ matrix.target.cmake_command }} ${{ matrix.arch.cmake_command }}
+          cmake --build . -j2 && strip pbrain-rapfi*
+          mv -v pbrain-rapfi pbrain-rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
+
+      - name: Check bench signature
+        if: matrix.arch.name == 'avx2'
+        run: |
+          cd build && find ../../Networks -mindepth 2 -type f -exec cp {} . \;
+          ./pbrain-rapfi* bench > bench.txt
+          cat bench.txt
+          actual_bench=$(grep "Hash" bench.txt | sed "s/[^H]*\sHash:\?\s\([a-f0-9]\{8\}\).*/\1/g")
+          if [[ "$actual_bench" != "$commit_bench" ]]; then echo "Incorrect bench, got '$actual_bench' expected '$commit_bench'" && exit 1; fi
+
+      - name: Run valgrind
+        if: runner.os == 'Linux'
+        run: cd build && valgrind --error-exitcode=1 ./pbrain-rapfi* bench
+
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: Rapfi
+          path: Rapfi/build/pbrain-rapfi*
+
