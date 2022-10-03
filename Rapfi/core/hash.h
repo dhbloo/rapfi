@@ -61,6 +61,6 @@ private:
 };
 
 extern HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
-extern HashKey zobristPass[SIDE_NB][MAX_PASS_MOVES];
+extern HashKey zobristSide[SIDE_NB];
 
 }  // namespace Hash

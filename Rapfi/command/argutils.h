@@ -25,20 +25,11 @@
 #include <string_view>
 #include <vector>
 
-// forward declaration
-namespace cxxopts {
-class ParseResult;
-}
-
 namespace Command {
 
 /// Parse rule from string. Throws std::invalid_argument if not matched.
 /// Throws std::invalid_argument if ruleStr is not valid.
 Rule parseRule(std::string_view ruleStr);
-
-/// Parse opengen config from arguments.
-/// Throws std::invalid_argument if arguments are not correct.
-Opening::OpeningGenConfig parseOpengenConfig(const cxxopts::ParseResult &result);
 
 /// Parse a position from the position string, eg 'h8h7j6'
 /// Throws std::invalid_argument if posStr is not correct.
@@ -46,3 +37,20 @@ Opening::OpeningGenConfig parseOpengenConfig(const cxxopts::ParseResult &result)
 std::vector<Pos> parsePositionString(std::string_view posStr, int boardWidth, int boardHeight);
 
 }  // namespace Command
+
+#ifndef NO_COMMAND_MODULES
+
+// forward declaration
+namespace cxxopts {
+class ParseResult;
+}
+
+namespace Command {
+
+/// Parse opengen config from arguments.
+/// Throws std::invalid_argument if arguments are not correct.
+Opening::OpeningGenConfig parseOpengenConfig(const cxxopts::ParseResult &result);
+
+}  // namespace Command
+
+#endif

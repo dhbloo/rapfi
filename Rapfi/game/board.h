@@ -260,18 +260,21 @@ public:
     // ------------------------------------------------------------------------
     // current board state queries
 
-    int     ply() const { return moveCount; };
-    int     nonPassMoveCount() const { return moveCount - passMoveCount(); }
-    int     passMoveCount() const { return passCount[BLACK] + passCount[WHITE]; }
-    int     passMoveCountOfSide(Color side) const { return passCount[side]; }
-    int     movesLeft() const { return boardCellCount - nonPassMoveCount(); };
-    Color   sideToMove() const { return currentSide; }
-    HashKey zobristKey() const { return currentZobristKey; }
+    int   ply() const { return moveCount; };
+    int   nonPassMoveCount() const { return moveCount - passMoveCount(); }
+    int   passMoveCount() const { return passCount[BLACK] + passCount[WHITE]; }
+    int   passMoveCountOfSide(Color side) const { return passCount[side]; }
+    int   movesLeft() const { return boardCellCount - nonPassMoveCount(); };
+    Color sideToMove() const { return currentSide; }
 
-    /// Fetch the next zobrist key after move of pos.
-    inline HashKey zobristKeyAfter(Pos pos) const
+    /// Fetch the current board hash key.
+    HashKey zobristKey() const { return currentZobristKey ^ Hash::zobristSide[currentSide]; }
+
+    /// Fetch the next board hash key after a move of pos.
+    HashKey zobristKeyAfter(Pos pos) const
     {
-        return currentZobristKey ^ Hash::zobrist[currentSide][pos];
+        return currentZobristKey ^ Hash::zobristSide[~currentSide]
+               ^ Hash::zobrist[currentSide][pos];
     }
 
     /// Get the current pattern4 accumulate counter for one side.

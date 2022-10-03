@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "hash.h"
 
@@ -26,6 +26,7 @@ namespace Hash {
 
 /// Global zobrist table that will be inititalized at startup.
 HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
+HashKey zobristSide[SIDE_NB];
 HashKey zobristPass[SIDE_NB][MAX_PASS_MOVES];
 
 /// Init zobrish table using PRNG with the given seed.
@@ -35,14 +36,12 @@ void initZobrish(uint64_t seed)
     PRNG prng {seed};
 
     for (int i = 0; i < FULL_BOARD_CELL_COUNT; i++) {
-        zobrist[0][i] = prng();
-        zobrist[1][i] = prng();
+        zobrist[BLACK][i] = prng();
+        zobrist[WHITE][i] = prng();
     }
 
-    for (int i = 0; i < MAX_PASS_MOVES; i++) {
-        zobristPass[0][i] = prng();
-        zobristPass[1][i] = prng();
-    }
+    zobristSide[BLACK] = prng();
+    zobristSide[WHITE] = prng();
 }
 
 const auto init = []() {

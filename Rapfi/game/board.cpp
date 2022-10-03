@@ -397,10 +397,7 @@ void Board::doPassMove()
     StateInfo &st = stateInfos[++moveCount];
     st            = stateInfos[moveCount - 1];
     st.lastMove   = Pos::PASS;
-
-    // Select zobrist based on passCount to handle possible recursive null move
-    currentZobristKey ^= Hash::zobristPass[currentSide][passCount[currentSide]];
-
+    
     passCount[currentSide]++;
     currentSide = ~currentSide;
 }
@@ -410,10 +407,6 @@ void Board::undoPassMove()
     currentSide = ~currentSide;
     assert(passCount[currentSide] > 0);
     passCount[currentSide]--;
-
-    // Select zobrist based on passCount to handle possible recursive null move
-    currentZobristKey ^= Hash::zobristPass[currentSide][passCount[currentSide]];
-
     moveCount--;
 }
 

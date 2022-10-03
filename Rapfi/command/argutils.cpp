@@ -14,12 +14,14 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "argutils.h"
 
-#define CXXOPTS_NO_REGEX
-#include <cxxopts.hpp>
+#ifndef NO_COMMAND_MODULES
+    #define CXXOPTS_NO_REGEX
+    #include <cxxopts.hpp>
+#endif
 #include <string>
 
 Rule Command::parseRule(std::string_view ruleStr)
@@ -35,28 +37,6 @@ Rule Command::parseRule(std::string_view ruleStr)
         return Rule::RENJU;
     else
         throw std::invalid_argument("unknown rule " + std::string(ruleStr));
-}
-
-Opening::OpeningGenConfig Command::parseOpengenConfig(const cxxopts::ParseResult &result)
-{
-    Opening::OpeningGenConfig cfg;
-
-    cfg.minMoves      = result["min-move"].as<int>();
-    cfg.maxMoves      = result["max-move"].as<int>();
-    cfg.localSizeMin  = result["min-area-size"].as<int>();
-    cfg.localSizeMax  = result["max-area-size"].as<int>();
-    cfg.balance1Nodes = result["balance1-node"].as<size_t>();
-    cfg.balance2Nodes = result["balance2-node"].as<size_t>();
-    cfg.balanceWindow = Value(result["balance-window"].as<int>());
-
-    if (cfg.minMoves <= 0 || cfg.maxMoves < cfg.minMoves)
-        throw std::invalid_argument("condition 0 < minMove <= maxMove does no satisfy");
-    if (cfg.localSizeMin < 0 || cfg.localSizeMax < cfg.localSizeMin)
-        throw std::invalid_argument("condition 0 < minAreaSize <= maxAreaSize does no satisfy");
-    if (cfg.balanceWindow < 0)
-        throw std::invalid_argument("balancewindow must be greater than 0");
-
-    return cfg;
 }
 
 std::vector<Pos>
@@ -102,3 +82,29 @@ Command::parsePositionString(std::string_view positionString, int boardWidth, in
 
     return position;
 }
+
+#ifndef NO_COMMAND_MODULES
+
+Opening::OpeningGenConfig Command::parseOpengenConfig(const cxxopts::ParseResult &result)
+{
+    Opening::OpeningGenConfig cfg;
+
+    cfg.minMoves      = result["min-move"].as<int>();
+    cfg.maxMoves      = result["max-move"].as<int>();
+    cfg.localSizeMin  = result["min-area-size"].as<int>();
+    cfg.localSizeMax  = result["max-area-size"].as<int>();
+    cfg.balance1Nodes = result["balance1-node"].as<size_t>();
+    cfg.balance2Nodes = result["balance2-node"].as<size_t>();
+    cfg.balanceWindow = Value(result["balance-window"].as<int>());
+
+    if (cfg.minMoves <= 0 || cfg.maxMoves < cfg.minMoves)
+        throw std::invalid_argument("condition 0 < minMove <= maxMove does no satisfy");
+    if (cfg.localSizeMin < 0 || cfg.localSizeMax < cfg.localSizeMin)
+        throw std::invalid_argument("condition 0 < minAreaSize <= maxAreaSize does no satisfy");
+    if (cfg.balanceWindow < 0)
+        throw std::invalid_argument("balancewindow must be greater than 0");
+
+    return cfg;
+}
+
+#endif

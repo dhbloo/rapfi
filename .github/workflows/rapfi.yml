@@ -106,7 +106,7 @@ jobs:
           if [[ "$actual_bench" != "$commit_bench" ]]; then echo "Incorrect bench, got '$actual_bench' expected '$commit_bench'" && exit 1; fi
 
       - name: Run valgrind
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.arch.name == 'avx2'
         run: cd build && valgrind --error-exitcode=1 ./pbrain-rapfi* bench
 
       - name: Upload
