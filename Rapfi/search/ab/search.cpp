@@ -835,6 +835,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Step 8. Futility pruning: child node (~70 elo)
     if (!PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
+        && beta > VALUE_MATED_IN_MAX_PLY         // Confirm non-losing move exists
         && eval - futilityMargin(depth, improvement > 0) >= beta
         && !((ss - 2)->moveP4[self] >= E_BLOCK4 && (ss - 4)->moveP4[self] >= E_BLOCK4))
         return eval;
