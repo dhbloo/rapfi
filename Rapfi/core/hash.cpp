@@ -27,7 +27,8 @@ namespace Hash {
 /// Global zobrist table that will be inititalized at startup.
 HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
 HashKey zobristSide[SIDE_NB];
-HashKey zobristPass[SIDE_NB][MAX_PASS_MOVES];
+HashKey zobristRule[RULE_NB];
+HashKey zobristCandRange[static_cast<int>(CandidateRange::CAND_RANGE_NB)];
 
 /// Init zobrish table using PRNG with the given seed.
 /// @param seed Seed of PRNG.
@@ -42,6 +43,13 @@ void initZobrish(uint64_t seed)
 
     zobristSide[BLACK] = prng();
     zobristSide[WHITE] = prng();
+
+    zobristRule[FREESTYLE] = prng();
+    zobristRule[STANDARD]  = prng();
+    zobristRule[RENJU]     = prng();
+
+    for (int i = 0; i < arraySize(zobristCandRange); i++)
+        zobristCandRange[i] = prng();
 }
 
 const auto init = []() {

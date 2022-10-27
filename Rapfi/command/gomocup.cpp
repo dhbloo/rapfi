@@ -1131,7 +1131,7 @@ void traceSearch()
     Pos   ttMove;
     int   ttDepth;
     if (Search::TT
-            .probe(board.zobristKey(), ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, 0)) {
+            .probe(board.positionHash(), ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, 0)) {
         const char *BoundType[] = {"x", "<", ">", "="};
 
         MESSAGEL("TTEntry: " << (ttIsPv ? "(pv)" : ""));

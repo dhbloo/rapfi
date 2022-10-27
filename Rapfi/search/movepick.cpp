@@ -14,13 +14,14 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "movepick.h"
 
 #include "../eval/evaluator.h"
 #include "../game/board.h"
 #include "../game/movegen.h"
+#include "hashtable.h"
 #include "searchthread.h"
 
 #include <algorithm>
@@ -88,6 +89,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
     , ttMove(Pos::NONE)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
+    , depth8(uint8_t(0 - (int)DEPTH_LOWER_BOUND))
 {
     Color self = board.sideToMove(), oppo = ~self;
     curMove = moves;
@@ -128,6 +130,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     , rule(rule)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
+    , depth8(uint8_t(args.depth - (int)DEPTH_LOWER_BOUND))
 {
     assert(mainHistory);
     Color oppo = ~board.sideToMove();
@@ -171,6 +174,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
           args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
     , hasPolicy(false)
+    , depth8(uint8_t(args.depth - (int)DEPTH_LOWER_BOUND))
 {
     Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
@@ -220,23 +224,75 @@ Pos MovePicker::pickNextMove(Pred filter)
 template <MovePicker::ScoreType Type>
 void MovePicker::scoreMoves()
 {
+    struct PolicyCacheBuffer
+    {
+        enum : Score { NilScore = Score(-30000) };
+        int   boardSize;
+        Score minPolicyScore;
+        Score policyScores[MAX_MOVES];
+
+        PolicyCacheBuffer(int boardSize) : boardSize(boardSize), minPolicyScore(NilScore)
+        {
+            std::fill_n(policyScores, boardSize * boardSize, NilScore);
+        }
+        size_t posToIndex(Pos pos) const { return boardSize * pos.y() + pos.x(); }
+        bool   isValid(Pos pos) const { return policyScores[posToIndex(pos)] != NilScore; }
+        void   addScore(Pos pos, Score score)
+        {
+            policyScores[posToIndex(pos)] = score;
+            minPolicyScore                = std::min(minPolicyScore, score);
+        }
+        Score score(Pos pos) const
+        {
+            return std::max(policyScores[posToIndex(pos)], minPolicyScore);
+        }
+    };
     using Evaluation::Evaluator;
     using Evaluation::PolicyBuffer;
-    using PolicyBufferStorage = std::aligned_storage_t<sizeof(PolicyBuffer), alignof(PolicyBuffer)>;
+    using PolicyBufferStorage =
+        std::aligned_storage_t<std::max(sizeof(PolicyBuffer), sizeof(PolicyCacheBuffer)),
+                               std::max(alignof(PolicyBuffer), alignof(PolicyCacheBuffer))>;
 
-    PolicyBufferStorage policyBufferStorage;
     Color               self = board.sideToMove(), oppo = ~self;
-    PolicyBuffer       *policyBuf = reinterpret_cast<PolicyBuffer *>(&policyBufferStorage);
+    PolicyBufferStorage policyBufStorage;
+    PolicyBuffer       *policyBuf      = reinterpret_cast<PolicyBuffer *>(&policyBufStorage);
+    PolicyCacheBuffer  *policyCacheBuf = reinterpret_cast<PolicyCacheBuffer *>(&policyBufStorage);
     Evaluator *evaluator = board.thisThread() ? board.thisThread()->evaluator.get() : nullptr;
+    PolicyCacheTable::PolicyEntry *policyEntry;
+    HashKey                        policyKey;
+    bool                           policyCacheHit, policyCacheValid;
 
     if (bool(Type & POLICY) && evaluator) {
-        new (policyBuf) Evaluation::PolicyBuffer(board.size());
+        policyKey      = board.policyHash();
+        policyCacheHit = PCT.probe(policyKey, policyEntry);
+        policyCacheValid =
+            policyCacheHit && policyEntry->tryLock()
+            && policyEntry->key32.load(std::memory_order_acquire) == uint32_t(policyKey);
 
-        // Set compute flag for all moves in move list
-        for (auto &m : *this)
-            policyBuf->setComputeFlag(m.pos);
+        if (policyCacheValid) {
+            new (policyCacheBuf) PolicyCacheBuffer(board.size());
 
-        evaluator->evaluatePolicy(board, *policyBuf);
+            // Refresh generation and depth of this policy cache entry
+            policyEntry->depth      = std::max(policyEntry->depth, depth8);
+            policyEntry->generation = PCT.getGeneration();
+
+            for (size_t i = 0; i < policyEntry->numMoves; i++) {
+                auto &move = policyEntry->moves[i];
+                policyCacheBuf->addScore(move.pos, move.score);
+            }
+            
+            policyEntry->unlock();
+        }
+        else {
+            new (policyBuf) Evaluation::PolicyBuffer(board.size());
+
+            // Set compute flag for all moves in move list
+            for (auto &m : *this)
+                policyBuf->setComputeFlag(m.pos);
+
+            evaluator->evaluatePolicy(board, *policyBuf);
+        }
+
         hasPolicy      = true;
         maxPolicyScore = std::numeric_limits<Score>::lowest() / 2;  // avoid underflow
     }
@@ -245,8 +301,9 @@ void MovePicker::scoreMoves()
         const Cell &c = board.cell(m);
 
         if (bool(Type & POLICY) && evaluator) {
-            m.score = m.rawScore = policyBuf->score(m.pos);
-            maxPolicyScore       = std::max(maxPolicyScore, m.rawScore);
+            m.score = m.rawScore =
+                policyCacheValid ? policyCacheBuf->score(m.pos) : policyBuf->score(m.pos);
+            maxPolicyScore = std::max(maxPolicyScore, m.rawScore);
         }
         else if constexpr (bool(Type & BALANCED))
             m.score = m.rawScore = c.score[self];
@@ -276,6 +333,32 @@ void MovePicker::scoreMoves()
                     m.score += CounterMoveBonus;
             }
         }
+    }
+
+    // Record probed policy in the cache (do not write in qvcf mode)
+    if (bool(Type & POLICY) && evaluator && !policyCacheHit && policyEntry->tryLock()) {
+        assert(stage != QVCF_MOVES);
+        if (policyEntry->checkReplaceable(depth8, PCT.getGeneration())) {
+            PolicyCacheTable::PolicyEntry::Move movesBuffer[MAX_MOVES];
+            int                                 numMoves = 0;
+            for (auto &m : *this)
+                movesBuffer[numMoves++] = {m.pos, m.rawScore};
+
+            policyEntry->key32      = uint32_t(policyKey);
+            policyEntry->depth      = depth8;
+            policyEntry->generation = PCT.getGeneration();
+            policyEntry->numMoves   = static_cast<uint8_t>(
+                std::min<size_t>(numMoves, PolicyCacheTable::PolicyEntry::MAX_MOVES_PER_ENTRY));
+
+            // Sort moves by their raw policy score
+            std::partial_sort(movesBuffer,
+                              movesBuffer + policyEntry->numMoves,
+                              movesBuffer + numMoves,
+                              [](auto &a, auto &b) { return a.score > b.score; });
+
+            std::copy_n(movesBuffer, policyEntry->numMoves, policyEntry->moves);
+        }
+        policyEntry->unlock();
     }
 }
 

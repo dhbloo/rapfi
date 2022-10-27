@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "board.h"
 
@@ -58,6 +58,7 @@ Board::Board(int boardSize, CandidateRange candRange)
     , passCount {0, 0}
     , currentSide(BLACK)
     , currentZobristKey(0)
+    , candRangeKey(Hash::zobristCandRange[static_cast<int>(candRange)])
     , candidateRange(nullptr)
     , candidateRangeSize(0)
     , evaluator_(nullptr)
@@ -397,7 +398,7 @@ void Board::doPassMove()
     StateInfo &st = stateInfos[++moveCount];
     st            = stateInfos[moveCount - 1];
     st.lastMove   = Pos::PASS;
-    
+
     passCount[currentSide]++;
     currentSide = ~currentSide;
 }
@@ -552,7 +553,7 @@ std::string Board::trace() const
     std::stringstream ss;
     const StateInfo  &st = stateInfo();
 
-    ss << "Hash: " << std::hex << zobristKey() << std::dec << '\n';
+    ss << "Hash: " << std::hex << positionHash() << std::dec << '\n';
     ss << "Ply: " << ply() << "\n";
     ss << "NonPassCount: " << nonPassMoveCount() << "\n";
     ss << "PassCount[Black]: " << passMoveCountOfSide(BLACK)

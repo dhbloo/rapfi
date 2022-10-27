@@ -434,7 +434,7 @@ DBClient ::~DBClient()
 
 bool DBClient::query(const Board &board, Rule rule, DBRecord &record)
 {
-    HashKey hashKey = board.zobristKey();
+    HashKey hashKey = board.positionHash();
 
     // Try find this record in dbRecordCache
     auto &[cachedHashKey, cachedRecord] = dbRecordCache[hashKey];
@@ -489,7 +489,7 @@ void DBClient::queryChildren(const Board                           &board,
 bool DBClient::save(const Board &board, Rule rule, const DBRecord &record, OverwriteRule owRule)
 {
     DBKey   dbKey;
-    HashKey hashKey   = board.zobristKey();
+    HashKey hashKey   = board.positionHash();
     bool    overwrite = owRule == OverwriteRule::Always
                      || owRule != OverwriteRule::Disabled && !(mask & RECORD_MASK_LVDB);
 
@@ -547,7 +547,7 @@ bool DBClient::save(const Board &board, Rule rule, const DBRecord &record, Overw
 
 void DBClient::del(const Board &board, Rule rule)
 {
-    HashKey hashKey = board.zobristKey();
+    HashKey hashKey = board.positionHash();
 
     // First remove record cache from dbRecordCache if exists
     auto &[cachedHashKey, cachedRecord] = dbRecordCache[hashKey];

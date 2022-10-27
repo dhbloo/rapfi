@@ -131,4 +131,74 @@ public:
 
 extern HashTable TT;
 
+/// PolicyCacheTable class is the shared policy cache table implementation
+/// which is used to cache the policy value of good moves in a position.
+class PolicyCacheTable
+{
+public:
+    struct PolicyEntry
+    {
+        static constexpr int MAX_MOVES_PER_ENTRY = 62;
+
+        std::atomic<uint32_t> key32;
+        std::atomic_bool      lock;
+        uint8_t               numMoves;
+        uint8_t               depth;
+        uint8_t               generation;
+
+        struct Move
+        {
+            Pos   pos;
+            Score score;
+        } moves[MAX_MOVES_PER_ENTRY];
+
+        /// Try lock this policy entry, returns true if lock succeeded.
+        bool tryLock()
+        {
+            return !lock.load(std::memory_order_relaxed)  // prevent excessive coherency traffic
+                   && !lock.exchange(true, std::memory_order_acquire);
+        }
+        /// Unlock this policy entry.
+        void unlock() { return lock.store(false, std::memory_order_release); }
+        /// Check if the given depth and generation is more valuable than this policy entry.
+        bool checkReplaceable(uint8_t depth8, uint8_t currentGeneration) const
+        {
+            return depth8 > (depth - int(currentGeneration - generation));
+        }
+    };
+    static_assert(sizeof(PolicyEntry) == 256);
+
+    PolicyCacheTable(size_t sizeKB);
+    ~PolicyCacheTable();
+
+    /// Resize the tt table to the given hash size in KiB.
+    /// If size changed, all hash entries will be cleared after resizing the table.
+    /// When memory allocation failed, it will try to find the max available hash
+    /// size by reducing cluster count to half recursively.
+    void resize(size_t sizeKB);
+    /// Clear all hash entries. If multi-threading is enabled, clearing will be
+    /// performed in parallel with number of threads equals to `Threads.size()`.
+    void clear();
+    /// Probe the policy cache table for a hash key.
+    /// @return True if found a matched entry or a not used entry.
+    bool probe(HashKey key, PolicyEntry *&entry)
+    {
+        entry = &table[mulhi64(key, numEntries)];
+        return entry->key32.load(std::memory_order_relaxed) == uint32_t(key);
+    }
+    /// Get the current generation.
+    uint8_t getGeneration() const { return generation; }
+    /// Increase the current generation (aging all entries in the table).
+    void incGeneration() { generation += 1; }
+    /// Return the memory usage of the policy cache table in KiB.
+    size_t hashSizeKB() const { return numEntries * sizeof(PolicyEntry) / 1024; }
+
+private:
+    PolicyEntry *table;
+    size_t       numEntries;
+    uint8_t      generation;
+};
+
+extern PolicyCacheTable PCT;
+
 }  // namespace Search

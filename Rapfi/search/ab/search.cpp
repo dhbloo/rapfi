@@ -88,8 +88,10 @@ void ABSearcher::clear(ThreadPool &pool, bool clearAllMemory)
 
     initReductionLUT(reductions, pool.size());
 
-    if (clearAllMemory)
+    if (clearAllMemory) {
         TT.clear();
+        PCT.clear();
+    }
 }
 
 /// The thinking entry point. When program receives search command, main
@@ -177,6 +179,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
                  th.options().timeLeft,
                  {th.board->ply(), th.board->movesLeft()});
     TT.incGeneration();
+    PCT.incGeneration();
 
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
@@ -578,6 +581,7 @@ Value search(Rule         rule,
                       board,
                       MovePicker::ExtraArgs<MovePicker::MAIN> {
                           thisThread->rootMoves[0].pv[0],
+                          depth,
                           &thisThread->searchDataAs<ABSearchData>()->mainHistory,
                           &thisThread->searchDataAs<ABSearchData>()->counterMoveHistory,
                       });
@@ -686,7 +690,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     // Step 4. Transposition table lookup.
     // Use a different hash key in case of an skip move to avoid overriding full search result.
     Pos     skipMove = ss->skipMove;
-    HashKey posKey   = board.zobristKey() ^ (skipMove ? Hash::LCHash(skipMove) : 0);
+    HashKey posKey   = board.positionHash() ^ (skipMove ? Hash::LCHash(skipMove) : 0);
     Value   ttValue  = VALUE_NONE;
     Value   ttEval   = VALUE_NONE;
     bool    ttIsPv   = false;
@@ -848,7 +852,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         ss->currentMove = Pos::PASS;
 
         board.doPassMove();
-        TT.prefetch(board.zobristKey());
+        TT.prefetch(board.positionHash());
         value = -search<Rule, NonPV>(board, ss + 1, -beta, -beta + 1, depth - r, !cutNode);
         board.undoPassMove();
 
@@ -917,6 +921,7 @@ moves_loop:
                   board,
                   MovePicker::ExtraArgs<MovePicker::MAIN> {
                       ttMove,
+                      depth,
                       &searchData->mainHistory,
                       &searchData->counterMoveHistory,
                   });
@@ -1093,7 +1098,7 @@ moves_loop:
 
         // Step 14. Make the move
         board.move<Rule>(move);
-        TT.prefetch(board.zobristKey());
+        TT.prefetch(board.positionHash());
 
         bool doFullDepthSearch;
         // Step 15. Late move reduction (LMR). Moves are searched with a reduced
@@ -1478,7 +1483,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         return alpha;
 
     // Step 4. Transposition table lookup
-    HashKey posKey  = board.zobristKey();
+    HashKey posKey  = board.positionHash();
     Value   ttValue = VALUE_NONE;
     Value   ttEval  = VALUE_NONE;
     bool    ttIsPv  = false;
@@ -1673,7 +1678,7 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
             (ss + 1)->pv[0] = Pos::NONE;
 
         board.move<Rule>(move);
-        TT.prefetch(board.zobristKey());
+        TT.prefetch(board.positionHash());
 
         // Call attack-side vcf search
         // Note that we do not reduce depth for vcf defence move.

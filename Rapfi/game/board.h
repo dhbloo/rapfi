@@ -267,11 +267,12 @@ public:
     int   movesLeft() const { return boardCellCount - nonPassMoveCount(); };
     Color sideToMove() const { return currentSide; }
 
-    /// Fetch the current board hash key.
-    HashKey zobristKey() const { return currentZobristKey ^ Hash::zobristSide[currentSide]; }
-
+    /// Fetch the hash key for current board position.
+    HashKey positionHash() const { return currentZobristKey ^ Hash::zobristSide[currentSide]; }
+    /// Fetch the hash key for current policy cache.
+    HashKey policyHash() const { return positionHash() ^ candRangeKey; }
     /// Fetch the next board hash key after a move of pos.
-    HashKey zobristKeyAfter(Pos pos) const
+    HashKey positionHashAfter(Pos pos) const
     {
         return currentZobristKey ^ Hash::zobristSide[~currentSide]
                ^ Hash::zobrist[currentSide][pos];
@@ -357,6 +358,7 @@ private:
     int                    passCount[SIDE_NB];  /// Number of passes for both sides
     Color                  currentSide;         /// The current side to move
     HashKey                currentZobristKey;   /// The current zobrist key
+    HashKey                candRangeKey;        /// The zobrist key for candidate range
     StateInfo             *stateInfos;          /// StateInfo array pointer
     UpdateCache           *updateCache;         /// UpdateCache array pointer
     const Direction       *candidateRange;      /// Candidate array pointer

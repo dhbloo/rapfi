@@ -62,5 +62,7 @@ private:
 
 extern HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
 extern HashKey zobristSide[SIDE_NB];
+extern HashKey zobristRule[RULE_NB];
+extern HashKey zobristCandRange[static_cast<int>(CandidateRange::CAND_RANGE_NB)];
 
 }  // namespace Hash

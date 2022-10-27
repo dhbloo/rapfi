@@ -32,6 +32,7 @@
 
 constexpr size_t         TotalMoveTestNum = 2000000;
 constexpr size_t         TTSizeMB         = 16;
+constexpr size_t         PCTSizeMB        = 64;
 constexpr CandidateRange CandRange        = CandidateRange::SQUARE3_LINE4;
 
 struct BenchEntry
@@ -63,7 +64,8 @@ static const std::vector<BenchEntry> benchSet = {
 struct EngineState
 {
     size_t  threadNum;
-    size_t  hashSizeKB;
+    size_t  ttSizeKB;
+    size_t  pctSizeKB;
     bool    aspirationWindow;
     int     numIterationAfterSingularRoot;
     int     numIterationAfterMate;
@@ -75,7 +77,8 @@ EngineState saveEngineStateForBenckmark()
     EngineState state;
 
     state.threadNum                     = Search::Threads.size();
-    state.hashSizeKB                    = Search::TT.hashSizeKB();
+    state.ttSizeKB                      = Search::TT.hashSizeKB();
+    state.pctSizeKB                     = Search::PCT.hashSizeKB();
     state.aspirationWindow              = Config::AspirationWindow;
     state.numIterationAfterSingularRoot = Config::NumIterationAfterSingularRoot;
     state.numIterationAfterMate         = Config::NumIterationAfterMate;
@@ -87,7 +90,8 @@ EngineState saveEngineStateForBenckmark()
 void recoverEngineState(EngineState state)
 {
     Search::Threads.setNumThreads(state.threadNum);
-    Search::TT.resize(state.hashSizeKB);
+    Search::TT.resize(state.ttSizeKB);
+    Search::PCT.resize(state.pctSizeKB);
     Config::MessageMode                   = state.messageMode;
     Config::AspirationWindow              = state.aspirationWindow;
     Config::NumIterationAfterSingularRoot = state.numIterationAfterSingularRoot;
@@ -135,6 +139,7 @@ void Command::benchmark()
     Config::NumIterationAfterMate         = 0;
     Search::Threads.setNumThreads(1);
     Search::TT.resize(TTSizeMB * 1024);
+    Search::PCT.resize(PCTSizeMB * 1024);
     Search::SearchOptions options;
     options.infoMode            = Search::SearchOptions::INFO_NONE;
     options.disableOpeningQuery = true;

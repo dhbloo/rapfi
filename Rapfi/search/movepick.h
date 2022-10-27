@@ -75,6 +75,7 @@ private:
     Pos                       ttMove;
     bool                      allowPlainB4InVCF;
     bool                      hasPolicy;
+    uint8_t                   depth8;
     Score                     curScore, curPolicyScore, maxPolicyScore;
     Move                     *curMove, *endMove;
     Move                      moves[MAX_MOVES];
@@ -88,6 +89,7 @@ template <>
 struct MovePicker::ExtraArgs<MovePicker::MAIN>
 {
     Pos                 ttMove;
+    Depth               depth;
     MainHistory        *mainHistory;
     CounterMoveHistory *counterMoveHistory;
 };

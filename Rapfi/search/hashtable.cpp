@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "hashtable.h"
 
@@ -36,6 +36,8 @@ namespace Search {
 
 /// Global shared transposition table
 HashTable TT {16 * 1024};  // default size is 16 MB
+/// Global shared policy cache table
+PolicyCacheTable PCT {64 * 1024};  // default size is 64 MB
 
 HashTable::HashTable(size_t hashSizeKB) : table(nullptr), numBuckets(0)
 {
@@ -266,6 +268,91 @@ int HashTable::hashUsage() const
     }
 
     return int(cnt * 1000 / (ENTRIES_PER_BUCKET * testCnt));
+}
+
+PolicyCacheTable::PolicyCacheTable(size_t sizeKB) : table(nullptr), numEntries(0)
+{
+    resize(sizeKB);
+}
+
+PolicyCacheTable::~PolicyCacheTable()
+{
+    MemAlloc::alignedLargePageFree(table);
+}
+
+void PolicyCacheTable::resize(size_t sizeKB)
+{
+    size_t newNumEntries = sizeKB * (1024 / sizeof(PolicyEntry));
+    newNumEntries        = std::max<size_t>(newNumEntries, 1);
+
+    if (newNumEntries != numEntries) {
+        numEntries = newNumEntries;
+
+        if (table) {
+            Threads.waitForIdle();
+            MemAlloc::alignedLargePageFree(table);
+            table = nullptr;
+        }
+
+        size_t tryNumEntries = numEntries;
+        while (tryNumEntries) {
+            size_t allocSize = sizeof(PolicyEntry) * tryNumEntries;
+            table = static_cast<PolicyEntry *>(MemAlloc::alignedLargePageAlloc(allocSize));
+
+            if (!table)
+                tryNumEntries /= 2;
+            else
+                break;
+        }
+
+        if (tryNumEntries != numEntries) {
+            numEntries = tryNumEntries;
+            ERRORL("Failed to allocate " << sizeKB << " KB for policy cache table.");
+
+            // Exit program if failed to allocate 1 entry
+            if (!numEntries)
+                std::exit(EXIT_FAILURE);
+
+            MESSAGEL("Allocated " << (numEntries * sizeof(PolicyEntry) >> 10)
+                                  << " KB for policy cache table.");
+        }
+
+        clear();
+    }
+}
+
+void PolicyCacheTable::clear()
+{
+#if defined(MULTI_THREADING) && !defined(__EMSCRIPTEN__)
+    // Clear policy cache table in a multi-threaded way
+    std::vector<std::thread> threads;
+    size_t                   numThreads = std::max<size_t>(Threads.size(), 1);
+    size_t                   stride     = numEntries / numThreads;
+
+    for (size_t idx = 0; idx < numThreads; idx++) {
+        threads.emplace_back([=]() {
+            // Thread binding gives faster search on systems with a first-touch policy
+            if (Threads.size() > 8)
+                WinProcGroup::bindThisThread(idx);
+
+            // Each thread will zero its part of the hash table
+            size_t start = stride * idx;
+            size_t len   = idx != numThreads - 1 ? stride : numEntries - start;
+
+            // This memset overwrite atomic uint32_t and atomic bool, which is not a
+            // standard operation, however here we do this assuming no other threads
+            // are accesssing this policy cache table.
+            std::memset(static_cast<void *>(&table[start]), 0, len * sizeof(PolicyEntry));
+        });
+    }
+
+    for (std::thread &th : threads)
+        th.join();
+#else
+    std::memset(table, 0, numBuckets * sizeof(Bucket));
+#endif
+
+    generation = 0;
 }
 
 }  // namespace Search
