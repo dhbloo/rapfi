@@ -349,7 +349,7 @@ void PolicyCacheTable::clear()
     for (std::thread &th : threads)
         th.join();
 #else
-    std::memset(table, 0, numBuckets * sizeof(Bucket));
+    std::memset(table, 0, numEntries * sizeof(PolicyEntry));
 #endif
 
     generation = 0;

@@ -138,13 +138,15 @@ class PolicyCacheTable
 public:
     struct PolicyEntry
     {
-        static constexpr int MAX_MOVES_PER_ENTRY = 62;
+        static constexpr int MAX_MOVES_PER_ENTRY = 61;
 
         std::atomic<uint32_t> key32;
         std::atomic_bool      lock;
         uint8_t               numMoves;
         uint8_t               depth;
         uint8_t               generation;
+        Score                 minScore;
+        Score                 meanRemainScores;
 
         struct Move
         {

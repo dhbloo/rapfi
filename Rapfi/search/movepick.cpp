@@ -226,26 +226,12 @@ void MovePicker::scoreMoves()
 {
     struct PolicyCacheBuffer
     {
-        enum : Score { NilScore = Score(-30000) };
         int   boardSize;
-        Score minPolicyScore;
-        Score policyScores[MAX_MOVES];
+        Score buffer[MAX_MOVES];
 
-        PolicyCacheBuffer(int boardSize) : boardSize(boardSize), minPolicyScore(NilScore)
-        {
-            std::fill_n(policyScores, boardSize * boardSize, NilScore);
-        }
-        size_t posToIndex(Pos pos) const { return boardSize * pos.y() + pos.x(); }
-        bool   isValid(Pos pos) const { return policyScores[posToIndex(pos)] != NilScore; }
-        void   addScore(Pos pos, Score score)
-        {
-            policyScores[posToIndex(pos)] = score;
-            minPolicyScore                = std::min(minPolicyScore, score);
-        }
-        Score score(Pos pos) const
-        {
-            return std::max(policyScores[posToIndex(pos)], minPolicyScore);
-        }
+        PolicyCacheBuffer(int boardSize) : boardSize(boardSize) {}
+        void  setScore(Pos p, Score s) { buffer[boardSize * p.y() + p.x()] = s; }
+        Score score(Pos p) const { return buffer[boardSize * p.y() + p.x()]; }
     };
     using Evaluation::Evaluator;
     using Evaluation::PolicyBuffer;
@@ -272,15 +258,18 @@ void MovePicker::scoreMoves()
         if (policyCacheValid) {
             new (policyCacheBuf) PolicyCacheBuffer(board.size());
 
+            for (auto &m : *this)
+                policyCacheBuf->setScore(m.pos, policyEntry->minScore);
+
             // Refresh generation and depth of this policy cache entry
             policyEntry->depth      = std::max(policyEntry->depth, depth8);
             policyEntry->generation = PCT.getGeneration();
 
             for (size_t i = 0; i < policyEntry->numMoves; i++) {
                 auto &move = policyEntry->moves[i];
-                policyCacheBuf->addScore(move.pos, move.score);
+                policyCacheBuf->setScore(move.pos, move.score);
             }
-            
+
             policyEntry->unlock();
         }
         else {
@@ -339,24 +328,46 @@ void MovePicker::scoreMoves()
     if (bool(Type & POLICY) && evaluator && !policyCacheHit && policyEntry->tryLock()) {
         assert(stage != QVCF_MOVES);
         if (policyEntry->checkReplaceable(depth8, PCT.getGeneration())) {
-            PolicyCacheTable::PolicyEntry::Move movesBuffer[MAX_MOVES];
-            int                                 numMoves = 0;
-            for (auto &m : *this)
-                movesBuffer[numMoves++] = {m.pos, m.rawScore};
-
+            int numMoves            = std::distance(curMove, endMove);
             policyEntry->key32      = uint32_t(policyKey);
             policyEntry->depth      = depth8;
             policyEntry->generation = PCT.getGeneration();
             policyEntry->numMoves   = static_cast<uint8_t>(
                 std::min<size_t>(numMoves, PolicyCacheTable::PolicyEntry::MAX_MOVES_PER_ENTRY));
 
-            // Sort moves by their raw policy score
-            std::partial_sort(movesBuffer,
-                              movesBuffer + policyEntry->numMoves,
-                              movesBuffer + numMoves,
-                              [](auto &a, auto &b) { return a.score > b.score; });
+            // Select moves with higher scores if number of moves are larger than the cache
+            if (numMoves > policyEntry->numMoves) {
+                PolicyCacheTable::PolicyEntry::Move movesBuffer[MAX_MOVES];
+                for (int i = 0; i < numMoves; i++)
+                    movesBuffer[i] = {curMove[i].pos, curMove[i].rawScore};
 
-            std::copy_n(movesBuffer, policyEntry->numMoves, policyEntry->moves);
+                // Sort moves by their raw policy score
+                std::partial_sort(movesBuffer,
+                                  movesBuffer + policyEntry->numMoves,
+                                  movesBuffer + numMoves,
+                                  [](auto &a, auto &b) { return a.score > b.score; });
+
+                std::copy_n(movesBuffer, policyEntry->numMoves, policyEntry->moves);
+
+                Score minScore = movesBuffer[policyEntry->numMoves - 1].score;
+                int   sumScore = 0;
+                for (int i = policyEntry->numMoves; i < numMoves; i++) {
+                    sumScore += movesBuffer[i].score;
+                    minScore = std::min(minScore, movesBuffer[i].score);
+                }
+                policyEntry->minScore = minScore;
+                policyEntry->meanRemainScores =
+                    Score(sumScore / (numMoves - policyEntry->numMoves));
+            }
+            else {
+                Score minScore = std::numeric_limits<Score>::max();
+                for (int i = 0; i < numMoves; i++) {
+                    policyEntry->moves[i] = {curMove[i].pos, curMove[i].rawScore};
+                    minScore              = std::min(minScore, curMove[i].rawScore);
+                }
+                policyEntry->minScore         = minScore;
+                policyEntry->meanRemainScores = Score(-30000);
+            }
         }
         policyEntry->unlock();
     }
