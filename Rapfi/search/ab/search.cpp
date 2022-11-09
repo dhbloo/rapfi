@@ -682,6 +682,8 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         if (alpha >= beta)
             return alpha;
     }
+    else
+        searchData->rootDelta = beta - alpha;
 
     // Step 4. Transposition table lookup.
     // Use a different hash key in case of an skip move to avoid overriding full search result.
@@ -1105,7 +1107,13 @@ moves_loop:
                 || moveCount >= lateMoveCount(depth, improvement > 0)  // do LMR for late move
                 || mp.hasPolicyScore() && mp.curMoveScore() < 400)     // do LMR for low policy
         ) {
-            Depth r = reduction<PvNode>(searcher->reductions, depth, moveCount, improvement);
+            Value delta = beta - alpha;
+            Depth r     = reduction<PvNode>(searcher->reductions,
+                                        depth,
+                                        moveCount,
+                                        improvement,
+                                        delta,
+                                        searchData->rootDelta);
 
             // Policy based reduction
             if (mp.hasPolicyScore()) {

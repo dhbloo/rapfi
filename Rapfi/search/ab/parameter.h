@@ -164,15 +164,20 @@ inline void initReductionLUT(std::array<Depth, MAX_MOVES + 1> &lut, int numThrea
 
 /// Basic depth reduction in LMR search
 template <bool PvNode>
-constexpr Depth
-reduction(const std::array<Depth, MAX_MOVES + 1> &lut, Depth d, int moveCount, int improvement)
+constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> &lut,
+                          Depth                                   d,
+                          int                                     moveCount,
+                          int                                     improvement,
+                          Value                                   delta,
+                          Value                                   rootDelta)
 {
     assert(d > 0.0f);
     assert(moveCount > 0 && moveCount < lut.size());
     Depth r = lut[(int)d] * lut[moveCount];
-    if (PvNode)
-        return std::max(r - 1.0f, 0.0f);
-    return r + (improvement <= 0 && r > 1.0f);
+    if constexpr (PvNode)
+        return std::max(r - Depth(delta) / Depth(rootDelta), 0.0f);
+    else
+        return r + (improvement <= 0 && r > 1.0f);
 }
 
 }  // namespace Search::AB
