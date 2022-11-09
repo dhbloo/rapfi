@@ -735,7 +735,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
                     dbBound = BOUND_UPPER;
                 dbLabelBound = BOUND_UPPER;
                 goto try_database_cut;
-            case Database::LABEL_LOSS:  // Loss for opponent, win for self
+            case Database::LABEL_LOSE:  // Loss for opponent, win for self
                 dbValue = std::max(dbValue, VALUE_MATE_FROM_DATABASE);
                 if (dbBound != BOUND_EXACT)
                     dbBound = BOUND_LOWER;
@@ -1371,7 +1371,7 @@ moves_loop:
             // Assign determined label if we have a sure win/loss
             // Do not inherit determined label from queried record,
             // only write determined label when we have searched it.
-            newRecord.label = isWin    ? Database::LABEL_LOSS  // Loss for opponent
+            newRecord.label = isWin    ? Database::LABEL_LOSE  // Loss for opponent
                               : isLoss ? Database::LABEL_WIN   // Win for opponent
                               : dbHit && !Database::isDeterminedLabel(dbRecord.label)
                                   ? dbRecord.label

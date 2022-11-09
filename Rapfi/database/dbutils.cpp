@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "dbutils.h"
 
@@ -303,9 +303,9 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
 
             if (text && text->size() > 0) {
                 const std::string &t = *text;
-                if (t[0] == 'a' || t[0] == 'W') {
+                if (t[0] == 'W') {
                     newRecord.label = LABEL_WIN;
-                    if (t[0] == 'W' && t.size() > 1) {
+                    if (t.size() > 1) {
                         int mateStepFromRoot = std::atoi(t.c_str() + 1);
                         if (mateStepFromRoot > board.ply()) {
                             newRecord.value = mated_in(mateStepFromRoot - board.ply());
@@ -313,15 +313,27 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                         }
                     }
                 }
-                else if (t[0] == 'c' || t[0] == 'L') {
-                    newRecord.label = LABEL_LOSS;
-                    if (t[0] == 'L' && t.size() > 1) {
+                else if (t[0] == 'L') {
+                    newRecord.label = LABEL_LOSE;
+                    if (t.size() > 1) {
                         int mateStepFromRoot = std::atoi(t.c_str() + 1);
                         if (mateStepFromRoot > board.ply()) {
                             newRecord.value = mate_in(mateStepFromRoot - board.ply());
                             newRecord.setDepthBound(0, BOUND_EXACT);
                         }
                     }
+                }
+                else if (t[0] == Config::DatabaseLibBlackWinMark && board.sideToMove() == BLACK) {
+                    newRecord.label = LABEL_WIN;
+                }
+                else if (t[0] == Config::DatabaseLibWhiteWinMark && board.sideToMove() == WHITE) {
+                    newRecord.label = LABEL_WIN;
+                }
+                else if (t[0] == Config::DatabaseLibBlackLoseMark && board.sideToMove() == BLACK) {
+                    newRecord.label = LABEL_LOSE;
+                }
+                else if (t[0] == Config::DatabaseLibWhiteLoseMark && board.sideToMove() == WHITE) {
+                    newRecord.label = LABEL_LOSE;
                 }
                 else if ((t[0] == 'v' || t[0] == 'm') && t.length() > 1) {
                     newRecord.label = LABEL_NONE;
@@ -336,7 +348,7 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     newRecord.text = t;
             }
 
-            if (comment) {
+            if (comment && !Config::DatabaseLibIgnoreComment) {
                 if (newRecord.text.empty())
                     newRecord.text = *comment;
                 else {

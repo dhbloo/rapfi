@@ -147,6 +147,13 @@ extern std::string DatabaseURL;
 extern size_t      DatabaseCacheSize;
 extern size_t      DatabaseRecordCacheSize;
 
+// Library import options
+extern char        DatabaseLibBlackWinMark;
+extern char        DatabaseLibWhiteWinMark;
+extern char        DatabaseLibBlackLoseMark;
+extern char        DatabaseLibWhiteLoseMark;
+extern bool        DatabaseLibIgnoreComment;
+
 // Database search options
 extern bool                      DatabaseReadonlyMode;
 extern int                       DatabaseQueryPly;

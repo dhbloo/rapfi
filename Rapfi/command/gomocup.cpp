@@ -746,10 +746,10 @@ void queryDatabaseAll(bool getPosition)
             if (record.label > 0) {
                 displayLabel.push_back(record.label);
 
-                if (record.label == LABEL_WIN || record.label == LABEL_LOSS) {
+                if (record.label == LABEL_WIN || record.label == LABEL_LOSE) {
                     Value mateValue = Value(-record.value);
                     if (record.label == LABEL_WIN && mateValue > VALUE_MATE_IN_MAX_PLY
-                        || record.label == LABEL_LOSS && mateValue < VALUE_MATED_IN_MAX_PLY)
+                        || record.label == LABEL_LOSE && mateValue < VALUE_MATED_IN_MAX_PLY)
                         displayLabel += std::to_string(mate_step(mateValue, -1));
                     else
                         displayLabel.push_back('*');
@@ -824,7 +824,7 @@ void editDatabaseTVD()
     if (Search::Threads.dbStorage()) {
         switch (newLabel) {
         case 'W': newLabel = LABEL_WIN; break;
-        case 'L': newLabel = LABEL_LOSS; break;
+        case 'L': newLabel = LABEL_LOSE; break;
         case 'D': newLabel = LABEL_DRAW; break;
         default: break;
         }
@@ -867,13 +867,13 @@ void deleteDatabaseAll(bool getPosition)
         upperInplace(deleteType);
         if (deleteType == "NONWL")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_WIN || record.label == LABEL_LOSS
+                return record.label == LABEL_WIN || record.label == LABEL_LOSE
                            ? DBClient::DelType::NoDelete
                            : DBClient::DelType::DeleteRecursive;
             };
         else if (deleteType == "NONWLRECURSIVE")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_WIN || record.label == LABEL_LOSS
+                return record.label == LABEL_WIN || record.label == LABEL_LOSE
                            ? DBClient::DelType::NoDeleteRecursive
                            : DBClient::DelType::DeleteRecursive;
             };
@@ -899,23 +899,23 @@ void deleteDatabaseAll(bool getPosition)
             };
         else if (deleteType == "L")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_LOSS ? DBClient::DelType::DeleteRecursive
+                return record.label == LABEL_LOSE ? DBClient::DelType::DeleteRecursive
                                                   : DBClient::DelType::NoDelete;
             };
         else if (deleteType == "LRECURSIVE")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_LOSS ? DBClient::DelType::DeleteRecursive
+                return record.label == LABEL_LOSE ? DBClient::DelType::DeleteRecursive
                                                   : DBClient::DelType::NoDeleteRecursive;
             };
         else if (deleteType == "WL")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_WIN || record.label == LABEL_LOSS
+                return record.label == LABEL_WIN || record.label == LABEL_LOSE
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDelete;
             };
         else if (deleteType == "WLRECURSIVE")
             deleteFilter = [](DBRecord &record) {
-                return record.label == LABEL_WIN || record.label == LABEL_LOSS
+                return record.label == LABEL_WIN || record.label == LABEL_LOSE
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDeleteRecursive;
             };
@@ -933,7 +933,7 @@ void deleteDatabaseAll(bool getPosition)
             deleteFilter = [](DBRecord &record) {
                 Value value = Value(-record.value);
                 return record.label == LABEL_WIN && value <= VALUE_MATE_IN_MAX_PLY
-                               || record.label == LABEL_LOSS && value >= VALUE_MATED_IN_MAX_PLY
+                               || record.label == LABEL_LOSE && value >= VALUE_MATED_IN_MAX_PLY
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDelete;
             };
@@ -941,7 +941,7 @@ void deleteDatabaseAll(bool getPosition)
             deleteFilter = [](DBRecord &record) {
                 Value value = Value(-record.value);
                 return record.label == LABEL_WIN && value <= VALUE_MATE_IN_MAX_PLY
-                               || record.label == LABEL_LOSS && value >= VALUE_MATED_IN_MAX_PLY
+                               || record.label == LABEL_LOSE && value >= VALUE_MATED_IN_MAX_PLY
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDeleteRecursive;
             };
@@ -951,7 +951,7 @@ void deleteDatabaseAll(bool getPosition)
             deleteFilter = [step](DBRecord &record) {
                 Value value = Value(-record.value);
                 return (record.label == LABEL_WIN && value > VALUE_MATE_IN_MAX_PLY
-                        || record.label == LABEL_LOSS && value < VALUE_MATED_IN_MAX_PLY)
+                        || record.label == LABEL_LOSE && value < VALUE_MATED_IN_MAX_PLY)
                                && mate_step(value, -1) <= step
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDelete;
@@ -963,7 +963,7 @@ void deleteDatabaseAll(bool getPosition)
             deleteFilter = [step](DBRecord &record) {
                 Value value = Value(-record.value);
                 return (record.label == LABEL_WIN && value > VALUE_MATE_IN_MAX_PLY
-                        || record.label == LABEL_LOSS && value < VALUE_MATED_IN_MAX_PLY)
+                        || record.label == LABEL_LOSE && value < VALUE_MATED_IN_MAX_PLY)
                                && mate_step(value, -1) <= step
                            ? DBClient::DelType::DeleteRecursive
                            : DBClient::DelType::NoDeleteRecursive;

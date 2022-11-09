@@ -297,7 +297,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
         string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE_UPPER)
         string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER}})
     endif()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unused-variable -Wno-unused-function -Wno-missing-braces -Wno-logical-op-parentheses -Wno-parentheses -Wno-sign-compare")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unused-variable -Wno-unused-function -Wno-missing-braces -Wno-logical-op-parentheses -Wno-parentheses -Wno-sign-compare -Wno-strict-prototypes")
 
     if(WIN32)
         target_link_libraries(rapfi PRIVATE
@@ -306,7 +306,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
             $<$<CONFIG:Release>:-Wl,-Bstatic> stdc++ pthread
         )
         if(NOT NO_COMMAND_MODULES)
-            target_link_libraries(rapfi PRIVATE -Wl,-Bdynamic tbb)
+            target_link_libraries(rapfi PRIVATE -Wl,-Bdynamic tbb12)
         endif()
     elseif(NOT EMSCRIPTEN)
         target_link_libraries(rapfi PRIVATE pthread tbb)

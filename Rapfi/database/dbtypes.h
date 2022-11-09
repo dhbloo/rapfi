@@ -33,7 +33,7 @@ enum DBLabel : int8_t {
 
     LABEL_FORCEMOVE = '!',  /// the forced move (will be used as root move if exist)
     LABEL_WIN       = 'w',  /// a winning position
-    LABEL_LOSS      = 'l',  /// a losing position
+    LABEL_LOSE      = 'l',  /// a losing position
     LABEL_DRAW      = 'd',  /// a draw position
     LABEL_BLOCKMOVE = 'x',  /// a blocked position (will not be considered in search)
 
@@ -43,7 +43,7 @@ enum DBLabel : int8_t {
 /// Return true if the label has a determined result.
 constexpr bool isDeterminedLabel(DBLabel label)
 {
-    return label == LABEL_WIN || label == LABEL_LOSS || label == LABEL_DRAW;
+    return label == LABEL_WIN || label == LABEL_LOSE || label == LABEL_DRAW;
 }
 
 inline bool operator==(DBLabel lhs, DBLabel rhs)

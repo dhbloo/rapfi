@@ -82,7 +82,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{matrix.target.msys_sys}}
-          install: mingw-w64-${{matrix.target.msys_env}}-${{matrix.target.c_compiler}} mingw-w64-${{matrix.target.msys_env}}-intel-tbb make cmake git
+          install: mingw-w64-${{matrix.target.msys_env}}-${{matrix.target.c_compiler}} mingw-w64-${{matrix.target.msys_env}}-tbb mingw-w64-${{matrix.target.msys_env}}-cmake make git
 
       - name: Extract the bench hash from the commit history
         run: |

@@ -156,6 +156,16 @@ std::function<std::unique_ptr<::Database::DBStorage>(std::string)> DatabaseMaker
 size_t DatabaseCacheSize       = 2048;
 size_t DatabaseRecordCacheSize = 16384;
 
+// Library import options
+
+/// Mapping of marks in library file
+char DatabaseLibBlackWinMark  = 'a';
+char DatabaseLibWhiteWinMark  = 'a';
+char DatabaseLibBlackLoseMark = 'c';
+char DatabaseLibWhiteLoseMark = 'c';
+/// Ignore all comments in imported library file
+bool DatabaseLibIgnoreComment = false;
+
 // Database search options
 
 /// Whether to write/update the database in search
@@ -651,7 +661,7 @@ void Config::readDatabase(const cpptoml::table &t)
     DatabaseCacheSize      = t.get_as<size_t>("cache_size").value_or(DatabaseCacheSize);
     DatabaseRecordCacheSize =
         t.get_as<size_t>("record_cache_size").value_or(DatabaseRecordCacheSize);
-    DatabaseMaker = nullptr;
+    DatabaseMaker            = nullptr;
 
     if (DatabaseType == "yixindb") {
         if (DatabaseURL.empty())
@@ -752,6 +762,14 @@ void Config::readDatabase(const cpptoml::table &t)
                                                 .value_or(DatabaseQueryResultDepthBoundBias);
     }
 
+    if (auto s = t.get_table("libfile")) {
+        DatabaseLibBlackWinMark  = t.get_as<std::string>("black_win_mark").value_or("a")[0];
+        DatabaseLibWhiteWinMark  = t.get_as<std::string>("white_win_mark").value_or("a")[0];
+        DatabaseLibBlackLoseMark = t.get_as<std::string>("black_lose_mark").value_or("c")[0];
+        DatabaseLibWhiteLoseMark = t.get_as<std::string>("white_lose_mark").value_or("c")[0];
+        DatabaseLibIgnoreComment = t.get_as<bool>("ignore_comment").value_or(false);
+    }
+    
     DatabaseReadonlyMode = t.get_as<bool>("enable_by_default").value_or(false);
 
     if (DatabaseDefaultEnabled)
