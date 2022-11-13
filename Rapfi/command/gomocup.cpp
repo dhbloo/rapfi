@@ -30,6 +30,7 @@
 #include "../search/movepick.h"
 #include "../search/opening.h"
 #include "../search/searchthread.h"
+#include "../tuning/tunemap.h"
 #include "command.h"
 
 #include <fstream>
@@ -160,6 +161,10 @@ void getOption()
     int64_t     val;
 
     std::cin >> token;
+
+    if (Tuning::TuneMap::tryReadOption(token, std::cin))
+        return;
+
     upperInplace(token);
 
     if (token == "TIMEOUT_TURN") {
@@ -1247,6 +1252,9 @@ extern "C" bool gomocupLoopOnce()
 /// This will only return after all searching threads have ended.
 void Command::gomocupLoop()
 {
+    // Init tuning parameter table
+    Tuning::TuneMap::init();
+
     while (!GomocupProtocol::gomocupLoopOnce()) {
 #ifdef MULTI_THREADING
         // For multi-threading build, yield before reading the next

@@ -117,6 +117,7 @@ set(HEADERS
     tuning/dataset.h
     tuning/datawriter.h
     tuning/optimizer.h
+    tuning/tunemap.h
     tuning/tuner.h
 
     search/hashtable.h
