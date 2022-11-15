@@ -168,8 +168,8 @@ void Command::benchmark()
 
         // Hash from nodes searched
         hasher << nodes;
-        // Hash from entire TT
-        hasher((void *)Search::TT.firstEntry(0), TTSizeMB * 1024 * 1024);
+        // Hash from the last output eval
+        hasher << Search::Threads.main()->rootMoves[0].value;
     }
 
     uint32_t hash32 = (uint64_t(hasher) >> 32) ^ uint64_t(hasher);

@@ -831,7 +831,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         Value ralpha = alpha - razorVerifyMargin(depth);
         Value v      = vcfsearch<Rule, NonPV>(board, ss, ralpha, ralpha + 1);
 
-        if (depth < RAZOR_PRUN_DEPTH || v <= ralpha)
+        if (depth < RAZOR_PRUN_DEPTH[Rule] || v <= ralpha)
             return v;
     }
 
@@ -872,14 +872,14 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Step 10. Internal iterative deepening (reduction)
     if (!RootNode && PvNode && !ttMove)
-        depth -= IIR_REDUCTION_PV;
+        depth -= IIR_REDUCTION_PV[Rule];
 
     // Drop to vcfsearch if depth is below zero
     if (depth <= 0)
         return vcfsearch<Rule, NT>(board, ss, alpha, beta);
 
-    if (depth >= IID_DEPTH && !ttMove) {
-        depth -= IIR_REDUCTION;
+    if (depth >= IID_DEPTH[Rule] && !ttMove) {
+        depth -= IIR_REDUCTION[Rule];
 
         // We only need best move from the iid search, so we just discard its result
         search<Rule, NT>(board, ss, alpha, beta, depth - iidDepthReduction(depth), cutNode);
@@ -991,7 +991,7 @@ moves_loop:
                 continue;
 
             // Skip trivial moves at lower depth (~10 elo)
-            if (trivialMove && depth < TRIVIAL_PRUN_DEPTH)
+            if (trivialMove && depth < TRIVIAL_PRUN_DEPTH[Rule])
                 continue;
 
             // Policy based pruning
@@ -999,7 +999,8 @@ moves_loop:
                 continue;
 
             // Prun distract defence move (which is likely to drastically delay a winning)
-            if (oppo4 && depth < TRIVIAL_PRUN_DEPTH && ss->moveP4[oppo] < E_BLOCK4 && distract)
+            if (oppo4 && depth < TRIVIAL_PRUN_DEPTH[Rule] && ss->moveP4[oppo] < E_BLOCK4
+                && distract)
                 continue;
         }
 
@@ -1012,11 +1013,11 @@ moves_loop:
 
         // Singular extension: only one move fails high while other moves fails low on a search of
         // (alpha-s, beta-s), then this move is singular and should be extended.
-        else if (!RootNode && depth >= SE_DEPTH && move == ttMove
+        else if (!RootNode && depth >= SE_DEPTH[Rule] && move == ttMove
                  && !skipMove                                  // No recursive singular search
                  && std::abs(ttValue) < VALUE_MATE_IN_MAX_PLY  // ttmove value is not a mate
                  && (ttBound & BOUND_LOWER)                    // ttMove failed high last time
-                 && ttDepth >= depth - SE_TTE_DEPTH            // ttEntry has enough depth to trust
+                 && ttDepth >= depth - SE_TTE_DEPTH[Rule]      // ttEntry has enough depth to trust
         ) {
             bool  formerPv     = !PvNode && ss->ttPv;
             Value singularBeta = std::max(ttValue - singularMargin(depth, formerPv), -VALUE_MATE);
@@ -1100,7 +1101,7 @@ moves_loop:
         bool doFullDepthSearch;
         // Step 15. Late move reduction (LMR). Moves are searched with a reduced
         // depth and will be re-searched at full depth if fail high.
-        if (depth >= LMR_DEPTH && moveCount > 1 + 2 * RootNode
+        if (depth >= LMR_DEPTH[Rule] && moveCount > 1 + 2 * RootNode
             && (!importantMove  // do LMR for non important move
                 || distract     // do LMR for distract move
                 || cutNode      // do LMR for all moves in cut node
