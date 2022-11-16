@@ -75,7 +75,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt update
-          sudo apt install -y libtbb-dev valgrind
+          sudo apt install -y libtbb-dev
 
       - name: Setup msys and install required packages
         if: runner.os == 'Windows'
@@ -104,10 +104,6 @@ jobs:
           actual_bench=$(grep "Hash" bench.txt | sed "s/[^H]*\sHash:\?\s\([a-f0-9]\{8\}\).*/\1/g")
           if [[ "$actual_bench" != "$commit_bench" ]]; then echo "Incorrect bench, got '$actual_bench' expected '$commit_bench'" && exit 1; fi
 
-      - name: Run valgrind
-        if: runner.os == 'Linux' && matrix.arch.name == 'avx2'
-        run: cd build && valgrind --error-exitcode=1 ./pbrain-rapfi* bench
-
       - name: Upload
         uses: actions/upload-artifact@v3
         with:
@@ -135,7 +131,7 @@ jobs:
           cmake --build . -j2 && strip pbrain-rapfi*
           mv -v pbrain-rapfi rapfi-linux-avx2
 
-      - name: upload to fishtest
+      - name: Upload to fishtest
         run: echo "task_name=${{ github.event.head_commit.message }}"
 
       - name: Upload

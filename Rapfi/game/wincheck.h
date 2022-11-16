@@ -51,7 +51,7 @@ Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
     if (board.p4Count(self, B_FLEX4))
         return mate_in(ply + 3);
 
-    auto b4Count = [&](Color side) {
+    auto block4Count = [&](Color side) {
         return board.p4Count(side, C_BLOCK4_FLEX3) + board.p4Count(side, D_BLOCK4_PLUS)
                + board.p4Count(side, E_BLOCK4);
     };
@@ -69,7 +69,7 @@ Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
         // Check C_BLOCK4_FLEX3 winning type
         if (int c_count = board.p4Count(self, C_BLOCK4_FLEX3)) {
             // If opponent has not B4 move, we simply win in 4 steps
-            if ((Rule != Rule::RENJU || self == WHITE) && b4Count(oppo) == 0)
+            if ((Rule != Rule::RENJU || self == WHITE) && block4Count(oppo) == 0)
                 return mate_in(ply + 5);
 
             // Fast static check for opponent defence at C_BLOCK4_FLEX3 move
@@ -96,7 +96,7 @@ Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
     check_flex3_2x:
         // Check F_FLEX3_2X winning type
         if (board.p4Count(self, F_FLEX3_2X)) {
-            if (b4Count(oppo) == 0)
+            if (board.p4Count(oppo, B_FLEX4) + block4Count(oppo) == 0)
                 return mate_in(ply + 5);
         }
     }
