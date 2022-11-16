@@ -310,7 +310,12 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
             target_link_libraries(rapfi PRIVATE -Wl,-Bdynamic tbb12)
         endif()
     elseif(NOT EMSCRIPTEN)
-        target_link_libraries(rapfi PRIVATE pthread tbb)
+	    if((NOT NO_MULTI_THREADING) OR (NOT NO_COMMAND_MODULES))
+		    target_link_libraries(rapfi PRIVATE pthread)
+		endif()
+        if(NOT NO_COMMAND_MODULES)
+            target_link_libraries(rapfi PRIVATE tbb)
+        endif()
     endif()
 endif()
 

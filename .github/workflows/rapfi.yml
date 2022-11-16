@@ -97,7 +97,6 @@ jobs:
           mv -v pbrain-rapfi pbrain-rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
 
       - name: Check bench signature
-        if: matrix.arch.name == 'avx2'
         run: |
           cd build && find ../../Networks -mindepth 2 -type f -exec cp {} . \;
           ./pbrain-rapfi* bench > bench.txt
@@ -114,4 +113,36 @@ jobs:
         with:
           name: Rapfi
           path: Rapfi/build/pbrain-rapfi*
+
+  Fishtest:
+    name: linux-avx2
+    runs-on: ubuntu-18.04
+    env:
+      CC: clang
+      CXX: clang++
+    defaults:
+      run:
+        working-directory: Rapfi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build
+        run: |
+          rm -rf build && mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_BMI2=OFF -DUSE_AVX2=ON -DUSE_AVX=ON -DUSE_SSE=ON -DNO_COMMAND_MODULES=ON
+          cmake --build . -j2 && strip pbrain-rapfi*
+          mv -v pbrain-rapfi rapfi-linux-avx2
+
+      - name: upload to fishtest
+        run: echo "task_name=${{ github.event.head_commit.message }}"
+
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: Fishtest
+          path: Rapfi/build/rapfi-linux-avx2
+
+
 
