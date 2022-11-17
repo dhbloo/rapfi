@@ -36,14 +36,14 @@ constexpr int MAX_PLY   = 256;
 
 constexpr Value MARGIN_INFINITE             = Value(INT16_MAX);
 constexpr Depth ASPIRATION_DEPTH            = 5.0f;
-constexpr Depth IID_DEPTH[RULE_NB]          = {12.86f, 8.0f, 8.0f};
-constexpr Depth IIR_REDUCTION[RULE_NB]      = {0.93f, 1.0f, 1.0f};
-constexpr Depth IIR_REDUCTION_PV[RULE_NB]   = {2.15f, 2.0f, 2.0f};
-constexpr Depth SE_DEPTH[RULE_NB]           = {6.68f, 7.0f, 7.0f};
-constexpr Depth SE_TTE_DEPTH[RULE_NB]       = {2.33f, 3.0f, 3.0f};
-constexpr Depth LMR_DEPTH[RULE_NB]          = {2.78f, 3.0f, 3.0f};
-constexpr Depth RAZOR_PRUN_DEPTH[RULE_NB]   = {2.89f, 2.0f, 2.0f};
-constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 6.0f, 6.0f};
+constexpr Depth IID_DEPTH[RULE_NB]          = {12.86f, 12.12f, 12.68f};
+constexpr Depth IIR_REDUCTION[RULE_NB]      = {0.93f, 0.69f, 0.51f};
+constexpr Depth IIR_REDUCTION_PV[RULE_NB]   = {2.15f, 2.09f, 1.61f};
+constexpr Depth SE_DEPTH[RULE_NB]           = {6.68f, 6.14f, 8.75f};
+constexpr Depth SE_TTE_DEPTH[RULE_NB]       = {2.33f, 2.62f, 2.77f};
+constexpr Depth LMR_DEPTH[RULE_NB]          = {2.78f, 2.51f, 2.54f};
+constexpr Depth RAZOR_PRUN_DEPTH[RULE_NB]   = {2.89f, 2.16f, 2.74f};
+constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 4.45f, 4.95f};
 
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
