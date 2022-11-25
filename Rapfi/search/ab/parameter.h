@@ -180,4 +180,18 @@ constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> &lut,
         return r + (improvement <= 0 && r > 1.0f);
 }
 
+constexpr Depth CR1[RULE_NB]                  = {0.01f * 8.475f, 0.01f * 9.0f, 0.01f * 7.200f};
+constexpr Depth CR2[RULE_NB]                  = {0.01f * 4.143f, 0.01f * 4.0f, 0.01f * 3.628f};
+constexpr Depth CR3[RULE_NB]                  = {0.01f * 2.189f, 0.01f * 2.0f, 0.01f * 1.950f};
+constexpr Depth CR4[RULE_NB]                  = {0.01f * 0.719f, 0.01f * 0.7f, 0.01f * 0.681f};
+constexpr Depth PolicyReductionScale[RULE_NB] = {2.818f, 3.2f, 3.469f};
+constexpr Depth PolicyReductionBias[RULE_NB]  = {3.724f, 5.0f, 5.205f};
+constexpr Depth PolicyReductionMax[RULE_NB]   = {3.696f, 4.0f, 4.047f};
+
+template <Rule R>
+constexpr Depth complexityReduction(bool trivialMove, bool importantMove, bool distract)
+{
+    return (trivialMove ? (distract ? CR1 : CR2) : !importantMove ? CR3 : CR4)[R];
+}
+
 }  // namespace Search::AB

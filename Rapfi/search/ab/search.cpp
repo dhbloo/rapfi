@@ -1118,15 +1118,15 @@ moves_loop:
 
             // Policy based reduction
             if (mp.hasPolicyScore()) {
-                constexpr float Scale = 0.32f / Evaluation::PolicyBuffer::ScoreScale;
-                r += std::clamp(5.0f - mp.curMoveScore() * Scale, 0.0f, 4.0f);
+                const float Scale =
+                    PolicyReductionScale[Rule] * (0.1f / Evaluation::PolicyBuffer::ScoreScale);
+                r += std::clamp(PolicyReductionBias[Rule] - mp.curMoveScore() * Scale,
+                                0.0f,
+                                PolicyReductionMax[Rule]);
             }
 
             // Dynamic reduction based on complexity
-            r += complexity
-                 * (trivialMove      ? (distract ? 0.09f : 0.04f)
-                    : !importantMove ? (distract ? 0.022f : 0.02f)
-                                     : 0.007f);
+            r += complexity * complexityReduction<Rule>(trivialMove, importantMove, distract);
 
             // Decrease reduction if position is or has been on the PV and
             // the node is not likely to fail low.
