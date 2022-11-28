@@ -59,19 +59,20 @@ constexpr Value nextAspirationWindowDelta(Value prevDelta = VALUE_ZERO)
 /// Razoring depth & margins
 constexpr Value razorMargin(Depth d)
 {
-    return d < 6.0f ? Value(std::max(80 + int(60 * d), 0)) : MARGIN_INFINITE;
+    return d < 3.36f ? static_cast<Value>(std::max(int(0.125f * d * d + 46 * d) + 49, 0))
+                     : MARGIN_INFINITE;
 }
 
 /// Razoring verification margin
 constexpr Value razorVerifyMargin(Depth d)
 {
-    return razorMargin(d - 2.0f);
+    return razorMargin(d - 2.9f);
 }
 
 /// Static futility pruning depth & margins
 constexpr Value futilityMargin(Depth d, bool improving)
 {
-    return Value(std::max(int(40 * (d - improving)), 0));
+    return Value(std::max(int(54 * (d - improving)), 0));
 }
 
 /// Null move pruning margin
@@ -109,7 +110,7 @@ constexpr Value failLowMargin(Depth d)
 inline const auto FutilityMC = []() {
     std::array<int, MAX_MOVES + 1> MC {0};  // [depth]
     for (size_t i = 1; i < MC.size(); i++)
-        MC[i] = 3 + int(std::pow(i, 1.5f));
+        MC[i] = 3 + int(std::pow(i, 1.4));
     return MC;
 }();
 

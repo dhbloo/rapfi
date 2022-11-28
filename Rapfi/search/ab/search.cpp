@@ -1158,7 +1158,7 @@ moves_loop:
             int deeper = r < -1 && moveCount <= 5 ? 1 : 0;
 
             // Clamp the LMR depth to newDepth (no depth less than one)
-            Depth d = std::clamp(newDepth - r, 1.0f, newDepth + deeper);
+            Depth d = std::max(std::min(newDepth - r, newDepth + deeper), 1.0f);
 
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
 
