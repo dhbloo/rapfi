@@ -479,7 +479,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
     // we are not in balance move mode. (no aspiration window for balance move mode).
     if (depth >= ASPIRATION_DEPTH && Config::AspirationWindow
         && !thisThread->options().balanceMode) {
-        delta = nextAspirationWindowDelta();
+        delta = nextAspirationWindowDelta(prevValue);
         alpha = std::max(prevValue - delta, -VALUE_INFINITE);
         beta  = std::min(prevValue + delta, VALUE_INFINITE);
     }
@@ -540,7 +540,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         else
             break;
 
-        delta = nextAspirationWindowDelta(delta);
+        delta = nextAspirationWindowDelta(value, delta);
         assert(alpha >= -VALUE_INFINITE && beta <= VALUE_INFINITE);
     }
 }

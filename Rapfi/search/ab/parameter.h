@@ -48,12 +48,12 @@ constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 4.45f, 4.95f};
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
 
-/// Aspiration window delta. When prevDelta is zero, returns the initial
-/// aspiration window size. Otherwise returns the next expanded window
-/// size for the given previous delta.
-constexpr Value nextAspirationWindowDelta(Value prevDelta = VALUE_ZERO)
+/// Aspiration window delta. When prevDelta is zero, returns the initial aspiration 
+/// window size. Otherwise returns the next expanded window size for the given prevDelta.
+/// Window will expand faster for large absolute previous value.
+constexpr Value nextAspirationWindowDelta(Value prevValue, Value prevDelta = VALUE_ZERO)
 {
-    return prevDelta ? prevDelta * 3 / 4 + 6 : Value(16);
+    return prevDelta ? prevDelta * (3 + std::abs(prevValue) / 1024) / 4 + 6 : Value(16);
 }
 
 /// Razoring depth & margins
