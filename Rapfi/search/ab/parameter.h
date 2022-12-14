@@ -53,7 +53,7 @@ constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 4.45f, 4.95f};
 /// size for the given previous delta.
 constexpr Value nextAspirationWindowDelta(Value prevDelta = VALUE_ZERO)
 {
-    return prevDelta ? prevDelta * 3 / 2 + 5 : Value(17);
+    return prevDelta ? prevDelta * 3 / 4 + 6 : Value(16);
 }
 
 /// Razoring depth & margins
@@ -78,32 +78,32 @@ constexpr Value futilityMargin(Depth d, bool improving)
 /// Null move pruning margin
 constexpr Value nullMoveMargin(Depth d)
 {
-    return d >= 8.0f ? Value(680 - 27 * std::min(int(d), 20)) : MARGIN_INFINITE;
+    return d >= 8.2f ? Value(539 - 27 * std::min(int(d), 17)) : MARGIN_INFINITE;
 }
 
 /// Null move search depth reduction. The result of a null move will be
 /// tested using reduced depth search.
 constexpr Depth nullMoveReduction(Depth d)
 {
-    return 3.21f + 0.27f * d;
+    return 3.91f + 0.19f * d;
 }
 
 /// Internal iterative deepening depth reduction.
 constexpr Depth iidDepthReduction(Depth d)
 {
-    return 7.0f;
+    return std::max(7.25f + 0.47f * d, 5.32f);
 }
 
 /// Fail high reduction margin
 constexpr Value failHighMargin(Depth d, int oppo4)
 {
-    return Value(40 * (int(d) + bool(oppo4) * 2));
+    return Value(30 * int(d) + 75 * bool(oppo4));
 }
 
 /// Fail low reduction margin
 constexpr Value failLowMargin(Depth d)
 {
-    return Value(100 + int(50 * d));
+    return Value(80 + int(40 * d));
 }
 
 // Lookup tables used for move count based pruning, initialized at startup
@@ -137,20 +137,20 @@ constexpr Depth singularReduction(Depth d, bool formerPv)
 /// Margin for double singular extension
 constexpr Value doubleSEMargin(Depth d)
 {
-    return Value(70 - std::min(int(d) / 2, 20));
+    return Value(50 - std::min(int(d * 0.6f), 20));
 }
 
 /// Delta pruning margin for QVCF search
 constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
 {
-    return Value(std::max((rule == RENJU ? 4000 : 2500) + 64 * int(d), 600));
+    return Value(std::max(3002 + 59 * int(d), 705));
 }
 
 /// LMR move count. For non-PV all node, moves that exceeds late move count
 /// will be searched will late move reduction even without other condition.
 constexpr int lateMoveCount(Depth d, bool improving)
 {
-    return 1 + 2 * improving + int((improving ? 1.35f : 1.2f) * d);
+    return 1 + 2 * improving + int((improving ? 1.44f : 1.02f) * d);
 }
 
 /// Init Reductions table according to num threads.
