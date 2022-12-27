@@ -995,7 +995,7 @@ moves_loop:
                 continue;
 
             // Policy based pruning
-            if (mp.hasPolicyScore() && mp.curMoveScore() < 400 - int(depth * 50))
+            if (mp.hasPolicyScore() && mp.curMoveScore() < 414 - int(depth * 47))
                 continue;
 
             // Prun distract defence move (which is likely to drastically delay a winning)
@@ -1009,7 +1009,7 @@ moves_loop:
 
         // Singular response extension for opponent B4 attack
         if (oppo5)
-            extension = 1.0f;
+            extension = 1.25f;
 
         // Singular extension: only one move fails high while other moves fails low on a search of
         // (alpha-s, beta-s), then this move is singular and should be extended.
@@ -1043,7 +1043,7 @@ moves_loop:
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
                 if (!PvNode && value < singularBeta - doubleSEMargin(depth)
-                    && ss->doubleExtensionCount < std::min(searchData->rootDepth / 5, 8))
+                    && ss->doubleExtensionCount < std::min(searchData->rootDepth / 4, 9))
                     extension = 2.0f;
                 else
                     extension = 1.0f;
@@ -1074,7 +1074,7 @@ moves_loop:
             // Additional extension for RENJU rule
             if constexpr (Rule == Rule::RENJU) {
                 if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
-                    extension += (distSelf <= 4 ? 0.25f : 0.1f);
+                    extension += (distSelf <= 4 ? 0.20f : 0.08f);
             }
         }
 
@@ -1106,7 +1106,7 @@ moves_loop:
                 || distract     // do LMR for distract move
                 || cutNode      // do LMR for all moves in cut node
                 || moveCount >= lateMoveCount(depth, improvement > 0)  // do LMR for late move
-                || mp.hasPolicyScore() && mp.curMoveScore() < 400)     // do LMR for low policy
+                || mp.hasPolicyScore() && mp.curMoveScore() < 416)     // do LMR for low policy
         ) {
             Value delta = beta - alpha;
             Depth r     = reduction<PvNode>(searcher->reductions,
@@ -1155,7 +1155,7 @@ moves_loop:
             }
 
             // Allow LMR to do deeper search in some circumstances
-            int deeper = r < -1 && moveCount <= 5 ? 1 : 0;
+            int deeper = r < -1 && moveCount <= 4 ? 1 : 0;
 
             // Clamp the LMR depth to newDepth (no depth less than one)
             Depth d = std::max(std::min(newDepth - r, newDepth + deeper), 1.0f);

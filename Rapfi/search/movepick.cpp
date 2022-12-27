@@ -268,7 +268,7 @@ void MovePicker::scoreMoves()
             assert(counterMoveHistory);
 
             if (Pos lastMove = board.getLastMove(); board.isInBoard(lastMove)) {
-                const int CounterMoveBonus = 16;
+                const int CounterMoveBonus = 21;
                 auto [counterMove, counterMoveP4] =
                     (*counterMoveHistory)[oppo][lastMove.moveIndex()].get();
 
