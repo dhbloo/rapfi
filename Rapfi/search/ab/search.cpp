@@ -874,6 +874,10 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     if (!RootNode && PvNode && !ttMove)
         depth -= IIR_REDUCTION_PV[Rule];
 
+    // Reduce for pv ttMove that has not been chosen for a few iterations
+    if (PvNode && depth > 1 && ttMove)
+        depth -= std::clamp((depth - ttDepth) * 0.4f, 0.0f, 3.0f);
+
     // Drop to vcfsearch if depth is below zero
     if (depth <= 0)
         return vcfsearch<Rule, NT>(board, ss, alpha, beta);
