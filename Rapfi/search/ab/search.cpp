@@ -1062,24 +1062,12 @@ moves_loop:
 
         // Extension for ttmove without singular extension
         else if (move == ttMove) {
-            /*
             // Extension for ttmove
-            extension = PvNode ? 0.5f : 0.35f;
+            extension = PvNode ? 0.125f : 0.075f;
 
-            // Extension for ttmove being distract
-            if (distOppo > 4)
-                extension += 0.15f;
-
-            // Extension for ttmove being continous B4
-            if ((ss - 2)->moveP4[self] >= E_BLOCK4 && moveP4[self] >= E_BLOCK4)
-                extension += 0.15f;
-            */
-
-            // Additional extension for RENJU rule
-            if constexpr (Rule == Rule::RENJU) {
-                if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
-                    extension += (distSelf <= 4 ? 0.20f : 0.08f);
-            }
+            // Additional extension for near B4 ttmove
+            if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
+                extension += (distSelf <= 4 ? 0.20f : 0.08f);
         }
 
         // Fail high reduction
