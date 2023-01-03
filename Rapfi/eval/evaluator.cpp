@@ -14,12 +14,10 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "evaluator.h"
 
-#include "../config.h"
-#include "../core/iohelper.h"
 #include "../game/board.h"
 
 #include <algorithm>
@@ -45,10 +43,11 @@ ValueType::ValueType(float winLogits, float lossLogits, float drawLogits, bool a
         drawRate *= invSum;
     }
 
-    double wlr = winLossRate();
-    if (wlr > Config::EvaluatorWLRMateValue)
+    constexpr float WLRMateValue = 0.999f;
+    float           wlr          = winLossRate();
+    if (wlr > WLRMateValue)
         val = VALUE_EVAL_MAX;
-    else if (wlr < -Config::EvaluatorWLRMateValue)
+    else if (wlr < -WLRMateValue)
         val = VALUE_EVAL_MIN;
     else {
         val = Value(Config::ScalingFactor * std::log((1 + wlr) / (1 - wlr)));

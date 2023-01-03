@@ -64,7 +64,6 @@ namespace Config {
 /// Formula: win rate = sigmoid(eval / ScalingFactor)
 double ScalingFactor;
 double InvScalingFactor;
-double EvaluatorWLRMateValue;
 double EvaluatorMarginWinLossScale;
 double EvaluatorMarginWinLossExponent;
 double EvaluatorMarginScale;
@@ -640,7 +639,6 @@ void Config::readEvaluator(const cpptoml::table &t)
     }
 
     // Read classical/evaluator switching margin
-    EvaluatorWLRMateValue          = t.get_as<double>("wlr_mate_value").value_or(0.995);
     EvaluatorMarginWinLossScale    = t.get_as<double>("margin_winloss_scale").value_or(1.0);
     EvaluatorMarginWinLossExponent = t.get_as<double>("margin_winloss_exp").value_or(3.0);
     EvaluatorMarginScale           = t.get_as<double>("margin_scale").value_or(360);

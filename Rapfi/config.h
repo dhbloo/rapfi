@@ -88,7 +88,6 @@ extern const std::string InternalConfig;
 // Model configs
 extern double        ScalingFactor;
 extern double        InvScalingFactor;
-extern double        EvaluatorWLRMateValue;
 extern double        EvaluatorMarginWinLossScale;
 extern double        EvaluatorMarginWinLossExponent;
 extern double        EvaluatorMarginScale;
