@@ -876,7 +876,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Reduce for pv ttMove that has not been chosen for a few iterations
     if (PvNode && depth > 1 && ttMove)
-        depth -= std::clamp((depth - ttDepth) * 0.4f, 0.0f, 3.0f);
+        depth -= std::clamp((depth - ttDepth) * 0.426f, 0.0f, 3.4f);
 
     // Drop to vcfsearch if depth is below zero
     if (depth <= 0)
@@ -1057,17 +1057,17 @@ moves_loop:
                 return beta;
             // Reduce if we are likely to fail high.
             else if (ttValue >= beta)
-                extension = -1.5f;
+                extension = -1.67f;
         }
 
         // Extension for ttmove without singular extension
         else if (move == ttMove) {
             // Extension for ttmove
-            extension = PvNode ? 0.125f : 0.075f;
+            extension = PvNode ? 0.20f : 0.08f;
 
             // Additional extension for near B4 ttmove
             if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
-                extension += (distSelf <= 4 ? 0.20f : 0.08f);
+                extension += (distSelf <= 4 ? 0.19f : 0.05f);
         }
 
         // Fail high reduction
@@ -1093,7 +1093,7 @@ moves_loop:
         bool doFullDepthSearch;
         // Step 15. Late move reduction (LMR). Moves are searched with a reduced
         // depth and will be re-searched at full depth if fail high.
-        if (depth >= LMR_DEPTH[Rule] && moveCount > 1 + 2 * RootNode
+        if (depth > 2 && moveCount > 1 + 2 * RootNode
             && (!importantMove  // do LMR for non important move
                 || distract     // do LMR for distract move
                 || cutNode      // do LMR for all moves in cut node

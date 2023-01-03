@@ -30,7 +30,7 @@ struct SearchStack;   // forward declaration
 /// History and stats update bonus, based on depth
 constexpr int statBonus(Depth d)
 {
-    return std::min(static_cast<int>(30 * d * d + 133 * d - 132), 12816);
+    return std::min(static_cast<int>(37 * d * d + 141 * d - 157), 10077);
 }
 
 /// HistoryTracker is used to record all information needed to update

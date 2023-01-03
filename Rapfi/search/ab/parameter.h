@@ -41,7 +41,6 @@ constexpr Depth IIR_REDUCTION[RULE_NB]      = {0.93f, 0.69f, 0.51f};
 constexpr Depth IIR_REDUCTION_PV[RULE_NB]   = {2.15f, 2.09f, 1.61f};
 constexpr Depth SE_DEPTH[RULE_NB]           = {6.68f, 6.14f, 8.75f};
 constexpr Depth SE_TTE_DEPTH[RULE_NB]       = {2.33f, 2.62f, 2.77f};
-constexpr Depth LMR_DEPTH[RULE_NB]          = {2.78f, 2.51f, 2.54f};
 constexpr Depth RAZOR_PRUN_DEPTH[RULE_NB]   = {2.89f, 2.16f, 2.74f};
 constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 4.45f, 4.95f};
 
@@ -59,58 +58,58 @@ constexpr Value nextAspirationWindowDelta(Value prevValue, Value prevDelta = VAL
 /// Razoring depth & margins
 constexpr Value razorMargin(Depth d)
 {
-    return d < 3.36f ? static_cast<Value>(std::max(int(0.125f * d * d + 46 * d) + 49, 0))
+    return d < 3.77f ? static_cast<Value>(std::max(int(0.169f * d * d + 26 * d) + 26, 0))
                      : MARGIN_INFINITE;
 }
 
 /// Razoring verification margin
 constexpr Value razorVerifyMargin(Depth d)
 {
-    return razorMargin(d - 2.9f);
+    return razorMargin(d - 3.27f);
 }
 
 /// Static futility pruning depth & margins
 constexpr Value futilityMargin(Depth d, bool improving)
 {
-    return Value(std::max(int(54 * (d - improving)), 0));
+    return Value(std::max(int(55 * (d - improving)), 0));
 }
 
 /// Null move pruning margin
 constexpr Value nullMoveMargin(Depth d)
 {
-    return d >= 8.2f ? Value(539 - 27 * std::min(int(d), 17)) : MARGIN_INFINITE;
+    return d >= 9.75f ? Value(488 - std::min(26 * int(d), 370)) : MARGIN_INFINITE;
 }
 
 /// Null move search depth reduction. The result of a null move will be
 /// tested using reduced depth search.
 constexpr Depth nullMoveReduction(Depth d)
 {
-    return 3.91f + 0.19f * d;
+    return 5.0f + 0.14f * d;
 }
 
 /// Internal iterative deepening depth reduction.
 constexpr Depth iidDepthReduction(Depth d)
 {
-    return std::max(7.25f + 0.47f * d, 5.32f);
+    return std::max(6.9f + 0.54f * d, 7.2f);
 }
 
 /// Fail high reduction margin
 constexpr Value failHighMargin(Depth d, int oppo4)
 {
-    return Value(30 * int(d) + 75 * bool(oppo4));
+    return Value(34 * int(d) + 86 * bool(oppo4));
 }
 
 /// Fail low reduction margin
 constexpr Value failLowMargin(Depth d)
 {
-    return Value(80 + int(40 * d));
+    return Value(87 + int(49 * d));
 }
 
 // Lookup tables used for move count based pruning, initialized at startup
 inline const auto FutilityMC = []() {
     std::array<int, MAX_MOVES + 1> MC {0};  // [depth]
     for (size_t i = 1; i < MC.size(); i++)
-        MC[i] = 3 + int(std::pow(i, 1.4));
+        MC[i] = 3 + int(std::pow(i, 1.39));
     return MC;
 }();
 
@@ -125,32 +124,32 @@ constexpr int futilityMoveCount(Depth d, bool improving)
 /// Singular extension margin
 constexpr Value singularMargin(Depth d, bool formerPv)
 {
-    return Value((2 + formerPv) * d);
+    return Value((0.95f + formerPv) * d);
 }
 
 /// Depth reduction for singular move test search
 constexpr Depth singularReduction(Depth d, bool formerPv)
 {
-    return d * 0.5f - formerPv;
+    return d * 0.53f - formerPv;
 }
 
 /// Margin for double singular extension
 constexpr Value doubleSEMargin(Depth d)
 {
-    return Value(50 - std::min(int(d * 0.6f), 20));
+    return Value(33 - std::min(int(d * 0.7f), 8));
 }
 
 /// Delta pruning margin for QVCF search
 constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
 {
-    return Value(std::max(3002 + 59 * int(d), 705));
+    return Value(std::max(2526 + 61 * int(d), 700));
 }
 
 /// LMR move count. For non-PV all node, moves that exceeds late move count
 /// will be searched will late move reduction even without other condition.
 constexpr int lateMoveCount(Depth d, bool improving)
 {
-    return 1 + 2 * improving + int((improving ? 1.44f : 1.02f) * d);
+    return 1 + 2 * improving + int((improving ? 1.76f : 1.10f) * d);
 }
 
 /// Init Reductions table according to num threads.

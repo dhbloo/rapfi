@@ -97,6 +97,7 @@ jobs:
           mv -v pbrain-rapfi pbrain-rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
 
       - name: Check bench signature
+        if: matrix.arch.name == 'avx2'
         run: |
           cd build && find ../../Networks -mindepth 2 -type f -exec cp {} . \;
           ./pbrain-rapfi* bench > bench.txt
