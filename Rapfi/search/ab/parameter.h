@@ -34,20 +34,20 @@ constexpr int MAX_PLY   = 256;
 // -------------------------------------------------
 // Depth & Value Constants
 
-constexpr Value MARGIN_INFINITE             = Value(INT16_MAX);
-constexpr Depth ASPIRATION_DEPTH            = 5.0f;
-constexpr Depth IID_DEPTH[RULE_NB]          = {12.86f, 12.12f, 12.68f};
-constexpr Depth IIR_REDUCTION[RULE_NB]      = {0.93f, 0.69f, 0.51f};
-constexpr Depth IIR_REDUCTION_PV[RULE_NB]   = {2.15f, 2.09f, 1.61f};
-constexpr Depth SE_DEPTH[RULE_NB]           = {6.68f, 6.14f, 8.75f};
-constexpr Depth SE_TTE_DEPTH[RULE_NB]       = {2.33f, 2.62f, 2.77f};
-constexpr Depth RAZOR_PRUN_DEPTH[RULE_NB]   = {2.89f, 2.16f, 2.74f};
-constexpr Depth TRIVIAL_PRUN_DEPTH[RULE_NB] = {5.88f, 4.45f, 4.95f};
+constexpr Value MARGIN_INFINITE    = Value(INT16_MAX);
+constexpr Depth ASPIRATION_DEPTH   = 5.0f;
+constexpr Depth IID_DEPTH          = 14.8f;
+constexpr Depth IIR_REDUCTION      = 0.9f;
+constexpr Depth IIR_REDUCTION_PV   = 0.35f;
+constexpr Depth SE_DEPTH           = 7.8f;
+constexpr Depth SE_TTE_DEPTH       = 1.9f;
+constexpr Depth RAZOR_PRUN_DEPTH   = 3.0f;
+constexpr Depth TRIVIAL_PRUN_DEPTH = 3.9f;
 
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
 
-/// Aspiration window delta. When prevDelta is zero, returns the initial aspiration 
+/// Aspiration window delta. When prevDelta is zero, returns the initial aspiration
 /// window size. Otherwise returns the next expanded window size for the given prevDelta.
 /// Window will expand faster for large absolute previous value.
 constexpr Value nextAspirationWindowDelta(Value prevValue, Value prevDelta = VALUE_ZERO)

@@ -639,9 +639,9 @@ void Config::readEvaluator(const cpptoml::table &t)
     }
 
     // Read classical/evaluator switching margin
-    EvaluatorMarginWinLossScale    = t.get_as<double>("margin_winloss_scale").value_or(1.0);
-    EvaluatorMarginWinLossExponent = t.get_as<double>("margin_winloss_exp").value_or(3.0);
-    EvaluatorMarginScale           = t.get_as<double>("margin_scale").value_or(360);
+    EvaluatorMarginWinLossScale    = t.get_as<double>("margin_winloss_scale").value_or(1.05);
+    EvaluatorMarginWinLossExponent = t.get_as<double>("margin_winloss_exp").value_or(2.95);
+    EvaluatorMarginScale           = t.get_as<double>("margin_scale").value_or(342);
     EvaluatorDrawBlackWinRate      = t.get_as<double>("draw_black_winrate").value_or(0.5);
     EvaluatorDrawRatio             = t.get_as<double>("draw_ratio").value_or(1.0);
     EvaluatorDrawBlackWinRate      = std::clamp(EvaluatorDrawBlackWinRate, 0.0, 1.0);
@@ -659,7 +659,7 @@ void Config::readDatabase(const cpptoml::table &t)
     DatabaseCacheSize      = t.get_as<size_t>("cache_size").value_or(DatabaseCacheSize);
     DatabaseRecordCacheSize =
         t.get_as<size_t>("record_cache_size").value_or(DatabaseRecordCacheSize);
-    DatabaseMaker            = nullptr;
+    DatabaseMaker = nullptr;
 
     if (DatabaseType == "yixindb") {
         if (DatabaseURL.empty())
@@ -767,7 +767,7 @@ void Config::readDatabase(const cpptoml::table &t)
         DatabaseLibWhiteLoseMark = t.get_as<std::string>("white_lose_mark").value_or("c")[0];
         DatabaseLibIgnoreComment = t.get_as<bool>("ignore_comment").value_or(false);
     }
-    
+
     DatabaseReadonlyMode = t.get_as<bool>("enable_by_default").value_or(false);
 
     if (DatabaseDefaultEnabled)
