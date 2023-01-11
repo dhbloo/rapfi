@@ -755,29 +755,8 @@ void queryDatabaseAll(bool getPosition)
         dbClient.queryChildren(*board, options.rule, childRecords);
 
         for (auto &[pos, record] : childRecords) {
-            std::string displayLabel;
+            std::string displayLabel      = record.displayLabel();
             int         displayLabelValue = -1;
-
-            if (record.label > 0) {
-                displayLabel.push_back(record.label);
-
-                if (record.label == LABEL_WIN || record.label == LABEL_LOSE) {
-                    Value mateValue = Value(-record.value);
-                    if (record.label == LABEL_WIN && mateValue > VALUE_MATE_IN_MAX_PLY
-                        || record.label == LABEL_LOSE && mateValue < VALUE_MATED_IN_MAX_PLY)
-                        displayLabel += std::to_string(mate_step(mateValue, -1));
-                    else
-                        displayLabel.push_back('*');
-                }
-            }
-            else if (record.label == LABEL_NONE && record.bound() == BOUND_EXACT) {
-                float winRate      = Config::valueToWinRate(Value(-record.value));
-                int   winRateLabel = std::clamp(int(winRate * 100), 0, 99);
-
-                displayLabel = std::to_string(winRateLabel);
-                displayLabel.push_back('%');
-            }
-
             if (!displayLabel.empty()) {
                 displayLabelValue = 0;
                 if (displayLabel.length() > 4)
@@ -816,7 +795,8 @@ void queryDatabaseOne(bool getPosition)
         DBRecord record;
         if (dbClient.query(*board, options.rule, record) && !record.isNull())
             MESSAGEL("DATABASE ONE " << int(record.label) << ' ' << record.value << ' '
-                                     << record.depth() << ' ' << int(record.bound()));
+                                     << record.depth() << ' ' << int(record.bound()) << ' '
+                                     << record.displayLabel());
         else
             MESSAGEL("DATABASE ONE 0 0 0 0");
     }

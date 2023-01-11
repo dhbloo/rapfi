@@ -40,6 +40,7 @@ set(CORE_SOURCES
 
     database/dbclient.cpp
     database/dbutils.cpp
+    database/dbtypes.cpp
     database/yxdbstorage.cpp
 
     eval/eval.cpp

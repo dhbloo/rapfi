@@ -18,8 +18,8 @@
 
 #pragma once
 
+#include "../core/pos.h"
 #include "../core/types.h"
-#include "../core/utils.h"
 
 #include <algorithm>
 #include <string>
@@ -114,119 +114,15 @@ struct DBRecord
         }
     }
     /// Extract comment text from dbRecord.
-    std::string comment() const
-    {
-        size_t start = 0;
-        // Skip special board text segment at beginning
-        if (text.rfind("@BTXT@", 0) == 0) {
-            start = text.find('\b');
-            if (start == std::string::npos)
-                return {};  // empty comment
-            start++;        // skip '\b'
-        }
-
-        std::string cmt = text.substr(start);
-        return replaceAll(cmt, "\b", "\n");
-    }
+    std::string comment() const;
     /// Set the comment text of this dbRecord.
-    void setComment(const std::string &comment)
-    {
-        // Delete all comments in text excluding special board text segment
-        if (text.rfind("@BTXT@", 0) == 0) {
-            size_t start = text.find('\b');
-            if (start != std::string::npos)
-                text.erase(start, text.size() - start);
-        }
-        else
-            text.clear();
-
-        if (!text.empty())
-            text.push_back('\b');
-        text.append(comment);
-    }
-    // Query the board text of a canonical pos of this dbRecord.
-    std::string boardText(Pos canonicalPos)
-    {
-        if (text.rfind("@BTXT@", 0) != 0)
-            return {};  // No board text is recorded
-
-        size_t boardTextSegmentSize = text.find('\b');
-        if (boardTextSegmentSize == std::string::npos)
-            boardTextSegmentSize = text.size();
-        std::string_view boardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
-
-        auto boardTextPairs = split(boardTextSegment, "\n");
-        for (std::string_view boardTextPair : boardTextPairs) {
-            if (boardTextPair.size() < 2)
-                continue;
-
-            if (hexToCoord(boardTextPair[0]) == canonicalPos.x()
-                && hexToCoord(boardTextPair[1]) == canonicalPos.y())
-                return std::string(boardTextPair.substr(2));
-        }
-
-        return {};  // Did not find a board text
-    }
-    // Set the board text of a canonical pos of this dbRecord.
-    void setBoardText(Pos canonicalPos, std::string boardText)
-    {
-        // Make sure no newlines or '\b' characters or whitespaces are in the text
-        boardText.erase(std::remove_if(boardText.begin(),
-                                       boardText.end(),
-                                       [](unsigned char c) {
-                                           return c == '\n' || c == '\b' || std::isspace(c);
-                                       }),
-                        boardText.cend());
-
-        std::string boardTextSegment = "@BTXT@";
-        size_t      boardTextCount   = 0;
-
-        // Remove previous board text if it is recorded
-        if (text.rfind("@BTXT@", 0) == 0) {
-            size_t boardTextSegmentSize = text.find('\b');
-            if (boardTextSegmentSize == std::string::npos)
-                boardTextSegmentSize = text.size();
-            std::string_view oldBoardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
-
-            auto boardTextPairs = split(oldBoardTextSegment, "\n");
-            for (std::string_view boardTextPair : boardTextPairs) {
-                if (boardTextPair.size() > 2
-                    && (hexToCoord(boardTextPair[0]) != canonicalPos.x()
-                        || hexToCoord(boardTextPair[1]) != canonicalPos.y())) {
-                    boardTextSegment.append(boardTextPair);
-                    boardTextSegment.push_back('\n');
-                    boardTextCount++;
-                }
-            }
-
-            if (boardTextSegmentSize < text.size())
-                boardTextSegmentSize++;           // Erase '\b'
-            text.erase(0, boardTextSegmentSize);  // Remove board text segment
-        }
-
-        if (!boardText.empty()) {
-            boardTextSegment.push_back(coordToHex(canonicalPos.x()));
-            boardTextSegment.push_back(coordToHex(canonicalPos.y()));
-            boardTextSegment.append(boardText);
-            boardTextCount++;
-        }
-
-        // Do not insert board text segment if no board text
-        if (boardTextCount == 0)
-            return;
-
-        // Insert board text segment to text entry of this dbRecord
-        if (text.empty())
-            text = std::move(boardTextSegment);
-        else {
-            boardTextSegment.push_back('\b');
-            text.insert(0, boardTextSegment);
-        }
-    }
-
-private:
-    constexpr char coordToHex(int coord) { return coord < 10 ? '0' + coord : 'A' + coord - 10; }
-    constexpr int  hexToCoord(char hex) { return hex <= '9' ? hex - '0' : hex - 'A' + 10; }
+    void setComment(const std::string &comment);
+    /// Query the board text of a canonical pos of this dbRecord.
+    std::string boardText(Pos canonicalPos);
+    /// Set the board text of a canonical pos of this dbRecord.
+    void setBoardText(Pos canonicalPos, std::string boardText);
+    /// Get the display label of this record.
+    std::string displayLabel() const;
 };
 
 }  // namespace Database
