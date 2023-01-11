@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "yxdbstorage.h"
 
@@ -170,8 +170,10 @@ bool YXDBStorage::flush() noexcept
                                                 : Compressor::Type::NO_COMPRESS);
         std::ostream *ostreamPtr = compressor.openOutputStream();
         if (ostreamPtr && *ostreamPtr) {
+            MESSAGEL("DATABASE SAVE START " + filePath.string());
             save(*ostreamPtr);
             dirty = false;
+            MESSAGEL("DATABASE SAVE DONE");
             return true;
         }
     }
@@ -329,41 +331,27 @@ void YXDBStorage::save(std::ostream &os) noexcept
     uint32_t numRecords = recordsMap.size();
     os.write(reinterpret_cast<char *>(&numRecords), sizeof(numRecords));
 
-    std::vector<int8_t> byteBuffer;
-    byteBuffer.reserve(1024);  // reserve initial space
-
+    const char PassMove[2] = {-1, -1};
     for (auto it = recordsMap.cbegin(); it != recordsMap.cend(); it++) {
         const CompactDBKey &key    = it->first;
         const DBRecord     &record = it->second;
 
         // Serialize record key
-        byteBuffer.push_back(key.rule);
-        byteBuffer.push_back(key.boardWidth);
-        byteBuffer.push_back(key.boardHeight);
-        Color normalSTM   = (key.numBlackStones + key.numWhiteStones) % 2 == 0 ? BLACK : WHITE;
-        bool  addPassMove = normalSTM != key.sideToMove;
-        for (auto posIt = key.blackStonesBegin(); posIt != key.blackStonesEnd(); posIt++) {
-            byteBuffer.push_back(posIt->x);
-            byteBuffer.push_back(posIt->y);
-        }
-        if (addPassMove && normalSTM == BLACK) {
-            byteBuffer.push_back(-1);
-            byteBuffer.push_back(-1);
-        }
-        for (auto posIt = key.whiteStonesBegin(); posIt != key.whiteStonesEnd(); posIt++) {
-            byteBuffer.push_back(posIt->x);
-            byteBuffer.push_back(posIt->y);
-        }
-        if (addPassMove && normalSTM == WHITE) {
-            byteBuffer.push_back(-1);
-            byteBuffer.push_back(-1);
-        }
+        Color    normalSTM   = (key.numBlackStones + key.numWhiteStones) % 2 == 0 ? BLACK : WHITE;
+        bool     addPassMove = normalSTM != key.sideToMove;
+        uint16_t numKeyBytes =
+            3 + 2 * (key.whiteStonesEnd() - key.blackStonesBegin() + addPassMove);
 
-        // Write record key
-        uint16_t numKeyBytes = byteBuffer.size();
         os.write(reinterpret_cast<char *>(&numKeyBytes), sizeof(numKeyBytes));
-        os.write(reinterpret_cast<char *>(byteBuffer.data()), numKeyBytes);
-        byteBuffer.clear();
+        os.write(reinterpret_cast<const char *>(&key), 3);
+        os.write(reinterpret_cast<const char *>(key.blackStonesBegin()),
+                 (key.blackStonesEnd() - key.blackStonesBegin()) * 2);
+        if (addPassMove && normalSTM == BLACK)
+            os.write(PassMove, 2);
+        os.write(reinterpret_cast<const char *>(key.whiteStonesBegin()),
+                 (key.whiteStonesEnd() - key.whiteStonesBegin()) * 2);
+        if (addPassMove && normalSTM == WHITE)
+            os.write(PassMove, 2);
 
         // Write record message
         if (record.isNull()) {

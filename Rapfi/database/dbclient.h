@@ -33,10 +33,12 @@ namespace Database {
 
 /// Creates a DBKey from the given board and rule. This removes symmetry redundancy
 /// of the board and generates the key with lowest representation.
-DBKey constructDBKey(const Board &board, Rule rule);
+/// @param transType The pointer to acquire the applied transform type.
+DBKey constructDBKey(const Board &board, Rule rule, TransformType *transType = nullptr);
 
 /// Transform a DBKey to its smallest equivalent key.
-void toSmallestDBKey(DBKey &key);
+/// @param transType The pointer to acquire the applied transform type.
+void toSmallestDBKey(DBKey &key, TransformType *transType = nullptr);
 
 /// The rule to use when a overwrite might occur to a position.
 enum class OverwriteRule {
@@ -88,6 +90,12 @@ public:
     void queryChildren(const Board                           &board,
                        Rule                                   rule,
                        std::vector<std::pair<Pos, DBRecord>> &childRecords);
+
+    /// Query the board text of an empty pos on board.
+    std::string queryBoardText(const Board &board, Rule rule, Pos pos);
+
+    /// Update the board text of an empty pos on board.
+    void setBoardText(const Board &board, Rule rule, Pos pos, std::string text);
 
     /// Save a new DBRecord of current position into the database.
     /// @param owRule The overwrite rule to use when a overwrite might occur.

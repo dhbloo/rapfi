@@ -58,6 +58,16 @@ std::string &upperInplace(std::string &s)
     return s;
 }
 
+std::string &replaceAll(std::string &str, std::string_view from, std::string_view to)
+{
+    size_t start = 0;
+    while ((start = str.find(from, start)) != std::string::npos) {
+        str.replace(start, from.length(), to);
+        start += to.length();  // Handles case where 'to' is a substring of 'from'
+    }
+    return str;
+}
+
 std::vector<std::string_view> split(std::string_view s, std::string_view delims, bool includeEmpty)
 {
     std::vector<std::string_view> output;

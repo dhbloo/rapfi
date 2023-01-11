@@ -18,20 +18,36 @@
 
 #pragma once
 
-#include "../game/board.h"
 #include "../core/pos.h"
 #include "../core/types.h"
+#include "../game/board.h"
 
 namespace Opening {
 
+/// Try to probe a opening according to the certain rule.
+/// @param[inout] board Board state to probe a opening move. New move(s) will be put on board.
+/// @param[in] rule The rule including game rule and opening rule.
+/// @param[out] action The result action of probed opening.
+/// @param[out] move The generated move.
+/// @return Whether there is a suitable opening. If not, the engine needs
+///     to search the position to return a move.
 bool probeOpening(Board &board, GameRule rule, ActionType &action, Pos &move);
 
+/// Decide final action according to game rule and search result value.
 ActionType decideAction(const Board &board, GameRule rule, Value bestValue);
 
+/// Check if there are any moves near border and expands board candidate
+/// area for those moves.
 void expandCandidate(Board &board);
 
+/// Expand half of the board as candidates. Used to find balance move
+/// when the board is empty.
 void expandCandidateHalfBoard(Board &board);
 
+/// Check if the board is symmetry under the given transform.
+bool isBoardSymmetry(const Board &board, TransformType symTrans);
+
+/// Remove redundant symmetry moves from move list.
 void filterSymmetryMoves(const Board &board, std::vector<Pos> &moveList);
 
 /// OpeningGenConfig struct contains information on how to generate a opening.

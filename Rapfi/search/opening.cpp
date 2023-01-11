@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "opening.h"
 
@@ -172,13 +172,6 @@ private:
 
 namespace Opening {
 
-/// Try to probe a opening according to the certain rule.
-/// @param[inout] board Board state to probe a opening move. New move(s) will be put on board.
-/// @param[in] rule The rule including game rule and opening rule.
-/// @param[out] action The result action of probed opening.
-/// @param[out] move The generated move.
-/// @return Whether there is a suitable opening. If not, the engine needs
-///     to search the position to return a move.
 bool probeOpening(Board &board, GameRule rule, ActionType &action, Pos &move)
 {
     std::vector<Pos> openingMoves = generateOpening(board, rule);
@@ -197,7 +190,6 @@ bool probeOpening(Board &board, GameRule rule, ActionType &action, Pos &move)
     return true;
 }
 
-/// Decide final action according to game rule and search result value.
 ActionType decideAction(const Board &board, GameRule rule, Value bestValue)
 {
     switch (rule.opRule) {
@@ -219,8 +211,6 @@ ActionType decideAction(const Board &board, GameRule rule, Value bestValue)
     return ActionType::Move;
 }
 
-/// Check if there are any moves near border and expands board candidate
-/// area for those moves.
 void expandCandidate(Board &board)
 {
     for (int i = 0; i < board.ply(); i++) {
@@ -235,15 +225,27 @@ void expandCandidate(Board &board)
     }
 }
 
-/// Expand half of the board as candidates. Used to find balance move
-/// when the board is empty.
 void expandCandidateHalfBoard(Board &board)
 {
     int c = board.size() / 4;
     board.expandCandArea(Pos {c, c}, c + 1, 0);
 }
 
-/// Remove redundant symmetry moves from move list.
+bool isBoardSymmetry(const Board &board, TransformType symTrans)
+{
+    FOR_EVERY_POSITION(&board, pos)
+    {
+        if (board.isEmpty(pos))
+            continue;
+
+        Pos transformedPos = applyTransform(pos, board.size(), symTrans);
+        if (board.get(pos) != board.get(transformedPos))
+            return false;
+    }
+
+    return true;
+}
+
 void filterSymmetryMoves(const Board &board, std::vector<Pos> &moveList)
 {
     std::unordered_map<Pos, size_t> posToIndexMap;
@@ -260,21 +262,7 @@ void filterSymmetryMoves(const Board &board, std::vector<Pos> &moveList)
     for (int i = 0; i < TRANS_NB; i++) {
         TransformType trans = (TransformType)i;
 
-        bool isSymmetry = true;
-
-        FOR_EVERY_POSITION(&board, pos)
-        {
-            if (board.isEmpty(pos))
-                continue;
-
-            Pos transformedPos = applyTransform(pos, board.size(), trans);
-            if (board.get(pos) != board.get(transformedPos)) {
-                isSymmetry = false;
-                break;
-            }
-        }
-
-        if (!isSymmetry)
+        if (!isBoardSymmetry(board, trans))
             continue;
 
         FOR_EVERY_EMPTY_POS(&board, pos)

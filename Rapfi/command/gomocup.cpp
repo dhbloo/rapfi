@@ -443,6 +443,16 @@ void setDatabase()
     }
 }
 
+void saveDatabase()
+{
+    if (Search::Threads.dbStorage()) {
+        auto startTime = now();
+        Search::Threads.dbStorage()->flush();
+        auto endTime = now();
+        MESSAGEL("Saved database file using " << (endTime - startTime) << " ms.");
+    }
+}
+
 void databaseToTxt()
 {
     auto txtPath = readPathFromInput();
@@ -776,10 +786,12 @@ void queryDatabaseAll(bool getPosition)
                     displayLabelValue = (displayLabelValue << 8) | c;
             }
 
+            std::string boardText = dbClient.queryBoardText(*board, options.rule, pos);
             MESSAGEL("DATABASE " << outputCoordXConvert(pos, board->size()) << ' '
                                  << outputCoordYConvert(pos, board->size()) << ' '
                                  << displayLabelValue << ' ' << record.value << ' '
-                                 << record.depth() << ' ' << int(record.bound()));
+                                 << record.depth() << ' ' << int(record.bound()) << ' '
+                                 << int(!record.comment().empty()) << ' ' << boardText);
         }
 
         MESSAGEL("DATABASE DONE");
@@ -802,20 +814,27 @@ void queryDatabaseOne(bool getPosition)
     if (Search::Threads.dbStorage()) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
         DBRecord record;
-        if (dbClient.query(*board, options.rule, record) && !record.isNull()) {
+        if (dbClient.query(*board, options.rule, record) && !record.isNull())
             MESSAGEL("DATABASE ONE " << int(record.label) << ' ' << record.value << ' '
                                      << record.depth() << ' ' << int(record.bound()));
-            if (!record.text.empty()) {
-                auto textBlocks = split(record.text, "\b");
-                for (const auto &block : textBlocks) {
-                    auto textLines = split(block, "\n");
-                    for (const auto &line : textLines)
-                        MESSAGEL(line);
-                }
-            }
-        }
         else
             MESSAGEL("DATABASE ONE 0 0 0 0");
+    }
+}
+
+void queryDatabaseText(bool getPosition)
+{
+    using namespace ::Database;
+    if (getPosition)
+        getDatabasePosition();
+
+    if (Search::Threads.dbStorage()) {
+        DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
+        DBRecord record;
+        if (dbClient.query(*board, options.rule, record) && !record.isNull())
+            MESSAGEL("DATABASE TEXT " << std::quoted(record.comment()));
+        else
+            MESSAGEL("DATABASE TEXT \"\"");
     }
 }
 
@@ -852,10 +871,42 @@ void editDatabaseText()
 
     if (Search::Threads.dbStorage()) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
-        DBRecord record = {};
-        record.text     = trimInplace(newText);
+        DBRecord record;
+        if (!dbClient.query(*board, options.rule, record))
+            record = DBRecord {LABEL_NONE};
+        record.setComment(trimInplace(newText));
         dbClient.save(*board, options.rule, record, OverwriteRule::Always);
-        queryDatabaseOne(false);
+    }
+}
+
+void editDatabaseBoardLabel()
+{
+    using namespace ::Database;
+    std::string coordStr, newText;
+    std::cin >> coordStr;
+    std::cin.ignore(1);
+    std::getline(std::cin, newText);
+    getDatabasePosition();
+
+    // Parse coord into pos
+    Pos pos = Pos::NONE;
+    {
+        int               x = -1, y = -1;
+        char              comma;
+        std::stringstream ss;
+        ss << coordStr;
+        ss >> x >> comma >> y;
+        pos = inputCoordConvert(x, y, board->size());
+    }
+
+    if (!pos.valid() || !board->isEmpty(pos)) {
+        ERRORL("Coord is not valid or empty.");
+        return;
+    }
+
+    if (Search::Threads.dbStorage()) {
+        DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
+        dbClient.setBoardText(*board, options.rule, pos, trimInplace(newText));
     }
 }
 
@@ -1209,6 +1260,7 @@ extern "C" bool gomocupLoopOnce()
     else if (cmd == "YXHASHDUMP")          dumpHash();
     else if (cmd == "YXHASHLOAD")          loadHash();
     else if (cmd == "YXSETDATABASE")       setDatabase();
+    else if (cmd == "YXSAVEDATABASE")      saveDatabase();
     else if (cmd == "YXDBTOTXT")           databaseToTxt();
     else if (cmd == "YXLIBTODB")           libToDatabase();
     else if (cmd == "RELOADCONFIG")        reloadConfig();
@@ -1230,8 +1282,11 @@ extern "C" bool gomocupLoopOnce()
     else if (cmd == "YXBALANCETWO")        CheckBoardOK([] { balance(Search::SearchOptions::BALANCE_TWO); });
     else if (cmd == "YXQUERYDATABASEALL")  CheckBoardOK([] { queryDatabaseAll(true); });
     else if (cmd == "YXQUERYDATABASEONE")  CheckBoardOK([] { queryDatabaseOne(true); });
+    else if (cmd == "YXQUERYDATABASETEXT") CheckBoardOK([] { queryDatabaseText(true); });
+    else if (cmd == "YXQUERYDATABASEALLT") CheckBoardOK([] { queryDatabaseAll(true); queryDatabaseText(false); });
     else if (cmd == "YXEDITTVDDATABASE")   CheckBoardOK(editDatabaseTVD);
-    else if (cmd == "YXEDITLABELDATABASE") CheckBoardOK(editDatabaseText);
+    else if (cmd == "YXEDITTEXTDATABASE")  CheckBoardOK(editDatabaseText);
+    else if (cmd == "YXEDITLABELDATABASE") CheckBoardOK(editDatabaseBoardLabel);
     else if (cmd == "YXDELETEDATABASEONE") CheckBoardOK([] { deleteDatabaseOne(true); });
     else if (cmd == "YXDELETEDATABASEALL") CheckBoardOK([] { deleteDatabaseAll(true); });
     else if (cmd == "YXSEARCHDEFEND")      CheckBoardOK(searchDefend);
@@ -1240,7 +1295,7 @@ extern "C" bool gomocupLoopOnce()
     else if (cmd == "SWAP2BOARD")          CheckBoardOK(swap2board);
     else if (cmd == "TRACEBOARD")          CheckBoardOK(traceBoard);
     else if (cmd == "TRACESEARCH")         CheckBoardOK(traceSearch);
-    else if (!GUIMode)                    ERRORL("Unknown command: " << cmd);
+    else if (!GUIMode)                     ERRORL("Unknown command: " << cmd);
     // clang-format on
 
     return false;

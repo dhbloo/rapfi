@@ -20,6 +20,7 @@
 
 #include "../core/iohelper.h"
 #include "../game/board.h"
+#include "dbclient.h"
 
 #include <iomanip>
 #include <sstream>
@@ -290,10 +291,11 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                             const std::string *comment) {
             DBKey    key = constructDBKey(board, rule);
             DBRecord oldRecord, newRecord = {LABEL_NONE};
+            bool     hasOldRecord = dbDst.get(key, oldRecord);
 
             if (!text && !comment) {
                 // Write empty record if no record exists
-                if (!dbDst.get(key, oldRecord)) {
+                if (!hasOldRecord) {
                     dbDst.set(key, newRecord, RECORD_MASK_LVDB);
                     writeCount++;
                 }
@@ -342,23 +344,36 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     newRecord.value = DBValue(t[0] == 'v' ? -value : value);
                     newRecord.setDepthBound(0, BOUND_EXACT);
                 }
-                else if (t.length() == 1)
-                    newRecord.label = (DBLabel)std::toupper(t[0]);
-                else
-                    newRecord.text = t;
-            }
-
-            if (comment && !Config::DatabaseLibIgnoreComment) {
-                if (newRecord.text.empty())
-                    newRecord.text = *comment;
-                else {
-                    newRecord.text.push_back('\b');
-                    newRecord.text.append(*comment);
+                else if (board.ply() > 0) {
+                    // Write parent record for board text
+                    Pos    lastMove = board.getLastMove();
+                    Board &b        = const_cast<Board &>(board);
+                    b.undo(rule);
+                    {
+                        DBClient dbClient(dbDst, RECORD_MASK_TEXT);
+                        dbClient.setBoardText(b, rule, lastMove, t);
+                    }
+                    b.move(rule, lastMove);
                 }
             }
 
-            if (!dbDst.get(key, oldRecord)
-                || checkOverwrite(oldRecord, newRecord, OverwriteRule::BetterValue)) {
+            if (comment && !Config::DatabaseLibIgnoreComment) {
+                std::string newCmt = *comment;
+                replaceAll(newCmt, "\r\n", "\n");
+
+                if (hasOldRecord) {
+                    std::string cmt;
+                    cmt = oldRecord.comment();
+                    if (!cmt.empty() && cmt.back() != '\b')
+                        cmt.push_back('\b');
+                    cmt.append(newCmt);
+                    newRecord.setComment(cmt);
+                }
+                else
+                    newRecord.setComment(newCmt);
+            }
+
+            if (!hasOldRecord || checkOverwrite(oldRecord, newRecord, OverwriteRule::BetterValue)) {
                 dbDst.set(key,
                           newRecord,
                           DBRecordMask((text ? RECORD_MASK_LVDB : RECORD_MASK_NONE)

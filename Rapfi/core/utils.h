@@ -87,6 +87,7 @@ constexpr uint32_t combineNumber(uint32_t n, uint32_t m)
 
 std::string &trimInplace(std::string &s);
 std::string &upperInplace(std::string &s);
+std::string &replaceAll(std::string &str, std::string_view from, std::string_view to);
 std::vector<std::string_view>
 split(std::string_view s, std::string_view delims = "\n", bool includeEmpty = false);
 

@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "dbclient.h"
 
@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -98,9 +99,12 @@ bool checkNewRecordValue(const DBRecord &oldRecord, const DBRecord &newRecord)
     }
 };
 
-/// Check if this key is referenced by any other key.
-template <typename IsDeletedParentKeyPredicate>
-bool isKeyReferenced(DBStorage &storage, const DBKey &key, IsDeletedParentKeyPredicate pred)
+/// @brief Iterate all parent keys of a DBKey.
+/// @tparam F the function to receive each parent key, the excluded stone pos and the
+///     child to parent transform. Returns true to terminate the iteration in advance.
+///     Signature is `bool(const DBKey&, const StonePos&, TransformType)`.
+template <typename F = void>
+void iterateParentKeys(DBStorage &storage, const DBKey &key, const F &f)
 {
     DBKey parentKey;
     parentKey.rule           = key.rule;
@@ -115,33 +119,52 @@ bool isKeyReferenced(DBStorage &storage, const DBKey &key, IsDeletedParentKeyPre
         excludesBegin = key.blackStonesBegin();
         excludesEnd   = key.blackStonesEnd();
         if (parentKey.numBlackStones == 0)
-            return false;
+            return;
         parentKey.numBlackStones--;
     }
     else {
         excludesBegin = key.whiteStonesBegin();
         excludesEnd   = key.whiteStonesEnd();
         if (parentKey.numWhiteStones == 0)
-            return false;
+            return;
         parentKey.numWhiteStones--;
     }
 
-    DBRecord record;
+    TransformType parentTransform;
     for (const StonePos *excludePos = excludesBegin; excludePos < excludesEnd; excludePos++) {
         auto it = std::copy(key.blackStonesBegin(), excludePos, parentKey.stones);
         std::copy(excludePos + 1, key.whiteStonesEnd(), it);
 
         // Make sure we get the smallest parent key
-        toSmallestDBKey(parentKey);
+        toSmallestDBKey(parentKey, &parentTransform);
 
-        if (pred(parentKey))
-            continue;
-
-        if (storage.get(parentKey, record, RECORD_MASK_NONE))
-            return true;
+        if (f(parentKey, *excludePos, parentTransform))
+            return;
     }
+}
 
-    return false;
+/// Check if this key is referenced by any other key.
+template <typename IsDeletedParentKeyPredicate>
+bool isKeyReferenced(DBStorage &storage, const DBKey &key, IsDeletedParentKeyPredicate pred)
+{
+    bool result = false;
+
+    iterateParentKeys(storage,
+                      key,
+                      [&](const DBKey &parentKey, const StonePos &, TransformType) -> bool {
+                          if (pred(parentKey))
+                              return false;
+
+                          DBRecord record;
+                          if (storage.get(parentKey, record, RECORD_MASK_NONE)) {
+                              result = true;
+                              return true;  // terminate iteration now
+                          }
+
+                          return false;
+                      });
+
+    return result;
 }
 
 /// Delete all children of a board position from the database storage.
@@ -273,11 +296,36 @@ void recursiveDeleteChildren(DBStorage                                          
     }
 }
 
+/// Check if a DBKey is symmetry under the given transform.
+bool isDBKeySymmetry(const DBKey &key, TransformType transform)
+{
+    if (key.boardWidth != key.boardHeight && !isRectangleTransform(transform))
+        return false;
+
+    std::map<StonePos, Color> stones;
+    for (auto s = key.blackStonesBegin(); s < key.blackStonesEnd(); s++)
+        stones[*s] = BLACK;
+    for (auto s = key.whiteStonesBegin(); s < key.whiteStonesEnd(); s++)
+        stones[*s] = WHITE;
+
+    for (const auto &[stone, color] : stones) {
+        Pos      pos       = {stone.x, stone.y};
+        Pos      tPos      = applyTransform(pos, key.boardWidth, key.boardHeight, transform);
+        StonePos tStonePos = {tPos.x(), tPos.y()};
+
+        auto it = stones.find(tStonePos);
+        if (it == stones.end() || it->second != color)
+            return false;
+    }
+
+    return true;
+}
+
 }  // namespace
 
 namespace Database {
 
-DBKey constructDBKey(const Board &board, Rule rule)
+DBKey constructDBKey(const Board &board, Rule rule, TransformType *transType)
 {
     DBKey    key[TRANS_NB];
     StonePos whiteStones[TRANS_NB][MAX_MOVES];
@@ -330,10 +378,13 @@ DBKey constructDBKey(const Board &board, Rule rule)
             smallestIndex = trans;
     }
 
+    if (transType)
+        *transType = static_cast<TransformType>(smallestIndex);
+
     return key[smallestIndex];
 }
 
-void toSmallestDBKey(DBKey &key)
+void toSmallestDBKey(DBKey &key, TransformType *transType)
 {
     DBKey  transformedKeys[TRANS_NB - 1];
     int    smallestIndex = 0;
@@ -370,6 +421,9 @@ void toSmallestDBKey(DBKey &key)
     // Copy smallest index back to the key
     if (smallestIndex > 0)
         key = *smallestKey;
+
+    if (transType)
+        *transType = static_cast<TransformType>(smallestIndex);
 }
 
 bool checkOverwrite(const DBRecord &oldRecord,
@@ -486,6 +540,62 @@ void DBClient::queryChildren(const Board                           &board,
     }
 }
 
+std::string DBClient::queryBoardText(const Board &board, Rule rule, Pos pos)
+{
+    if (!board.isEmpty(pos))
+        return {};
+
+    DBRecord record;
+    if (!query(board, rule, record))
+        return {};
+
+    // Find the smallest canonical pos considering symmetries to query board text
+    TransformType parentTrans;
+    DBKey         parentKey    = constructDBKey(board, rule, &parentTrans);
+    Pos           canonicalPos = applyTransform(pos, board.size(), parentTrans);
+    for (int t = IDENTITY + 1; t < TRANS_NB; t++) {
+        TransformType trans = (TransformType)t;
+        if (isDBKeySymmetry(parentKey, trans)) {
+            Pos tPos     = applyTransform(canonicalPos, board.size(), trans);
+            canonicalPos = std::min(canonicalPos, tPos);
+        }
+    }
+
+    return record.boardText(canonicalPos);
+}
+
+void DBClient::setBoardText(const Board &board, Rule rule, Pos pos, std::string text)
+{
+    if (!board.isEmpty(pos))
+        return;
+
+    DBRecord record, childRecord;
+    if (!query(board, rule, record))
+        record = DBRecord {LABEL_NONE};
+
+    Board &b = const_cast<Board &>(board);
+    b.move(rule, pos);
+    // Add new child record for board text
+    if (!text.empty() && !query(b, rule, childRecord))
+        save(b, rule, DBRecord {LABEL_NONE}, OverwriteRule::Always);
+    b.undo(rule);
+
+    // Find the smallest canonical pos considering symmetries to set board text
+    TransformType parentTrans;
+    DBKey         parentKey    = constructDBKey(board, rule, &parentTrans);
+    Pos           canonicalPos = applyTransform(pos, board.size(), parentTrans);
+    for (int t = IDENTITY + 1; t < TRANS_NB; t++) {
+        TransformType trans = (TransformType)t;
+        if (isDBKeySymmetry(parentKey, trans)) {
+            Pos tPos     = applyTransform(canonicalPos, board.size(), trans);
+            canonicalPos = std::min(canonicalPos, tPos);
+        }
+    }
+
+    record.setBoardText(canonicalPos, text);
+    save(board, rule, record, OverwriteRule::Always);
+}
+
 bool DBClient::save(const Board &board, Rule rule, const DBRecord &record, OverwriteRule owRule)
 {
     DBKey   dbKey;
@@ -554,15 +664,43 @@ void DBClient::del(const Board &board, Rule rule)
     if (cachedHashKey == hashKey)
         cachedHashKey = DBRecordCache::NullKey;
 
+    // Iterate all parent keys of the deleted key, to remove its board text
+    auto deleteParentBoardText = [&](const DBKey    &parentKey,
+                                     const StonePos &stonePos,
+                                     TransformType   parentTransform) -> bool {
+        DBRecord parentRecord;
+        if (storage.get(parentKey, parentRecord, RECORD_MASK_TEXT)) {
+            Pos pos          = Pos {stonePos.x, stonePos.y};
+            Pos canonicalPos = applyTransform(pos, board.size(), parentTransform);
+
+            // Find the smallest canonical considering all symmetries
+            for (int t = IDENTITY + 1; t < TRANS_NB; t++) {
+                TransformType trans = (TransformType)t;
+                if (isDBKeySymmetry(parentKey, trans)) {
+                    Pos tPos     = applyTransform(canonicalPos, board.size(), trans);
+                    canonicalPos = std::min(canonicalPos, tPos);
+                }
+            }
+
+            // Delete parent record's board text if found
+            if (!parentRecord.boardText(canonicalPos).empty()) {
+                parentRecord.setBoardText(canonicalPos, {});
+                storage.set(parentKey, parentRecord, RECORD_MASK_TEXT);
+            }
+        }
+        return false;
+    };
+
     // Try find this database entry in dbCache
     if (auto entryCache = dbCache.get(hashKey); entryCache) {
         storage.del(entryCache->key);
+        iterateParentKeys(storage, entryCache->key, deleteParentBoardText);
         dbCache.remove(hashKey);
-        return;
     }
     else {
         DBKey dbKey = constructDBKey(board, rule);
         storage.del(dbKey);
+        iterateParentKeys(storage, dbKey, deleteParentBoardText);
     }
 }
 

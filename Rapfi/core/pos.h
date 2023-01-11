@@ -195,7 +195,13 @@ enum TransformType {
     TRANS_NB
 };
 
-/// Apply a type of transform to the pos with some board size.
+/// Check if a transform type is applicable to rectangle.
+constexpr bool isRectangleTransform(TransformType t)
+{
+    return t == IDENTITY || t == ROTATE_180 || t == FLIP_X || t == FLIP_Y;
+}
+
+/// Apply a type of transform to the pos with a square board size.
 constexpr Pos applyTransform(Pos pos, int boardsize, TransformType trans)
 {
     int x = pos.x(), y = pos.y();
@@ -216,6 +222,26 @@ constexpr Pos applyTransform(Pos pos, int boardsize, TransformType trans)
         return {y, x};
     case FLIP_YX:  // (x, y) -> (s - y, s - x)
         return {s - y, s - x};
+    default: return {x, y};
+    }
+}
+
+/// Apply a type of transform to the pos with a rectangle board size.
+constexpr Pos applyTransform(Pos pos, int sizeX, int sizeY, TransformType trans)
+{
+    if (sizeX == sizeY)
+        return applyTransform(pos, sizeX, trans);
+
+    int x = pos.x(), y = pos.y();
+    int sx = sizeX - 1, sy = sizeY - 1;
+
+    switch (trans) {
+    case ROTATE_180:  // (x, y) -> (sx - x, sy - y)
+        return {sx - x, sy - y};
+    case FLIP_X:  // (x, y) -> (x, sy - y)
+        return {x, sy - y};
+    case FLIP_Y:  // (x, y) -> (sx - x, y)
+        return {sx - x, y};
     default: return {x, y};
     }
 }
