@@ -237,6 +237,7 @@ struct GameRule
 /// Thinking result action type
 enum class ActionType {
     Move,
+    Move2,
     Swap,
     Swap2PutTwo,
 };

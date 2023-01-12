@@ -78,6 +78,16 @@ void sendActionAndUpdateBoard(ActionType action, Pos bestMove)
         std::cout << outputCoordXConvert(bestMove, board->size()) << ','
                   << outputCoordYConvert(bestMove, board->size()) << std::endl;
     }
+    else if (action == ActionType::Move2) {
+        Pos move1 = Search::Threads.main()->rootMoves[0].pv[0];
+        Pos move2 = Search::Threads.main()->rootMoves[0].pv[1];
+        board->move(options.rule, move1);
+        board->move(options.rule, move2);
+        std::cout << outputCoordXConvert(move1, board->size()) << ','
+                  << outputCoordYConvert(move1, board->size()) << ' '
+                  << outputCoordXConvert(move2, board->size()) << ','
+                  << outputCoordYConvert(move2, board->size()) << std::endl;
+    }
     else if (action == ActionType::Swap) {
         std::cout << "SWAP" << std::endl;
     }

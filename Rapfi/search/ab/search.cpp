@@ -226,6 +226,8 @@ void ABSearcher::searchMain(MainSearchThread &th)
     if (th.options().swapable)
         th.resultAction =
             Opening::decideAction(*th.board, th.options().rule, bestThread->rootMoves[0].value);
+    else if (th.options().balanceMode == SearchOptions::BalanceMode::BALANCE_TWO)
+        th.resultAction = ActionType::Move2;
     else
         th.resultAction = ActionType::Move;
 }
