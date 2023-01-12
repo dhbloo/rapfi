@@ -825,7 +825,7 @@ void editDatabaseTVD()
     std::cin >> updateMask >> newLabel >> newValue >> newDepth;
     getDatabasePosition();
 
-    if (Search::Threads.dbStorage()) {
+    if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         switch (newLabel) {
         case 'W': newLabel = LABEL_WIN; break;
         case 'L': newLabel = LABEL_LOSE; break;
@@ -849,7 +849,7 @@ void editDatabaseText()
     std::cin >> std::ws >> std::quoted(newText);
     getDatabasePosition();
 
-    if (Search::Threads.dbStorage()) {
+    if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
         DBRecord record;
         if (!dbClient.query(*board, options.rule, record))
@@ -884,7 +884,7 @@ void editDatabaseBoardLabel()
         return;
     }
 
-    if (Search::Threads.dbStorage()) {
+    if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
         dbClient.setBoardText(*board, options.rule, pos, trimInplace(newText));
     }
@@ -1012,7 +1012,7 @@ void deleteDatabaseAll(bool getPosition)
     if (getPosition)
         getDatabasePosition();
 
-    if (Search::Threads.dbStorage()) {
+    if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         MESSAGEL("Deleting child records, this might take a while...");
         auto   startTime        = now();
         size_t sizeBeforeDelete = Search::Threads.dbStorage()->size();
@@ -1035,7 +1035,7 @@ void deleteDatabaseOne(bool getPosition)
     if (getPosition)
         getDatabasePosition();
 
-    if (Search::Threads.dbStorage()) {
+    if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
         dbClient.del(*board, options.rule);
     }
