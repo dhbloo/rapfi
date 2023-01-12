@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "searchoutput.h"
 
@@ -163,13 +163,14 @@ void SearchPrinter::printSearchEnds(MainSearchThread  &th,
                                     SearchThread      &bestThread)
 {
     if (Config::MessageMode == MsgMode::NORMAL || Config::MessageMode == MsgMode::BRIEF) {
-        uint64_t nodes = th.threads.nodesSearched();
-        uint64_t speed = nodes / std::max(tc.elapsed(), (Time)1);
+        uint64_t nodes      = th.threads.nodesSearched();
+        uint64_t speed      = nodes / std::max(tc.elapsed(), (Time)1);
+        bool     showPonder = th.inPonder.load(std::memory_order_relaxed);
 
-        MESSAGEL("Speed " << speed << " | Depth " << rootDepth << "-"
-                          << bestThread.rootMoves[0].selDepth << " | Eval "
-                          << bestThread.rootMoves[0].value << " | Node " << nodesText(nodes)
-                          << " | Time " << timeText(tc.elapsed()));
+        MESSAGEL((showPonder ? "[Pondering] " : "")
+                 << "Speed " << speed << " | Depth " << rootDepth << "-"
+                 << bestThread.rootMoves[0].selDepth << " | Eval " << bestThread.rootMoves[0].value
+                 << " | Node " << nodesText(nodes) << " | Time " << timeText(tc.elapsed()));
 
         // Outputs full PV if not shown before
         if (Config::MessageMode == MsgMode::BRIEF || &bestThread != &th) {

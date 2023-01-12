@@ -1235,9 +1235,14 @@ extern "C" bool gomocupLoopOnce()
     std::lock_guard<std::mutex> lock(mtx);
 #endif
 
-    // Stop pondering first for other commands other than TURN and SHOWFORBID
+    // Stop pondering first for commands that may modify the board state
     if (cmd != "TURN"
-     && cmd != "YXSHOWFORBID")          Search::Threads.stopThinking();
+     && cmd != "YXSHOWFORBID"
+     && cmd != "YXBLOCKRESET"
+     && cmd != "YXQUERYDATABASEALL"
+     && cmd != "YXQUERYDATABASEONE"
+     && cmd != "YXQUERYDATABASETEXT"
+     && cmd != "YXQUERYDATABASEALLT")      Search::Threads.stopThinking();
 
     if (cmd == "END")                      return true;
     else if (cmd == "ABOUT")               std::cout << EngineInfo << std::endl;
