@@ -145,6 +145,19 @@ void DBRecord::setBoardText(Pos canonicalPos, std::string boardText)
     }
 }
 
+void DBRecord::clearAllBoardText()
+{
+    if (text.rfind("@BTXT@", 0) != 0)
+        return;
+
+    size_t boardTextSegmentSize = text.find('\b');
+    if (boardTextSegmentSize == std::string::npos)
+        boardTextSegmentSize = text.size();
+    if (boardTextSegmentSize < text.size())
+        boardTextSegmentSize++;           // Erase '\b'
+    text.erase(0, boardTextSegmentSize);  // Remove board text segment
+}
+
 std::string DBRecord::displayLabel() const
 {
     std::string displayLabel;

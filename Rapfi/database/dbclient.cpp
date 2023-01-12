@@ -724,6 +724,12 @@ void DBClient::delChildren(const Board                       &board,
 
     for (auto &th : threads)
         th.join();
+
+    DBRecord parentRecord;
+    if (query(board, rule, parentRecord)) {
+        parentRecord.clearAllBoardText();
+        save(board, rule, parentRecord, OverwriteRule::Always);
+    }
 }
 
 void DBClient::sync(bool clearCache)

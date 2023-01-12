@@ -121,6 +121,8 @@ struct DBRecord
     std::string boardText(Pos canonicalPos);
     /// Set the board text of a canonical pos of this dbRecord.
     void setBoardText(Pos canonicalPos, std::string boardText);
+    /// Clear the board text segment of this dbRecord.
+    void clearAllBoardText();
     /// Get the display label of this record.
     std::string displayLabel() const;
 };
