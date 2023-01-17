@@ -164,6 +164,8 @@ char DatabaseLibBlackLoseMark = 'c';
 char DatabaseLibWhiteLoseMark = 'c';
 /// Ignore all comments in imported library file
 bool DatabaseLibIgnoreComment = false;
+/// Ignore all board texts in imported library file
+bool DatabaseLibIgnoreBoardText = false;
 
 // Database search options
 
@@ -761,11 +763,12 @@ void Config::readDatabase(const cpptoml::table &t)
     }
 
     if (auto s = t.get_table("libfile")) {
-        DatabaseLibBlackWinMark  = t.get_as<std::string>("black_win_mark").value_or("a")[0];
-        DatabaseLibWhiteWinMark  = t.get_as<std::string>("white_win_mark").value_or("a")[0];
-        DatabaseLibBlackLoseMark = t.get_as<std::string>("black_lose_mark").value_or("c")[0];
-        DatabaseLibWhiteLoseMark = t.get_as<std::string>("white_lose_mark").value_or("c")[0];
-        DatabaseLibIgnoreComment = t.get_as<bool>("ignore_comment").value_or(false);
+        DatabaseLibBlackWinMark    = t.get_as<std::string>("black_win_mark").value_or("a")[0];
+        DatabaseLibWhiteWinMark    = t.get_as<std::string>("white_win_mark").value_or("a")[0];
+        DatabaseLibBlackLoseMark   = t.get_as<std::string>("black_lose_mark").value_or("c")[0];
+        DatabaseLibWhiteLoseMark   = t.get_as<std::string>("white_lose_mark").value_or("c")[0];
+        DatabaseLibIgnoreComment   = t.get_as<bool>("ignore_comment").value_or(false);
+        DatabaseLibIgnoreBoardText = t.get_as<bool>("ignore_board_text").value_or(false);
     }
 
     DatabaseReadonlyMode = t.get_as<bool>("enable_by_default").value_or(false);

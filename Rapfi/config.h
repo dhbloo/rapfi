@@ -147,11 +147,12 @@ extern size_t      DatabaseCacheSize;
 extern size_t      DatabaseRecordCacheSize;
 
 // Library import options
-extern char        DatabaseLibBlackWinMark;
-extern char        DatabaseLibWhiteWinMark;
-extern char        DatabaseLibBlackLoseMark;
-extern char        DatabaseLibWhiteLoseMark;
-extern bool        DatabaseLibIgnoreComment;
+extern char DatabaseLibBlackWinMark;
+extern char DatabaseLibWhiteWinMark;
+extern char DatabaseLibBlackLoseMark;
+extern char DatabaseLibWhiteLoseMark;
+extern bool DatabaseLibIgnoreComment;
+extern bool DatabaseLibIgnoreBoardText;
 
 // Database search options
 extern bool                      DatabaseReadonlyMode;

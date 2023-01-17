@@ -344,7 +344,7 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     newRecord.value = DBValue(t[0] == 'v' ? -value : value);
                     newRecord.setDepthBound(0, BOUND_EXACT);
                 }
-                else if (board.ply() > 0) {
+                else if (board.ply() > 0 && !Config::DatabaseLibIgnoreBoardText) {
                     // Write parent record for board text
                     Pos    lastMove = board.getLastMove();
                     Board &b        = const_cast<Board &>(board);
