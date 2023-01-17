@@ -732,7 +732,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
             switch (dbRecord.label) {
             case Database::LABEL_NULL: break;
             case Database::LABEL_BLOCKMOVE:  // Block this move
-                return VALUE_BLOCKED;
+                return -VALUE_BLOCKED;
             case Database::LABEL_WIN:  // Win for opponent, loss for self
                 dbValue = std::min(dbValue, VALUE_MATED_FROM_DATABASE);
                 if (dbBound != BOUND_EXACT)

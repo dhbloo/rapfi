@@ -840,6 +840,7 @@ void editDatabaseTVD()
         case 'W': newLabel = LABEL_WIN; break;
         case 'L': newLabel = LABEL_LOSE; break;
         case 'D': newLabel = LABEL_DRAW; break;
+        case 'X': newLabel = LABEL_BLOCKMOVE; break;
         default: break;
         }
 
