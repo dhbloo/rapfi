@@ -48,6 +48,7 @@ set(CORE_SOURCES
     eval/mix6nnue.cpp
     eval/mix6Qnnue.cpp
     eval/mix7nnue.cpp
+    eval/mix8nnue.cpp
     eval/nnuev2.cpp
 
     game/board.cpp
@@ -105,6 +106,7 @@ set(HEADERS
     eval/mix6nnue.h
     eval/mix6Qnnue.h
     eval/mix7nnue.h
+    eval/mix8nnue.h
     eval/nnuev2.h
     eval/simdops.h
     eval/weightloader.h

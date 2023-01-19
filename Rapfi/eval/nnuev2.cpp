@@ -363,7 +363,7 @@ struct TextWeightLoader : WeightLoader<Weight>
             w->mlpfinal_w_padding1[i] = 0;
         }
 
-        return std::move(w);
+        return w;
     }
 };
 

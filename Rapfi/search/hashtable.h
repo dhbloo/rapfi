@@ -66,7 +66,7 @@ private:
         uint32_t key() const { return key32 ^ data[0] ^ data[1]; }
     };
 
-    /// Bucket Struct contains 3 TTEntry (32 bytes).
+    /// Bucket Struct contains 5 TTEntry (64 bytes).
     /// Bucket should have a size that can be fitted into one cache line.
     alignas(CACHE_LINE_SIZE) struct Bucket
     {
