@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "timecontrol.h"
 
@@ -55,21 +55,19 @@ float timeDivisor(int depth)
 
 namespace Search {
 
-/// Compute the optimal and maximum turn time at the beginning of a search.
-/// @param maxTurnTime Max turn time from search options.
-/// @param matchTimeLeft Current match time left from search options.
-/// @param params Parameters from current move to search.
-void TimeControl::init(Time maxTurnTime, Time matchTimeLeft, MoveParams params)
+void TimeControl::init(Time turnTime, Time matchTime, Time matchTimeLeft, MoveParams params)
 {
     startTime = now();
 
+    if (matchTime <= 0)  // unlimited match time
+        matchTimeLeft = std::numeric_limits<Time>::max();
     float movesToGo = std::max(params.movesLeft, 1);
     maximumTime     = Time(matchTimeLeft / std::min(Config::MatchSpaceMin, movesToGo));
-    maximumTime = std::max(std::min(maxTurnTime, maximumTime) - Config::TurnTimeReserved, (Time)0);
-    ample       = maxTurnTime * std::min(params.movesLeft, Config::MoveHorizon) < matchTimeLeft;
-    optimumTime = Time(maximumTime * Config::AdvancedStopRatio);
+    maximumTime     = std::max(std::min(turnTime, maximumTime) - Config::TurnTimeReserved, (Time)0);
+    ampleMatchTime  = turnTime * std::min(params.movesLeft, Config::MoveHorizon) < matchTimeLeft;
+    optimumTime     = Time(maximumTime * Config::AdvancedStopRatio);
 
-    if (!ample) {
+    if (!ampleMatchTime) {
         Time match  = Time(matchTimeLeft / std::min(Config::MatchSpace, movesToGo));
         Time turn   = Time(maximumTime / Config::AverageBranchFactor * moveImportance(params.ply));
         optimumTime = std::min(optimumTime, std::min(turn, match));
@@ -78,16 +76,11 @@ void TimeControl::init(Time maxTurnTime, Time matchTimeLeft, MoveParams params)
     assert(optimum() <= maximum());
 }
 
-/// Check if we need to stop iterating deepening at this depth.
-/// @param[in] params The time parameters from last iteration.
-/// @param[out] timeReduction Record how much time is saved in the last move.
-/// @return True if we should stop the search.
 bool TimeControl::checkStop(IterParams params, float &timeReduction) const
 {
     // If given ample match time, just see if we have used all optimum time
-    if (ample) {
+    if (ampleMatchTime)
         return elapsed() >= optimum();
-    }
 
     // Calculate a optimum turn time scale factor based on bestmove changes,
     // bestmove stability and eval oscillation

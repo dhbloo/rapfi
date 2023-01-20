@@ -96,9 +96,11 @@ void ABSearcher::clear(ThreadPool &pool, bool clearAllMemory)
 /// thread is started first and other threads are launched by main thread.
 void ABSearcher::searchMain(MainSearchThread &th)
 {
+    SearchOptions &opts = th.options();
+
     // Probe opening database and find if there is a prepared opening
-    if (!th.options().disableOpeningQuery
-        && Opening::probeOpening(*th.board, th.options().rule, th.resultAction, th.bestMove)) {
+    if (!opts.disableOpeningQuery
+        && Opening::probeOpening(*th.board, opts.rule, th.resultAction, th.bestMove)) {
         th.markPonderingAvailable();
         return;
     }
@@ -148,7 +150,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
     int   dbWinDepth = 0;
     if (th.dbClient) {
         std::vector<std::pair<Pos, Database::DBRecord>> childRecords;
-        th.dbClient->queryChildren(*th.board, th.options().rule, childRecords);
+        th.dbClient->queryChildren(*th.board, opts.rule, childRecords);
 
         Pos   bestMove      = Pos::NONE;
         Value bestMoveValue = VALUE_NONE;
@@ -173,8 +175,9 @@ void ABSearcher::searchMain(MainSearchThread &th)
     }
 
     // Init time management and transposition table
-    timectl.init(th.options().turnTime,
-                 th.options().timeLeft,
+    timectl.init(opts.turnTime,
+                 opts.matchTime,
+                 opts.timeLeft,
                  {th.board->ply(), th.board->movesLeft()});
     TT.incGeneration();
 
@@ -189,11 +192,10 @@ void ABSearcher::searchMain(MainSearchThread &th)
 
     // Select best thread according to eval and completed depth when needed
     SearchThread *bestThread = &th;
-    if (th.options().multiPV == 1 && !SkillMovePicker(th.options().strengthLevel).enabled()
-        && !th.options().balanceMode)
+    if (opts.multiPV == 1 && !SkillMovePicker(opts.strengthLevel).enabled() && !opts.balanceMode)
         bestThread = pickBestThread(th.threads);
 
-    if (th.options().balanceMode == SearchOptions::BALANCE_NONE && dbWinMove
+    if (opts.balanceMode == SearchOptions::BALANCE_NONE && dbWinMove
         && bestThread->rootMoves[0].value < VALUE_MATE_IN_MAX_PLY) {
         // Try to move the winning move to front
         auto rm = std::find(bestThread->rootMoves.begin(), bestThread->rootMoves.end(), dbWinMove);
@@ -223,10 +225,10 @@ void ABSearcher::searchMain(MainSearchThread &th)
     th.bestMove = bestThread->rootMoves[0].pv[0];
 
     // If swap check is needed, make swap decision according to the rule
-    if (th.options().swapable)
+    if (opts.swapable)
         th.resultAction =
-            Opening::decideAction(*th.board, th.options().rule, bestThread->rootMoves[0].value);
-    else if (th.options().balanceMode == SearchOptions::BalanceMode::BALANCE_TWO)
+            Opening::decideAction(*th.board, opts.rule, bestThread->rootMoves[0].value);
+    else if (opts.balanceMode == SearchOptions::BalanceMode::BALANCE_TWO)
         th.resultAction = ActionType::Move2;
     else
         th.resultAction = ActionType::Move;

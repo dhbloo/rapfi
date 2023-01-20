@@ -14,9 +14,11 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "searchcommon.h"
+
+#include "../config.h"
 
 namespace Search {
 
@@ -25,6 +27,32 @@ bool BalanceMoveLessComparator::operator()(const RootMove &a, const RootMove &b)
     return a.value != b.value
                ? balancedValue(a.value, bias) > balancedValue(b.value, bias)
                : balancedValue(a.previousValue, bias) > balancedValue(b.previousValue, bias);
+}
+
+void SearchOptions::setTimeControl(int64_t turnTime, int64_t matchTime)
+{
+    if (turnTime <= 0 && matchTime <= 0) {  // Infinite time
+        this->turnTime  = 0;
+        this->matchTime = 0;
+        this->timeLimit = false;
+    }
+    else if (turnTime > 0 && matchTime <= 0) {  // Turn time only
+        this->turnTime  = turnTime;
+        this->matchTime = 0;
+        this->timeLimit = true;
+    }
+    else if (turnTime <= 0) {  // Match time only
+        this->turnTime  = matchTime;
+        this->matchTime = matchTime;
+        this->timeLimit = true;
+    }
+    else {  // Match time + turn time
+        this->turnTime  = turnTime;
+        this->matchTime = matchTime;
+        this->timeLimit = true;
+    }
+
+    this->timeLeft = this->matchTime;
 }
 
 }  // namespace Search
