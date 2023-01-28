@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "mix6Qnnue.h"
 
@@ -83,7 +83,7 @@ struct Mix6QWeightLoader : WeightLoader<Mix6QWeight>
 
         if (in && in.peek() == std::ios::traits_type::eof()) {
             preprocessWeight(*weight);
-            return std::move(weight);
+            return weight;
         }
         else
             return nullptr;
@@ -688,6 +688,8 @@ void Mix6QEvaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuff
     // Apply all incremental update and calculate policy
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight, policyBuffer);
+
+    policyBuffer.setScoreBias(300);
 }
 
 void Mix6QEvaluator::clearCache(Color side)

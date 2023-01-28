@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "mix7nnue.h"
 
@@ -446,16 +446,27 @@ std::tuple<float, float, float> Mix7Accumulator::evaluateValue(const Mix7Weight 
     }
 
     // linear 1
-    float layer1[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer1, layer0, w.value_l1_weight, w.value_l1_bias);
+    alignas(Alignment) float layer1[ValueDim];
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, Alignment>(
+        layer1,
+        layer0,
+        w.value_l1_weight,
+        w.value_l1_bias);
 
     // linear 2
-    float layer2[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer2, layer1, w.value_l2_weight, w.value_l2_bias);
+    alignas(Alignment) float layer2[ValueDim];
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, Alignment>(
+        layer2,
+        layer1,
+        w.value_l2_weight,
+        w.value_l2_bias);
 
     // final linear
-    float value[8];
-    simd::linearLayer<simd::Activation::None>(value, layer2, w.value_l3_weight, w.value_l3_bias);
+    alignas(Alignment) float value[8];
+    simd::linearLayer<simd::Activation::None, 3, ValueDim, float, Alignment>(value,
+                                                                             layer2,
+                                                                             w.value_l3_weight,
+                                                                             w.value_l3_bias);
 
     return {value[0], value[1], value[2]};
 }
@@ -582,6 +593,8 @@ void Mix7Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffe
     // Apply all incremental update and calculate policy
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight[self], policyBuffer);
+
+    policyBuffer.setScoreBias(300);
 }
 
 void Mix7Evaluator::clearCache(Color side)

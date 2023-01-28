@@ -70,7 +70,7 @@ ValueType ValueType::valueOfDrawWinRate(float drawWinRate, float newDrawRate)
 PolicyBuffer::PolicyBuffer(int boardWidth, int boardHeight)
     : boardWidth(boardWidth)
     , bufferSize(boardWidth * boardHeight)
-    , policyScoreBias(ScoreBias)
+    , scoreBias(0)
 {
     std::fill_n(computeFlag, bufferSize, false);
 }

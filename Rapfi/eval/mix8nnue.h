@@ -19,6 +19,7 @@
 #pragma once
 
 #include "evaluator.h"
+#include "simdops.h"
 
 #include <array>
 #include <filesystem>
@@ -31,12 +32,13 @@ namespace Evaluation::mix8 {
 using namespace Evaluation;
 
 constexpr uint32_t ArchHashBase     = 0x00712850;
-constexpr size_t   Alignment        = 32;
+constexpr size_t   Alignment        = 64;
 constexpr int      ShapeNum         = 708588;
 constexpr int      PolicyDim        = 32;
-constexpr int      ValueDim         = 96;
+constexpr int      ValueDim         = 64;
 constexpr int      FeatureDim       = std::max(PolicyDim, ValueDim);
 constexpr int      FeatureDWConvDim = 32;
+constexpr int      ValueSumDim      = ValueDim + FeatureDWConvDim;
 constexpr int      NumBuckets       = 1;
 
 struct alignas(Alignment) Mix8Weight
@@ -54,7 +56,9 @@ struct alignas(Alignment) Mix8Weight
     // 4  Value sum scale
     float value_sum_scale_after_conv;
     float value_sum_scale_direct;
-    char  __padding_to_32bytes_0[24];
+
+    int32_t numHeadBuckets;  // used to validate the number of head buckets
+    char    __padding_to_64bytes_0[52];
 
     struct HeadBucket
     {
@@ -63,11 +67,13 @@ struct alignas(Alignment) Mix8Weight
         int16_t policy_dwconv_bias[PolicyDim];
 
         // 6  Policy dynamic pointwise conv
-        float policy_pwconv_weight_layer_weight[ValueDim][PolicyDim];
-        float policy_pwconv_weight_layer_bias[PolicyDim];
+        float policy_pwconv_layer_l1_weight[ValueDim + FeatureDWConvDim][PolicyDim];
+        float policy_pwconv_layer_l1_bias[PolicyDim];
+        float policy_pwconv_layer_l1_prelu[PolicyDim];
+        float policy_pwconv_layer_l2_weight[PolicyDim][PolicyDim];
 
         // 7  Value MLP (layer 1,2,3)
-        float value_l1_weight[ValueDim * 2][ValueDim];  // shape=(in, out)
+        float value_l1_weight[(ValueDim + FeatureDWConvDim) * 2][ValueDim];
         float value_l1_bias[ValueDim];
         float value_l2_weight[ValueDim][ValueDim];
         float value_l2_bias[ValueDim];
@@ -77,7 +83,7 @@ struct alignas(Alignment) Mix8Weight
         // 8  Policy PReLU
         float policy_neg_weight;
         float policy_pos_weight;
-        char  __padding_to_32bytes_1[12];
+        char  __padding_to_64bytes_1[44];
     } buckets[NumBuckets];
 };
 
@@ -104,6 +110,8 @@ struct Mix8WeightTwoSide
 class alignas(Alignment) Mix8Accumulator
 {
 public:
+    typedef std::array<int32_t, ValueSumDim> ValueSumType;
+
     Mix8Accumulator(int boardSize);
     ~Mix8Accumulator();
 
@@ -112,11 +120,8 @@ public:
     /// Incremental update mix6 network state.
     enum UpdateType { MOVE, UNDO };
     template <UpdateType UT>
-    void update(const Mix8Weight              &w,
-                Color                          pieceColor,
-                int                            x,
-                int                            y,
-                std::array<int32_t, ValueDim> *valueSumBoardBackup);
+    void
+    update(const Mix8Weight &w, Color pieceColor, int x, int y, ValueSumType *valueSumBoardBackup);
 
     /// Calculate value (win/loss/draw tuple) of current network state.
     std::tuple<float, float, float> evaluateValue(const Mix8Weight      &w,
@@ -131,7 +136,7 @@ private:
     // Mix8 network states
 
     /// Value feature sum of the full board
-    std::array<int32_t, ValueDim> valueSum;  // [ValueDim] (aligned to 32)
+    ValueSumType valueSum;  // [ValueDim + FeatureDWConvDim] (aligned to 32)
     /// Index table to convert line shape to map feature
     std::array<uint32_t, 4> *indexTable;  // [H*W, 4] (unaligned)
     /// Sumed map feature of four directions
@@ -183,7 +188,7 @@ private:
     Mix8WeightTwoSide /* non-owning ptr */    *weight;
     std::unique_ptr<Mix8Accumulator>           accumulator[2];
     std::vector<MoveCache>                     moveCache[2];
-    std::vector<std::array<int32_t, ValueDim>> valueSumBoardHistory[2];
+    std::vector<Mix8Accumulator::ValueSumType> valueSumBoardHistory[2];
 };
 
 }  // namespace Evaluation::mix8

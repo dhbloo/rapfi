@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 /*
     Mix6 NNUE Architecture is from @hzyhhzy:
@@ -356,22 +356,25 @@ RawValue Mix6Accumulator::evaluateValue(const Mix6Weight &w)
 
     // linear 1
     float layer1[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer1, layer0, w.mlp_w1, w.mlp_b1);
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, alignof(float)>(layer1,
+                                                                                         layer0,
+                                                                                         w.mlp_w1,
+                                                                                         w.mlp_b1);
 
     // linear 2
     float layer2[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer2, layer1, w.mlp_w2, w.mlp_b2);
-    // simd::add<ValueDim, float, alignof(float)>(layer2, layer2, layer0);
-    for (int b = 0; b < ValueBatches32; b++) {
-        auto y   = simde_mm256_loadu_ps(layer2 + b * BatchSize32);
-        auto res = simde_mm256_loadu_ps(layer0 + b * BatchSize32);
-        y        = simde_mm256_add_ps(y, res);  // residual connection
-        simde_mm256_storeu_ps(layer2 + b * BatchSize32, y);
-    }
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, alignof(float)>(layer2,
+                                                                                         layer1,
+                                                                                         w.mlp_w2,
+                                                                                         w.mlp_b2);
+    simd::add<ValueDim, float, alignof(float)>(layer2, layer2, layer0);  // residual connection
 
     // final linear
     float value[8];
-    simd::linearLayer<simd::Activation::None>(value, layer2, w.mlp_w3, w.mlp_b3);
+    simd::linearLayer<simd::Activation::None, 3, ValueDim, float, alignof(float)>(value,
+                                                                                  layer2,
+                                                                                  w.mlp_w3,
+                                                                                  w.mlp_b3);
 
     return {value[0], value[1], value[2]};
 }
@@ -490,6 +493,8 @@ void Mix6Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffe
     // Apply all incremental update and calculate policy
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight[self], policyBuffer);
+
+    policyBuffer.setScoreBias(300);
 }
 
 void Mix6Evaluator::clearCache(Color side)

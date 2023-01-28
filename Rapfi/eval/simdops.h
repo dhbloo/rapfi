@@ -27,18 +27,30 @@ namespace Evaluation::simd {
 
 enum InstructionType {
     SCALAR,
+    SSE,
     AVX2,
     AVX512,
 };
 
+/// Get simd register width of the given instruction type.
+constexpr size_t simdBitsOfInstType(InstructionType instType)
+{
+    switch (instType) {
+    default: return 0;
+    case SSE: return 128;
+    case AVX2: return 256;
+    case AVX512: return 512;
+    }
+}
+
 #if defined(USE_AVX512)
 constexpr size_t          NativeAlignment = 64;
 constexpr InstructionType NativeInstType  = AVX512;
-#elif defined(USE_AVX2) || defined(USE_AVX)
+#elif defined(USE_AVX2) || defined(USE_AVX) || defined(USE_SSE)  // avx2 to sse by simde
 constexpr size_t          NativeAlignment = 32;
 constexpr InstructionType NativeInstType  = AVX2;
 #else
-constexpr size_t          NativeAlignment = 16;
+constexpr size_t          NativeAlignment = 8;
 constexpr InstructionType NativeInstType  = SCALAR;
 #endif
 
@@ -55,14 +67,21 @@ constexpr bool isPtrAligned(const T *pointer)
     return (reinterpret_cast<uintptr_t>(pointer) & (AlignSize - 1)) == 0;
 }
 
+template <size_t AlignSize, typename T>
+constexpr size_t alignDimSize(size_t dimSize)
+{
+    size_t alignBytes = std::max<size_t>(AlignSize / sizeof(T), 1);
+    return alignBytes * ((dimSize + alignBytes - 1) / alignBytes);
+}
+
 /// @param SimdBits The width of simd instructions (in bits)
 /// @param T The type of elements
 /// @param Size The size of element array
 /// @param RegWidth The number of elements in one register
 /// @param NumBatches Number iterations for one register to loop all elements
-#define DEF_BATCH(SimdBits, T, Size, RegWidth, NumBatches)                                 \
-    constexpr int RegWidth = (SimdBits / 8) / sizeof(T);                                   \
-    static_assert(Size % RegWidth == 0, "data does not fill a " #SimdBits "bit register"); \
+#define DEF_BATCH(SimdBits, T, Size, RegWidth, NumBatches)                                  \
+    constexpr int RegWidth = SimdBits ? (SimdBits / 8) / sizeof(T) : 1;                     \
+    static_assert(Size % RegWidth == 0, "data does not fill a " #SimdBits " bit register"); \
     constexpr int NumBatches = Size / RegWidth;
 
 #define DEF_BATCH128(T, Size, RegWidth, NumBatches) DEF_BATCH(128, T, Size, RegWidth, NumBatches)
@@ -343,6 +362,22 @@ namespace detail {
         static inline R     div(R a, R b) { return simde_mm256_div_ps(a, b); }
         static inline R     min(R a, R b) { return simde_mm256_min_ps(a, b); }
         static inline R     max(R a, R b) { return simde_mm256_max_ps(a, b); }
+        static inline R     fmadd(R a, R b, R c) { return simde_mm256_fmadd_ps(a, b, c); }
+    };
+
+    template <typename T>
+    struct VecOp<T, SCALAR>
+    {
+        typedef T       R;
+        static inline R setzero() { return T(0); }
+        static inline R set1(T a) { return a; }
+        static inline R add(R a, R b) { return a + b; }
+        static inline R sub(R a, R b) { return a - b; }
+        static inline R mul(R a, R b) { return a * b; }
+        static inline R div(R a, R b) { return a / b; }
+        static inline R min(R a, R b) { return std::min(a, b); }
+        static inline R max(R a, R b) { return std::max(a, b); }
+        static inline R fmadd(R a, R b, R c) { return a * b + c; }
     };
 
     /*template <typename T, int Size, int Alignment>
@@ -403,24 +438,30 @@ namespace detail {
 
 }  // namespace detail
 
-/// Set an integer array to zeros. Return the end pointer of the array.
-template <int Size, typename T, int Alignment = NativeAlignment>
+/// Set an array to zeros. Return the end pointer of the output array.
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *zero(T *output)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
 
-    auto zero = detail::VecOp<T, AVX2>::setzero();
-
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
+    auto zero = detail::VecOp<T, Inst>::setzero();
     for (int i = 0; i < NumBatches; i++)
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, zero);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, zero);
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+/// Copy an array from input to output. Return the end pointer of the output array.
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *copy(T *output, const T *input)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -428,17 +469,19 @@ T *copy(T *output, const T *input)
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
 
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
-
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
     for (int i = 0; i < NumBatches; i++) {
-        auto data = detail::VecLoadStore<T, Alignment, AVX2>::load(input + i * RegWidth);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data);
+        auto data = detail::VecLoadStore<T, Alignment, Inst>::load(input + i * RegWidth);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *add(T *output, const T *input, const T a)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -446,19 +489,21 @@ T *add(T *output, const T *input, const T a)
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
 
-    auto A = detail::VecOp<T, AVX2>::set1(a);
-
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
+    auto A = detail::VecOp<T, Inst>::set1(a);
     for (int i = 0; i < NumBatches; i++) {
-        auto data = detail::VecLoadStore<T, Alignment, AVX2>::load(input + i * RegWidth);
-        data      = detail::VecOp<T, AVX2>::add(data, A);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data);
+        auto data = detail::VecLoadStore<T, Alignment, Inst>::load(input + i * RegWidth);
+        data      = detail::VecOp<T, Inst>::add(data, A);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *add(T *output, const T *input0, const T *input1)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -467,18 +512,21 @@ T *add(T *output, const T *input0, const T *input1)
     assert(isPtrAligned<Alignment>(input0));
     assert(isPtrAligned<Alignment>(input1));
 
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
     for (int i = 0; i < NumBatches; i++) {
-        auto data0 = detail::VecLoadStore<T, Alignment, AVX2>::load(input0 + i * RegWidth);
-        auto data1 = detail::VecLoadStore<T, Alignment, AVX2>::load(input1 + i * RegWidth);
-        data0      = detail::VecOp<T, AVX2>::add(data0, data1);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data0);
+        auto data0 = detail::VecLoadStore<T, Alignment, Inst>::load(input0 + i * RegWidth);
+        auto data1 = detail::VecLoadStore<T, Alignment, Inst>::load(input1 + i * RegWidth);
+        data0      = detail::VecOp<T, Inst>::add(data0, data1);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data0);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *min(T *output, const T *input0, const T *input1)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -487,18 +535,21 @@ T *min(T *output, const T *input0, const T *input1)
     assert(isPtrAligned<Alignment>(input0));
     assert(isPtrAligned<Alignment>(input1));
 
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
     for (int i = 0; i < NumBatches; i++) {
-        auto data0 = detail::VecLoadStore<T, Alignment, AVX2>::load(input0 + i * RegWidth);
-        auto data1 = detail::VecLoadStore<T, Alignment, AVX2>::load(input1 + i * RegWidth);
-        data0      = detail::VecOp<T, AVX2>::min(data0, data1);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data0);
+        auto data0 = detail::VecLoadStore<T, Alignment, Inst>::load(input0 + i * RegWidth);
+        auto data1 = detail::VecLoadStore<T, Alignment, Inst>::load(input1 + i * RegWidth);
+        data0      = detail::VecOp<T, Inst>::min(data0, data1);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data0);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *max(T *output, const T *input0, const T *input1)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -507,18 +558,21 @@ T *max(T *output, const T *input0, const T *input1)
     assert(isPtrAligned<Alignment>(input0));
     assert(isPtrAligned<Alignment>(input1));
 
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
     for (int i = 0; i < NumBatches; i++) {
-        auto data0 = detail::VecLoadStore<T, Alignment, AVX2>::load(input0 + i * RegWidth);
-        auto data1 = detail::VecLoadStore<T, Alignment, AVX2>::load(input1 + i * RegWidth);
-        data0      = detail::VecOp<T, AVX2>::max(data0, data1);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data0);
+        auto data0 = detail::VecLoadStore<T, Alignment, Inst>::load(input0 + i * RegWidth);
+        auto data1 = detail::VecLoadStore<T, Alignment, Inst>::load(input1 + i * RegWidth);
+        data0      = detail::VecOp<T, Inst>::max(data0, data1);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data0);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int Size, typename T, int Alignment = NativeAlignment>
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 T *relu(T *output, const T *input)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -526,24 +580,28 @@ T *relu(T *output, const T *input)
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
 
-    auto zero = detail::VecOp<T, AVX2>::setzero();
-
-    DEF_BATCH256(T, Size, RegWidth, NumBatches);
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
+    auto zero = detail::VecOp<T, Inst>::setzero();
     for (int i = 0; i < NumBatches; i++) {
-        auto data0 = detail::VecLoadStore<T, Alignment, AVX2>::load(input + i * RegWidth);
-        data0      = detail::VecOp<T, AVX2>::max(data0, zero);
-        detail::VecLoadStore<T, Alignment, AVX2>::store(output + i * RegWidth, data0);
+        auto data0 = detail::VecLoadStore<T, Alignment, Inst>::load(input + i * RegWidth);
+        data0      = detail::VecOp<T, Inst>::max(data0, zero);
+        detail::VecLoadStore<T, Alignment, Inst>::store(output + i * RegWidth, data0);
     }
 
     return output + NumBatches * RegWidth;
 }
 
-template <int OutSize, int InSize, int WeightScale, int Alignment = NativeAlignment>
+template <int             OutSize,
+          int             InSize,
+          int             WeightScale,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
 int32_t *linear(int32_t      *output,
                 const int8_t *input,
                 const int8_t  weight[OutSize][InSize],
                 const int32_t bias[OutSize])
 {
+    static_assert(Inst == AVX2, "Only avx2 is supported now!");
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
@@ -598,9 +656,10 @@ int32_t *linear(int32_t      *output,
     return output + OutSize;
 }
 
-template <int Size, int Alignment = NativeAlignment>
+template <int Size, int Alignment = NativeAlignment, InstructionType Inst = NativeInstType>
 int8_t *crelu32(int8_t output[Size], const int32_t input[Size])
 {
+    static_assert(Inst == AVX2, "Only avx2 is supported now!");
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
@@ -633,25 +692,78 @@ int8_t *crelu32(int8_t output[Size], const int32_t input[Size])
 enum class Activation { None, Relu };
 
 /// Apply linear layer and relu layer.
-template <Activation activation, int OutDim, int InDim, int OutDimAligned = 8 * ((OutDim + 7) / 8)>
-void linearLayer(float (&out)[OutDimAligned],
-                 const float (&in)[InDim],
-                 const float (&weight)[InDim][OutDim],
-                 const float (&bias)[OutDim])
+template <Activation Activation,
+          int        OutDim,
+          int        InDim,
+          typename T,
+          int             Alignment     = NativeAlignment,
+          InstructionType Inst          = NativeInstType,
+          bool            Bias          = true,
+          int             OutDimAligned = alignDimSize<Alignment, T>(OutDim)>
+void linearLayer(T (&out)[OutDimAligned],
+                 const T (&in)[InDim],
+                 const T (&weight)[InDim][OutDim],
+                 const T (&bias)[OutDim])
 {
-    DEF_BATCH256(float, OutDimAligned, RegWidth, OutBatches);
+    static_assert(isAlignSizeOK(Alignment));
+    assert(isPtrAligned<Alignment>(out));
+    assert(isPtrAligned<Alignment>(in));
+    assert(isPtrAligned<Alignment>(weight));
+    assert(isPtrAligned<Alignment>(bias));
 
+    DEF_BATCH(simdBitsOfInstType(Inst), T, OutDimAligned, RegWidth, OutBatches);
     for (int b = 0; b < OutBatches; b++) {
-        auto y = simde_mm256_loadu_ps(&bias[b * RegWidth]);
+        auto y = Bias ? detail::VecLoadStore<T, Alignment, Inst>::load(&bias[b * RegWidth])
+                      : detail::VecOp<T, Inst>::setzero();
         for (int inC = 0; inC < InDim; inC++) {
-            auto x = simde_mm256_set1_ps(in[inC]);
-            auto W = simde_mm256_loadu_ps(&weight[inC][b * RegWidth]);
-            y      = simde_mm256_fmadd_ps(W, x, y);  // linear
+            auto x = detail::VecOp<T, Inst>::set1(in[inC]);
+            auto w = detail::VecLoadStore<T, Alignment, Inst>::load(&weight[inC][b * RegWidth]);
+            y      = detail::VecOp<T, Inst>::fmadd(w, x, y);
         }
-        if constexpr (activation == Activation::Relu) {
-            y = simde_mm256_max_ps(simde_mm256_setzero_ps(), y);  // relu
+
+        if constexpr (Activation == Activation::Relu) {
+            auto zero = detail::VecOp<T, Inst>::setzero();
+            y         = detail::VecOp<T, Inst>::max(y, zero);
         }
-        simde_mm256_storeu_ps(out + b * RegWidth, y);
+
+        detail::VecLoadStore<T, Alignment, Inst>::store(&out[b * RegWidth], y);
+    }
+}
+
+template <Activation Activation,
+          int        OutDim,
+          int        InDim,
+          typename T,
+          int             Alignment     = NativeAlignment,
+          InstructionType Inst          = NativeInstType,
+          int             OutDimAligned = alignDimSize<Alignment, T>(OutDim)>
+void linearLayer(T (&out)[OutDimAligned], const T (&in)[InDim], const T (&weight)[InDim][OutDim])
+{
+    linearLayer<Activation, OutDim, InDim, T, Alignment, Inst, false, OutDimAligned>(
+        out,
+        in,
+        weight,
+        *reinterpret_cast<const T(*)[OutDim]>(out));
+}
+
+template <int Size,
+          typename T,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
+void preluLayer(T (&out)[Size], const T (&in)[Size], const T (&weight)[Size])
+{
+    static_assert(isAlignSizeOK(Alignment));
+    assert(isPtrAligned<Alignment>(out));
+    assert(isPtrAligned<Alignment>(in));
+    assert(isPtrAligned<Alignment>(weight));
+
+    DEF_BATCH(simdBitsOfInstType(Inst), T, Size, RegWidth, NumBatches);
+    for (int i = 0; i < NumBatches; i++) {
+        auto data0    = detail::VecLoadStore<T, Alignment, Inst>::load(&in[i * RegWidth]);
+        auto weight0  = detail::VecLoadStore<T, Alignment, Inst>::load(&weight[i * RegWidth]);
+        auto product0 = detail::VecOp<T, Inst>::mul(data0, weight0);
+        auto result0  = detail::VecOp<T, Inst>::max(data0, product0);
+        detail::VecLoadStore<T, Alignment, Inst>::store(&out[i * RegWidth], result0);
     }
 }
 

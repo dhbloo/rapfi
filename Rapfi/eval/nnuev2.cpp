@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 /* NNUEv2 Reference: https://github.com/hzyhhzy/gomoku_nnue
  *   Training:
@@ -765,19 +765,34 @@ std::tuple<float, float, float> Accumulator::evaluateValue(const Weight &w)
 
     // linear 1
     float layer1[MLPChannel];
-    simd::linearLayer<simd::Activation::Relu>(layer1, layer0, w.mlp_w1, w.mlp_b1);
+    simd::linearLayer<simd::Activation::Relu, MLPChannel, GroupSize, float, alignof(float)>(
+        layer1,
+        layer0,
+        w.mlp_w1,
+        w.mlp_b1);
 
     // linear 2
     float layer2[MLPChannel];
-    simd::linearLayer<simd::Activation::Relu>(layer2, layer1, w.mlp_w2, w.mlp_b2);
+    simd::linearLayer<simd::Activation::Relu, MLPChannel, MLPChannel, float, alignof(float)>(
+        layer2,
+        layer1,
+        w.mlp_w2,
+        w.mlp_b2);
 
     // linear 3
     float layer3[MLPChannel];
-    simd::linearLayer<simd::Activation::Relu>(layer3, layer2, w.mlp_w3, w.mlp_b3);
+    simd::linearLayer<simd::Activation::Relu, MLPChannel, MLPChannel, float, alignof(float)>(
+        layer3,
+        layer2,
+        w.mlp_w3,
+        w.mlp_b3);
 
     // linear final
     float value[8];
-    simd::linearLayer<simd::Activation::None>(value, layer3, w.mlpfinal_w, w.mlpfinal_b);
+    simd::linearLayer<simd::Activation::None, 3, MLPChannel, float, alignof(float)>(value,
+                                                                                    layer3,
+                                                                                    w.mlpfinal_w,
+                                                                                    w.mlpfinal_b);
 
     return {value[0], value[1], value[2]};
 }
@@ -917,7 +932,7 @@ void NNUEv2Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuf
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight[self], policyBuffer);
 
-    policyBuffer.setScoreBias(-100);
+    policyBuffer.setScoreBias(200);
 }
 
 void NNUEv2Evaluator::clearCache(Color side)
