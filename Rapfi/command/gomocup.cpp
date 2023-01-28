@@ -128,15 +128,21 @@ void think(Board                             &board,
     if (Search::Threads.main()->inPonder)
         Search::Threads.stopThinking();
 
-    thinking = true;
+    Time startTime = now();
+    thinking       = true;
     Search::Threads.startThinking(board, options);
 
-    std::thread waitThread([&]() {
+    std::thread waitThread([&, startTime]() {
         Search::Threads.waitForIdle();
 
         std::lock_guard<std::mutex> lock(mtx);
         sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
                                  Search::Threads.main()->bestMove);
+
+        // Subtract used match time
+        Time usedTime = now() - startTime;
+        if (options.timeLimit && options.matchTime > 0)
+            options.timeLeft = std::max(options.timeLeft - usedTime, (Time)0);
 
         // Start pondering search if needed
         if (Search::Threads.main()->startPonderAfterThinking) {
@@ -147,8 +153,15 @@ void think(Board                             &board,
     });
     waitThread.detach();
 #else
-    thinking = true;
+    Time startTime = now();
+    thinking       = true;
     Search::Threads.startThinking(board, options);
+
+    // Subtract used match time
+    Time usedTime = now() - startTime;
+    if (options.timeLimit && options.matchTime > 0)
+        options.timeLeft = std::max(options.timeLeft - usedTime, (Time)0);
+
     sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
                              Search::Threads.main()->bestMove);
     thinking = false;
@@ -178,21 +191,14 @@ void getOption()
     upperInplace(token);
 
     if (token == "TIMEOUT_TURN") {
-        std::cin >> options.turnTime;
-        if (options.turnTime == 0)  // 0 for play as fast as possible
-            options.turnTime = Time(Config::TurnTimeReserved) + 50;
-        options.timeLimit = options.turnTime > 0 && options.matchTime > 0;
-
+        std::cin >> val;
+        options.setTimeControl(val, options.matchTime);
         if (GUIMode && options.matchTime == 100000000 && options.turnTime == 2000000)
             options.timeLimit = false;
     }
     else if (token == "TIMEOUT_MATCH") {
-        std::cin >> options.matchTime;
-        if (options.matchTime == 0)  // 0 for no limit
-            options.matchTime = std::numeric_limits<Time>::max();
-        options.timeLeft  = options.matchTime;
-        options.timeLimit = options.turnTime > 0 && options.matchTime > 0;
-
+        std::cin >> val;
+        options.setTimeControl(options.turnTime, val);
         if (GUIMode && options.matchTime == 100000000 && options.turnTime == 2000000)
             options.timeLimit = false;
     }

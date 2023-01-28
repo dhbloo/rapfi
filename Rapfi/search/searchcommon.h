@@ -155,6 +155,13 @@ struct SearchOptions
 
     /// Checks if we are in analysis mode.
     bool isAnalysisMode() const { return !timeLimit && !maxNodes; }
+    /// Set time control config according to the rule:
+    ///     MatchTime (ms) |              TurnTime (ms)
+    ///                    | less than 0 | equal to 0 | more than 0
+    ///        less than 0 |  Infinite   |  Infinite  | Turn only
+    ///         equal to 0 |  Infinite   |  Infinite  | Turn only
+    ///        more than 0 |  Match only | Match only | Match+Turn
+    void setTimeControl(int64_t turnTime, int64_t matchTime);
 };
 
 }  // namespace Search

@@ -48,7 +48,17 @@ public:
         float averageBestMoveChanges;
     };
 
-    void init(Time maxTurnTime, Time matchTimeLeft, MoveParams params);
+    /// Compute the optimal and maximum turn time at the beginning of a search.
+    /// @param turnTime Max turn time from search options.
+    /// @param matchTime Max match time from search options.
+    /// @param matchTimeLeft Current match time left from search options.
+    /// @param params Parameters from current move to search.
+    void init(Time turnTime, Time matchTime, Time matchTimeLeft, MoveParams params);
+
+    /// Check if we need to stop iterating deepening at this depth.
+    /// @param[in] params The time parameters from last iteration.
+    /// @param[out] timeReduction Record how much time is saved in the last move.
+    /// @return True if we should stop the search.
     bool checkStop(IterParams params, float &timeReduction) const;
 
     Time optimum() const { return optimumTime; }
@@ -62,7 +72,7 @@ private:
 
     /// Whether the match time is much longer than the turn time that we will never
     /// spend all the match time even if we spend all turn time at each turn.
-    bool ample;
+    bool ampleMatchTime;
 };
 
 }  // namespace Search
