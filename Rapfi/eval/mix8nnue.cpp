@@ -108,6 +108,21 @@ struct Mix8BinaryWeightLoader : WeightLoader<Mix8WeightTwoSide>
     bool isAsymmetryWeight;
 };
 
+template <size_t Size, typename T>
+using Mix8Batch = simd::detail::VecBatch<Size, T, simd::NativeInstType>;
+template <typename T>
+using Mix8LoadStore = simd::detail::VecLoadStore<T, mix8::Alignment, simd::NativeInstType>;
+template <typename FT, typename TT>
+using Mix8Cvt = simd::detail::VecCvt<FT, TT, simd::NativeInstType>;
+template <typename T>
+using Mix8Op = simd::detail::VecOp<T, simd::NativeInstType>;
+using I16LS  = Mix8LoadStore<int16_t>;
+using I32LS  = Mix8LoadStore<int32_t>;
+using F32LS  = Mix8LoadStore<float>;
+using I16Op  = Mix8Op<int16_t>;
+using I32Op  = Mix8Op<int32_t>;
+using F32Op  = Mix8Op<float>;
+
 }  // namespace
 
 namespace Evaluation::mix8 {
@@ -207,46 +222,40 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
                                       w.mapping[indexTable[innerIdx][dir]]);
 
             // Init mapAfterDWConv from mapSum
-            DEF_BATCH256(int16_t, FeatureDim, RegWidth, FeatBatches);
-            DEF_BATCH256(int16_t, FeatureDWConvDim, ConvRegWidth, ConvBatches);
-            DEF_BATCH256(int16_t, ValueDim, RegWidth16, ValueBatches16);
-            for (int b = 0; b < FeatBatches; b++) {
+            typedef Mix8Batch<FeatureDim, int16_t>       FeatB;
+            typedef Mix8Batch<FeatureDWConvDim, int16_t> ConvB;
+            typedef Mix8Batch<ValueDim, int32_t>         ValueB;
+            for (int b = 0; b < FeatB::NumBatch; b++) {
                 // Apply PReLU for mapSum
-                auto feature = simde_mm256_load_si256(
-                    reinterpret_cast<const simde__m256i *>(mapSum[innerIdx].data() + b * RegWidth));
-                auto negWeight = simde_mm256_load_si256(
-                    reinterpret_cast<const simde__m256i *>(w.map_prelu_weight + b * RegWidth));
-                feature =
-                    simde_mm256_max_epi16(feature, simde_mm256_mulhrs_epi16(feature, negWeight));
+                auto feature = I16LS::load(mapSum[innerIdx].data() + b * FeatB::RegWidth);
+                auto preluW  = I16LS::load(w.map_prelu_weight + b * FeatB::RegWidth);
+                feature      = I16Op::max(feature, I16Op::mulhrs(feature, preluW));
 
                 // Add map feature to map value sum
-                auto *valueSumPtr = reinterpret_cast<simde__m256i *>(mapValueSum + b * RegWidth16);
-                auto  valueSum0   = simde_mm256_load_si256(valueSumPtr);
-                auto  valueSum1   = simde_mm256_load_si256(valueSumPtr + 1);
-                auto  v0  = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(feature));
-                auto  v1  = simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(feature, 1));
-                valueSum0 = simde_mm256_add_epi32(valueSum0, v0);
-                valueSum1 = simde_mm256_add_epi32(valueSum1, v1);
-                simde_mm256_store_si256(valueSumPtr, valueSum0);
-                simde_mm256_store_si256(valueSumPtr + 1, valueSum1);
+                auto vSumPtr  = mapValueSum + b * 2 * ValueB::RegWidth;
+                auto vSum0    = I32LS::load(vSumPtr);
+                auto vSum1    = I32LS::load(vSumPtr + ValueB::RegWidth);
+                auto [v0, v1] = Mix8Cvt<int16_t, int32_t>::convert(feature);
+                vSum0         = I32Op::add(vSum0, v0);
+                vSum1         = I32Op::add(vSum1, v1);
+                I32LS::store(vSumPtr, vSum0);
+                I32LS::store(vSumPtr + ValueB::RegWidth, vSum1);
 
-                // Apply depthwise conv
-                if (b < ConvBatches) {
+                // Apply feature depthwise conv
+                if (b < ConvB::NumBatch) {
                     for (int dy = 0; dy <= 2; dy++) {
                         int yi = y + dy;
                         for (int dx = 0; dx <= 2; dx++) {
                             int xi       = x + dx;
                             int outerIdx = xi + yi * fullBoardSize;
 
-                            auto convWeight =
-                                simde_mm256_load_si256(reinterpret_cast<const simde__m256i *>(
-                                    w.feature_dwconv_weight[8 - dy * 3 - dx] + b * RegWidth));
-                            auto *convPtr = reinterpret_cast<simde__m256i *>(
-                                mapAfterDWConv[outerIdx].data() + b * RegWidth);
-                            auto convFeat  = simde_mm256_load_si256(convPtr);
-                            auto deltaFeat = simde_mm256_mulhrs_epi16(feature, convWeight);
-                            convFeat       = simde_mm256_add_epi16(convFeat, deltaFeat);
-                            simde_mm256_store_si256(convPtr, convFeat);
+                            auto convWeight = I16LS::load(w.feature_dwconv_weight[8 - dy * 3 - dx]
+                                                          + b * FeatB::RegWidth);
+                            auto convPtr    = mapAfterDWConv[outerIdx].data() + b * FeatB::RegWidth;
+                            auto convFeat   = I16LS::load(convPtr);
+                            auto deltaFeat  = I16Op::mulhrs(feature, convWeight);
+                            convFeat        = I16Op::add(convFeat, deltaFeat);
+                            I16LS::store(convPtr, convFeat);
                         }
                     }
                 }
@@ -257,25 +266,20 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
     // Init valueSum by adding all dwconv value features
     for (int y = 0, outerIdx = fullBoardSize + 1; y < boardSize; y++, outerIdx += 2) {
         for (int x = 0; x < boardSize; x++, outerIdx++) {
-            DEF_BATCH256(int16_t, FeatureDWConvDim, RegWidth16, ConvBatches);
-            DEF_BATCH256(int32_t, ValueDim, RegWidth32, ValueBatches32);
-            for (int b = 0; b < ConvBatches; b++) {
-                auto  feature = simde_mm256_load_si256(reinterpret_cast<simde__m256i *>(
-                    mapAfterDWConv[outerIdx].data() + b * RegWidth16));
-                auto *valueSumPtr =
-                    reinterpret_cast<simde__m256i *>(valueSum.data() + b * 2 * RegWidth32);
-                auto valueSum0 = simde_mm256_load_si256(valueSumPtr);
-                auto valueSum1 = simde_mm256_load_si256(valueSumPtr + 1);
-
-                auto v0 = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(feature));
-                auto v1 = simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(feature, 1));
-                v0      = simde_mm256_max_epi16(v0, simde_mm256_setzero_si256());  // relu
-                v1      = simde_mm256_max_epi16(v1, simde_mm256_setzero_si256());  // relu
-
-                valueSum0 = simde_mm256_add_epi32(valueSum0, v0);
-                valueSum1 = simde_mm256_add_epi32(valueSum1, v1);
-                simde_mm256_store_si256(valueSumPtr, valueSum0);
-                simde_mm256_store_si256(valueSumPtr + 1, valueSum1);
+            typedef Mix8Batch<FeatureDWConvDim, int16_t> ConvB;
+            typedef Mix8Batch<ValueDim, int32_t>         ValueB;
+            for (int b = 0; b < ConvB::NumBatch; b++) {
+                auto feature  = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
+                auto vSumPtr  = valueSum.data() + b * 2 * ValueB::RegWidth;
+                auto vSum0    = I32LS::load(vSumPtr);
+                auto vSum1    = I32LS::load(vSumPtr + ValueB::RegWidth);
+                auto [v0, v1] = Mix8Cvt<int16_t, int32_t>::convert(feature);
+                v0            = I32Op::max(v0, I32Op::setzero());  // relu
+                v1            = I32Op::max(v1, I32Op::setzero());  // relu
+                vSum0         = I32Op::add(vSum0, v0);
+                vSum1         = I32Op::add(vSum1, v1);
+                I32LS::store(vSumPtr, vSum0);
+                I32LS::store(vSumPtr + ValueB::RegWidth, vSum1);
             }
         }
     }
@@ -323,14 +327,16 @@ void Mix8Accumulator::update(const Mix8Weight &w,
         }
     }
 
+    typedef Mix8Batch<FeatureDim, int16_t>       FeatB;
+    typedef Mix8Batch<ValueSumDim, int32_t>      VSumB;
+    typedef Mix8Batch<FeatureDWConvDim, int16_t> ConvB;
+
     // Load value sum
-    DEF_BATCH256(int32_t, ValueSumDim, RegWidth32, ValueBatches32);
-    simde__m256i vSum[ValueBatches32];
-    int          x0, y0, x1, y1;
+    I32Op::R vSum[VSumB::NumBatch];
+    int      x0, y0, x1, y1;
     if constexpr (UT == MOVE) {
-        for (int b = 0; b < ValueBatches32; b++)
-            vSum[b] = simde_mm256_load_si256(
-                reinterpret_cast<simde__m256i *>(valueSum.data() + b * RegWidth32));
+        for (int b = 0; b < VSumB::NumBatch; b++)
+            vSum[b] = I32LS::load(valueSum.data() + b * VSumB::RegWidth);
 
         x0 = std::max(x - 6 + 1, 1);
         y0 = std::max(y - 6 + 1, 1);
@@ -342,18 +348,12 @@ void Mix8Accumulator::update(const Mix8Weight &w,
              yi++, outerIdxBase += fullBoardSize) {
             for (int xi = x0; xi <= x1; xi++) {
                 int outerIdx = xi + outerIdxBase;
-
-                DEF_BATCH256(int16_t, FeatureDWConvDim, RegWidth, ConvBatches);
-                for (int b = 0; b < ConvBatches; b++) {
-                    auto convF = simde_mm256_load_si256(reinterpret_cast<simde__m256i *>(
-                        mapAfterDWConv[outerIdx].data() + b * RegWidth));
-                    convF      = simde_mm256_max_epi16(convF, simde_mm256_setzero_si256());  // relu
-
-                    auto value0 = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(convF));
-                    auto value1 =
-                        simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(convF, 1));
-                    vSum[2 * b + 0] = simde_mm256_sub_epi32(vSum[2 * b + 0], value0);
-                    vSum[2 * b + 1] = simde_mm256_sub_epi32(vSum[2 * b + 1], value1);
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convF = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
+                    convF      = I16Op::max(convF, I16Op::setzero());  // relu
+                    auto [v0, v1]   = Mix8Cvt<int16_t, int32_t>::convert(convF);
+                    vSum[2 * b + 0] = I32Op::sub(vSum[2 * b + 0], v0);
+                    vSum[2 * b + 1] = I32Op::sub(vSum[2 * b + 1], v1);
                 }
             }
         }
@@ -364,66 +364,53 @@ void Mix8Accumulator::update(const Mix8Weight &w,
         const OnePointChange &c = changeTable[i];
 
         // Update mapSum and mapAfterDWConv
-        DEF_BATCH256(int16_t, FeatureDim, RegWidth, MapBatches);
-        simde__m256i oldFeats[MapBatches];
-        simde__m256i newFeats[MapBatches];
-        for (int b = 0; b < MapBatches; b++) {
+        I16Op::R oldFeats[FeatB::NumBatch];
+        I16Op::R newFeats[FeatB::NumBatch];
+        for (int b = 0; b < FeatB::NumBatch; b++) {
             // Update mapSum
-            auto newMapFeat = simde_mm256_load_si256(
-                reinterpret_cast<const simde__m256i *>(w.mapping[c.newShape] + b * RegWidth));
-            auto oldMapFeat = simde_mm256_load_si256(
-                reinterpret_cast<const simde__m256i *>(w.mapping[c.oldShape] + b * RegWidth));
-            auto deltaFeat = simde_mm256_sub_epi16(newMapFeat, oldMapFeat);
-
-            auto *mapSumPtr =
-                reinterpret_cast<simde__m256i *>(mapSum[c.innerIdx].data() + b * RegWidth);
-            oldFeats[b] = simde_mm256_load_si256(mapSumPtr);
-            newFeats[b] = simde_mm256_add_epi16(oldFeats[b], deltaFeat);
-            simde_mm256_store_si256(mapSumPtr, newFeats[b]);
+            auto newMapFeat = I16LS::load(w.mapping[c.newShape] + b * FeatB::RegWidth);
+            auto oldMapFeat = I16LS::load(w.mapping[c.oldShape] + b * FeatB::RegWidth);
+            auto mapSumPtr  = mapSum[c.innerIdx].data() + b * FeatB::RegWidth;
+            oldFeats[b]     = I16LS::load(mapSumPtr);
+            newFeats[b]     = I16Op::sub(oldFeats[b], oldMapFeat);
+            newFeats[b]     = I16Op::add(newFeats[b], newMapFeat);
+            I16LS::store(mapSumPtr, newFeats[b]);
 
             // Apply PReLU for mapSum
-            auto negW = simde_mm256_load_si256(
-                reinterpret_cast<const simde__m256i *>(w.map_prelu_weight + b * RegWidth));
-            oldFeats[b] =
-                simde_mm256_max_epi16(oldFeats[b], simde_mm256_mulhrs_epi16(oldFeats[b], negW));
-            newFeats[b] =
-                simde_mm256_max_epi16(newFeats[b], simde_mm256_mulhrs_epi16(newFeats[b], negW));
+            auto preluW = I16LS::load(w.map_prelu_weight + b * FeatB::RegWidth);
+            oldFeats[b] = I16Op::max(oldFeats[b], I16Op::mulhrs(oldFeats[b], preluW));
+            newFeats[b] = I16Op::max(newFeats[b], I16Op::mulhrs(newFeats[b], preluW));
         }
 
         // Update mapAfterDWConv
-        DEF_BATCH256(int16_t, FeatureDWConvDim, ConvRegWidth, ConvBatches);
         for (int dy = 0, outerIdxBase = c.y * fullBoardSize + c.x; dy <= 2;
              dy++, outerIdxBase += fullBoardSize) {
             for (int dx = 0; dx <= 2; dx++) {
                 auto *convWeightBase = w.feature_dwconv_weight[8 - dy * 3 - dx];
                 auto *convBase       = mapAfterDWConv[dx + outerIdxBase].data();
 
-                for (int b = 0; b < ConvBatches; b++) {
-                    auto convW = simde_mm256_load_si256(
-                        reinterpret_cast<const simde__m256i *>(convWeightBase + b * RegWidth));
-                    auto *convPtr   = reinterpret_cast<simde__m256i *>(convBase + b * RegWidth);
-                    auto  oldConvF  = simde_mm256_load_si256(convPtr);
-                    auto  deltaOldF = simde_mm256_mulhrs_epi16(oldFeats[b], convW);
-                    auto  deltaNewF = simde_mm256_mulhrs_epi16(newFeats[b], convW);
-                    auto  newConvF  = simde_mm256_sub_epi16(oldConvF, deltaOldF);
-                    newConvF        = simde_mm256_add_epi16(newConvF, deltaNewF);
-                    simde_mm256_store_si256(convPtr, newConvF);
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convW    = I16LS::load(convWeightBase + b * ConvB::RegWidth);
+                    auto convPtr  = convBase + b * ConvB::RegWidth;
+                    auto oldConvF = I16LS::load(convPtr);
+                    auto newConvF = I16Op::sub(oldConvF, I16Op::mulhrs(oldFeats[b], convW));
+                    newConvF      = I16Op::add(newConvF, I16Op::mulhrs(newFeats[b], convW));
+                    I16LS::store(convPtr, newConvF);
                 }
             }
         }
 
-        // Update valueSum
-        DEF_BATCH256(int16_t, ValueDim, RegWidth16, ValueBatches16);
-        auto mapVSum = vSum + 2 * ConvBatches;
-        for (int b = 0; b < MapBatches; b++) {
-            auto oldv0 = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(oldFeats[b]));
-            auto oldv1 = simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(oldFeats[b], 1));
-            auto newv0 = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(newFeats[b]));
-            auto newv1 = simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(newFeats[b], 1));
-            mapVSum[2 * b + 0] = simde_mm256_sub_epi32(mapVSum[2 * b + 0], oldv0);
-            mapVSum[2 * b + 1] = simde_mm256_sub_epi32(mapVSum[2 * b + 1], oldv1);
-            mapVSum[2 * b + 0] = simde_mm256_add_epi32(mapVSum[2 * b + 0], newv0);
-            mapVSum[2 * b + 1] = simde_mm256_add_epi32(mapVSum[2 * b + 1], newv1);
+        if constexpr (UT == MOVE) {
+            // Update valueSum
+            auto mapVSum = vSum + 2 * ConvB::NumBatch;
+            for (int b = 0; b < FeatB::NumBatch; b++) {
+                auto [oldv0, oldv1] = Mix8Cvt<int16_t, int32_t>::convert(oldFeats[b]);
+                auto [newv0, newv1] = Mix8Cvt<int16_t, int32_t>::convert(newFeats[b]);
+                mapVSum[2 * b + 0]  = I32Op::sub(mapVSum[2 * b + 0], oldv0);
+                mapVSum[2 * b + 1]  = I32Op::sub(mapVSum[2 * b + 1], oldv1);
+                mapVSum[2 * b + 0]  = I32Op::add(mapVSum[2 * b + 0], newv0);
+                mapVSum[2 * b + 1]  = I32Op::add(mapVSum[2 * b + 1], newv1);
+            }
         }
     }
 
@@ -433,27 +420,19 @@ void Mix8Accumulator::update(const Mix8Weight &w,
              yi++, outerIdxBase += fullBoardSize) {
             for (int xi = x0; xi <= x1; xi++) {
                 int outerIdx = xi + outerIdxBase;
-
-                DEF_BATCH256(int16_t, FeatureDWConvDim, RegWidth, ConvBatches);
-                for (int b = 0; b < ConvBatches; b++) {
-                    auto convF = simde_mm256_load_si256(reinterpret_cast<simde__m256i *>(
-                        mapAfterDWConv[outerIdx].data() + b * RegWidth));
-                    convF      = simde_mm256_max_epi16(convF, simde_mm256_setzero_si256());  // relu
-
-                    auto value0 = simde_mm256_cvtepi16_epi32(simde_mm256_castsi256_si128(convF));
-                    auto value1 =
-                        simde_mm256_cvtepi16_epi32(simde_mm256_extracti128_si256(convF, 1));
-                    vSum[2 * b + 0] = simde_mm256_add_epi32(vSum[2 * b + 0], value0);
-                    vSum[2 * b + 1] = simde_mm256_add_epi32(vSum[2 * b + 1], value1);
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convF = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
+                    convF      = I16Op::max(convF, I16Op::setzero());  // relu
+                    auto [v0, v1]   = Mix8Cvt<int16_t, int32_t>::convert(convF);
+                    vSum[2 * b + 0] = I32Op::add(vSum[2 * b + 0], v0);
+                    vSum[2 * b + 1] = I32Op::add(vSum[2 * b + 1], v1);
                 }
             }
         }
 
         // Store value sum
-        for (int b = 0; b < ValueBatches32; b++)
-            simde_mm256_store_si256(
-                reinterpret_cast<simde__m256i *>(valueSum.data() + b * RegWidth32),
-                vSum[b]);
+        for (int b = 0; b < VSumB::NumBatch; b++)
+            I32LS::store(valueSum.data() + b * VSumB::RegWidth, vSum[b]);
     }
     else {
         valueSum = *valueSumBoardBackup;  // just copy it
@@ -467,40 +446,36 @@ Mix8Accumulator::evaluateValue(const Mix8Weight      &w,
 {
     const auto &bucket = w.buckets[getBucketIndex()];
 
-    DEF_BATCH256(float, ValueDim, RegWidth, ValueBatches);
-    DEF_BATCH256(float, FeatureDWConvDim, ConvRegWidth, ConvBatches);
+    typedef Mix8Batch<ValueDim, float>         ValueB;
+    typedef Mix8Batch<FeatureDWConvDim, float> ConvB;
     static_assert(ValueDim >= FeatureDWConvDim,
                   "Assume ValueDim >= FeatureDWConvDim in evaluateValue()!");
 
     // layer 0 convert int32 to float
     alignas(Alignment) float layer0[ValueSumDim * 2];
-    auto scaleConvSelf = simde_mm256_set1_ps(w.value_sum_scale_after_conv * boardSizeScale);
-    auto scaleConvOppo = simde_mm256_set1_ps(oppoW.value_sum_scale_after_conv * boardSizeScale);
-    for (int b = 0; b < ConvBatches; b++) {
-        auto valueSelfI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(valueSum.data() + b * RegWidth));
-        auto valueOppoI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(oppoAccumulator.valueSum.data() + b * RegWidth));
-        auto valueSelfF32 = simde_mm256_cvtepi32_ps(valueSelfI32);
-        auto valueOppoF32 = simde_mm256_cvtepi32_ps(valueOppoI32);
-        valueSelfF32      = simde_mm256_mul_ps(valueSelfF32, scaleConvSelf);
-        valueOppoF32      = simde_mm256_mul_ps(valueOppoF32, scaleConvOppo);
-        simde_mm256_store_ps(layer0 + b * RegWidth, valueSelfF32);
-        simde_mm256_store_ps(layer0 + ValueSumDim + b * RegWidth, valueOppoF32);
+    auto scaleConvSelf = F32Op::set1(boardSizeScale * w.value_sum_scale_after_conv);
+    auto scaleConvOppo = F32Op::set1(boardSizeScale * oppoW.value_sum_scale_after_conv);
+    for (int b = 0; b < ConvB::NumBatch; b++) {
+        auto valueSelfI32 = I32LS::load(valueSum.data() + b * ValueB::RegWidth);
+        auto valueOppoI32 = I32LS::load(oppoAccumulator.valueSum.data() + b * ValueB::RegWidth);
+        auto valueSelfF32 = Mix8Cvt<int32_t, float>::convert1(valueSelfI32);
+        auto valueOppoF32 = Mix8Cvt<int32_t, float>::convert1(valueOppoI32);
+        valueSelfF32      = F32Op::mul(valueSelfF32, scaleConvSelf);
+        valueOppoF32      = F32Op::mul(valueOppoF32, scaleConvOppo);
+        F32LS::store(layer0 + b * ValueB::RegWidth, valueSelfF32);
+        F32LS::store(layer0 + ValueSumDim + b * ValueB::RegWidth, valueOppoF32);
     }
-    auto scaleDirectSelf = simde_mm256_set1_ps(w.value_sum_scale_direct * boardSizeScale);
-    auto scaleDirectOppo = simde_mm256_set1_ps(oppoW.value_sum_scale_direct * boardSizeScale);
-    for (int b = ConvBatches; b < ConvBatches + ValueBatches; b++) {
-        auto valueSelfI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(valueSum.data() + b * RegWidth));
-        auto valueOppoI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(oppoAccumulator.valueSum.data() + b * RegWidth));
-        auto valueSelfF32 = simde_mm256_cvtepi32_ps(valueSelfI32);
-        auto valueOppoF32 = simde_mm256_cvtepi32_ps(valueOppoI32);
-        valueSelfF32      = simde_mm256_mul_ps(valueSelfF32, scaleDirectSelf);
-        valueOppoF32      = simde_mm256_mul_ps(valueOppoF32, scaleDirectOppo);
-        simde_mm256_store_ps(layer0 + b * RegWidth, valueSelfF32);
-        simde_mm256_store_ps(layer0 + ValueSumDim + b * RegWidth, valueOppoF32);
+    auto scaleDirectSelf = F32Op::set1(boardSizeScale * w.value_sum_scale_direct);
+    auto scaleDirectOppo = F32Op::set1(boardSizeScale * oppoW.value_sum_scale_direct);
+    for (int b = ConvB::NumBatch; b < ConvB::NumBatch + ValueB::NumBatch; b++) {
+        auto valueSelfI32 = I32LS::load(valueSum.data() + b * ValueB::RegWidth);
+        auto valueOppoI32 = I32LS::load(oppoAccumulator.valueSum.data() + b * ValueB::RegWidth);
+        auto valueSelfF32 = Mix8Cvt<int32_t, float>::convert1(valueSelfI32);
+        auto valueOppoF32 = Mix8Cvt<int32_t, float>::convert1(valueOppoI32);
+        valueSelfF32      = F32Op::mul(valueSelfF32, scaleDirectSelf);
+        valueOppoF32      = F32Op::mul(valueOppoF32, scaleDirectOppo);
+        F32LS::store(layer0 + b * ValueB::RegWidth, valueSelfF32);
+        F32LS::store(layer0 + ValueSumDim + b * ValueB::RegWidth, valueOppoF32);
     }
 
     // linear 1
@@ -518,7 +493,7 @@ Mix8Accumulator::evaluateValue(const Mix8Weight      &w,
                                               bucket.value_l2_bias);
 
     // final linear
-    alignas(Alignment) float value[8];
+    alignas(Alignment) float value[16];
     simd::linearLayer<simd::Activation::None>(value,
                                               layer2,
                                               bucket.value_l3_weight,
@@ -531,28 +506,26 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
 {
     const auto &bucket = w.buckets[getBucketIndex()];
 
-    DEF_BATCH256(float, ValueDim, ValueRegWidth, ValueBatches);
-    DEF_BATCH256(float, FeatureDWConvDim, ConvRegWidth, FeatConvBatches);
+    typedef Mix8Batch<ValueDim, float>         ValueB;
+    typedef Mix8Batch<FeatureDWConvDim, float> FeatConvB;
     static_assert(ValueDim >= FeatureDWConvDim,
                   "Assume ValueDim >= FeatureDWConvDim in evaluateValue()!");
 
     // self value sum convert int32 to float
     alignas(Alignment) float selfValueMean[ValueSumDim];
-    auto scaleConv   = simde_mm256_set1_ps(w.value_sum_scale_after_conv * boardSizeScale);
-    auto scaleDirect = simde_mm256_set1_ps(w.value_sum_scale_direct * boardSizeScale);
-    for (int b = 0; b < FeatConvBatches; b++) {
-        auto valueI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(valueSum.data() + b * ValueRegWidth));
-        auto valueF32 = simde_mm256_cvtepi32_ps(valueI32);
-        valueF32      = simde_mm256_mul_ps(valueF32, scaleConv);
-        simde_mm256_store_ps(selfValueMean + b * ValueRegWidth, valueF32);
+    auto scaleConvSelf   = F32Op::set1(boardSizeScale * w.value_sum_scale_after_conv);
+    auto scaleDirectSelf = F32Op::set1(boardSizeScale * w.value_sum_scale_direct);
+    for (int b = 0; b < FeatConvB::NumBatch; b++) {
+        auto valueSelfI32 = I32LS::load(valueSum.data() + b * ValueB::RegWidth);
+        auto valueSelfF32 = Mix8Cvt<int32_t, float>::convert1(valueSelfI32);
+        valueSelfF32      = F32Op::mul(valueSelfF32, scaleConvSelf);
+        F32LS::store(selfValueMean + b * ValueB::RegWidth, valueSelfF32);
     }
-    for (int b = FeatConvBatches; b < FeatConvBatches + ValueBatches; b++) {
-        auto valueI32 = simde_mm256_load_si256(
-            reinterpret_cast<const simde__m256i *>(valueSum.data() + b * ValueRegWidth));
-        auto valueF32 = simde_mm256_cvtepi32_ps(valueI32);
-        valueF32      = simde_mm256_mul_ps(valueF32, scaleDirect);
-        simde_mm256_store_ps(selfValueMean + b * ValueRegWidth, valueF32);
+    for (int b = FeatConvB::NumBatch; b < FeatConvB::NumBatch + ValueB::NumBatch; b++) {
+        auto valueSelfI32 = I32LS::load(valueSum.data() + b * ValueB::RegWidth);
+        auto valueSelfF32 = Mix8Cvt<int32_t, float>::convert1(valueSelfI32);
+        valueSelfF32      = F32Op::mul(valueSelfF32, scaleDirectSelf);
+        F32LS::store(selfValueMean + b * ValueB::RegWidth, valueSelfF32);
     }
 
     // policy pwconv weight layer
@@ -573,17 +546,15 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
             if (!policyBuffer.getComputeFlag(innerIdx))
                 continue;
 
-            DEF_BATCH256(int16_t, PolicyDim, DWConvRegWidth, DWConvBatches);
-            DEF_BATCH256(float, PolicyDim, PWConvRegWidth, PWConvBatches);
+            typedef Mix8Batch<PolicyDim, int16_t> DWConvB;
+            typedef Mix8Batch<PolicyDim, float>   PWConvB;
             static_assert(PolicyDim <= FeatureDWConvDim,
                           "Assume PolicyDim <= FeatureDWConvDim in evaluatePolicy()!");
 
             // Copy dwconv bias to dwconv feature sum register
-            simde__m256i policyDWConvSum[DWConvBatches];
-            for (int b = 0; b < DWConvBatches; b++) {
-                policyDWConvSum[b] = simde_mm256_load_si256(reinterpret_cast<const simde__m256i *>(
-                    bucket.policy_dwconv_bias + b * DWConvRegWidth));
-            }
+            I16Op::R policyDWConvSum[DWConvB::NumBatch];
+            for (int b = 0; b < DWConvB::NumBatch; b++)
+                policyDWConvSum[b] = I16LS::load(bucket.policy_dwconv_bias + b * DWConvB::RegWidth);
 
             // Do conv1d for 4 directions
             for (int i = 0; i < arraySize(Conv1dLine4Len9Points); i++) {
@@ -598,46 +569,34 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
                 int   convOuterIdx = (boardSize + 2) * (yi + 1) + xi + 1;
                 auto *convWeight   = bucket.policy_dwconv_weight[i];
                 auto *convInput    = mapAfterDWConv[convOuterIdx].data();
-                for (int b = 0; b < DWConvBatches; b++) {
-                    auto convW = simde_mm256_load_si256(
-                        reinterpret_cast<const simde__m256i *>(convWeight + b * DWConvRegWidth));
-                    auto convI = simde_mm256_load_si256(
-                        reinterpret_cast<simde__m256i *>(convInput + b * DWConvRegWidth));
-                    // apply relu after feature dwconv
-                    convI              = simde_mm256_max_epi16(convI, simde_mm256_setzero_si256());
-                    auto convF         = simde_mm256_mulhrs_epi16(convI, convW);
-                    policyDWConvSum[b] = simde_mm256_adds_epi16(policyDWConvSum[b], convF);
+                for (int b = 0; b < DWConvB::NumBatch; b++) {
+                    auto convW         = I16LS::load(convWeight + b * DWConvB::RegWidth);
+                    auto convI         = I16LS::load(convInput + b * DWConvB::RegWidth);
+                    convI              = I16Op::max(convI, I16Op::setzero());  // relu
+                    auto convF         = I16Op::mulhrs(convI, convW);
+                    policyDWConvSum[b] = I16Op::adds(policyDWConvSum[b], convF);
                 }
             }
 
             // Apply relu, convert to float and accumulate all channels of pwconv feature
             float policy = 0.0f;
-            for (int b = 0; b < DWConvBatches; b++) {
+            for (int b = 0; b < DWConvB::NumBatch; b++) {
                 // Apply relu to dwconv feature sum
-                auto zero          = simde_mm256_setzero_si256();
-                auto policyI16Feat = simde_mm256_max_epi16(policyDWConvSum[b], zero);
+                auto policyI16Feat = I16Op::max(policyDWConvSum[b], I16Op::setzero());
 
                 // Convert dwconv feature from int16 to float
-                auto policyI16Feat0 = simde_mm256_castsi256_si128(policyI16Feat);
-                auto policyI16Feat1 = simde_mm256_extracti128_si256(policyI16Feat, 1);
-                auto policyI32Feat0 = simde_mm256_cvtepi16_epi32(policyI16Feat0);
-                auto policyI32Feat1 = simde_mm256_cvtepi16_epi32(policyI16Feat1);
-                auto policyFeat0    = simde_mm256_cvtepi32_ps(policyI32Feat0);
-                auto policyFeat1    = simde_mm256_cvtepi32_ps(policyI32Feat1);
+                auto [policyI32Feat0, policyI32Feat1] =
+                    Mix8Cvt<int16_t, int32_t>::convert(policyI16Feat);
+                auto policyFeat0 = Mix8Cvt<int32_t, float>::convert1(policyI32Feat0);
+                auto policyFeat1 = Mix8Cvt<int32_t, float>::convert1(policyI32Feat1);
 
                 // Apply pwconv by accumulating all channels of pwconv feature
-                auto convWeight0 = simde_mm256_load_ps(pwconvWeightLayer2 + b * DWConvRegWidth);
-                auto convWeight1 =
-                    simde_mm256_load_ps(pwconvWeightLayer2 + b * DWConvRegWidth + PWConvRegWidth);
-                auto convSum0  = simde_mm256_mul_ps(convWeight0, policyFeat0);
-                auto convSum1  = simde_mm256_mul_ps(convWeight1, policyFeat1);
-                convSum0       = simde_mm256_hadd_ps(convSum0, convSum1);
-                convSum0       = simde_mm256_hadd_ps(convSum0, convSum0);
-                convSum0       = simde_mm256_hadd_ps(convSum0, convSum0);
-                auto convSum00 = simde_mm256_castps256_ps128(convSum0);
-                auto convSum01 = simde_mm256_extractf128_ps(convSum0, 1);
-
-                policy += simde_mm_cvtss_f32(simde_mm_add_ps(convSum00, convSum01));
+                auto convW0   = F32LS::load(pwconvWeightLayer2 + (b * 2) * PWConvB::RegWidth);
+                auto convW1   = F32LS::load(pwconvWeightLayer2 + (b * 2 + 1) * PWConvB::RegWidth);
+                auto convSum0 = F32Op::mul(convW0, policyFeat0);
+                auto convSum1 = F32Op::mul(convW1, policyFeat1);
+                auto convSum  = F32Op::add(convSum0, convSum1);
+                policy += F32Op::reduceadd(convSum);
             }
 
             policy *= (policy < 0 ? bucket.policy_neg_weight : bucket.policy_pos_weight);

@@ -18,17 +18,12 @@
 
 #pragma once
 
-#include <simde/x86/avx2.h>
-#include <simde/x86/fma.h>
-
 #if defined(USE_BMI2)
     #include <immintrin.h>
 #endif
 
-#ifndef NO_PREFETCH
-    #if defined(__INTEL_COMPILER) || defined(_MSC_VER)
-        #include <xmmintrin.h>
-    #endif
+#if !defined(NO_PREFETCH) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
+    #include <xmmintrin.h>
 #endif
 
 #ifdef USE_ROTR
@@ -40,6 +35,27 @@
 #endif
 
 #include <cstdint>
+
+// Define some macros for platform specific optimization hint
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
+    #define FORCE_INLINE inline __attribute__((always_inline))
+    #define NO_INLINE    __attribute__((noinline))
+    #define RESTRICT     __restrict__
+    #define LIKELY(x)    __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
+#elif defined(_MSC_VER)
+    #define FORCE_INLINE __forceinline
+    #define NO_INLINE    __declspec(noinline)
+    #define RESTRICT     __restrict
+    #define LIKELY(x)    (x)
+    #define UNLIKELY(x)  (x)
+#else
+    #define FORCE_INLINE inline
+    #define NO_INLINE
+    #define RESTRICT
+    #define LIKELY(x)   (x)
+    #define UNLIKELY(x) (x)
+#endif
 
 // -------------------------------------------------
 // Platform related functions

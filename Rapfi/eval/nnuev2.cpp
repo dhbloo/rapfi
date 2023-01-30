@@ -788,7 +788,7 @@ std::tuple<float, float, float> Accumulator::evaluateValue(const Weight &w)
         w.mlp_b3);
 
     // linear final
-    float value[8];
+    float value[16];
     simd::linearLayer<simd::Activation::None, 3, MLPChannel, float, alignof(float)>(value,
                                                                                     layer3,
                                                                                     w.mlpfinal_w,

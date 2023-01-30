@@ -136,7 +136,7 @@ private:
     // Mix8 network states
 
     /// Value feature sum of the full board
-    ValueSumType valueSum;  // [ValueDim + FeatureDWConvDim] (aligned to 32)
+    ValueSumType valueSum;  // [ValueDim + FeatureDWConvDim] (aligned to 64)
     /// Index table to convert line shape to map feature
     std::array<uint32_t, 4> *indexTable;  // [H*W, 4] (unaligned)
     /// Sumed map feature of four directions

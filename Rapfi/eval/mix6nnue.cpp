@@ -370,7 +370,7 @@ RawValue Mix6Accumulator::evaluateValue(const Mix6Weight &w)
     simd::add<ValueDim, float, alignof(float)>(layer2, layer2, layer0);  // residual connection
 
     // final linear
-    float value[8];
+    float value[16];
     simd::linearLayer<simd::Activation::None, 3, ValueDim, float, alignof(float)>(value,
                                                                                   layer2,
                                                                                   w.mlp_w3,
@@ -393,7 +393,7 @@ void Mix6Accumulator::evaluatePolicy(const Mix6Weight &w, PolicyBuffer &policyBu
         t            = simde_mm256_max_epi16(simde_mm256_setzero_si256(), t);  // relu
         auto convw   = simde_mm256_loadu_si256(w.policy_final_conv);
         t            = simde_mm256_mulhrs_epi16(t, convw);
-        float policy = static_cast<float>(simd::regop::hsumI16(t));
+        float policy = static_cast<float>(simd::detail::VecOp<int16_t, simd::AVX2>::reduceadd(t));
         policy *= (policy < 0 ? w.policy_neg_slope : w.policy_pos_slope);
 
         policyBuffer(i) = policy;
