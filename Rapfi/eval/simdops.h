@@ -1077,10 +1077,10 @@ int32_t *linear(int32_t      *output,
 
             // This function processes a 32x1 chunk of int8 and produces a 8x1 chunk of int32.
             // For definition see below.
-            regop::add_dpbusd_epi32(sum0, in, I8LS::load(weight + offset0 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum1, in, I8LS::load(weight + offset1 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum2, in, I8LS::load(weight + offset2 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum3, in, I8LS::load(weight + offset3 + j * B::RegWidth));
+            regop::add_dpbusd_epi32(sum0, in, I8LS::load(weight[0] + offset0 + j * B::RegWidth));
+            regop::add_dpbusd_epi32(sum1, in, I8LS::load(weight[0] + offset1 + j * B::RegWidth));
+            regop::add_dpbusd_epi32(sum2, in, I8LS::load(weight[0] + offset2 + j * B::RegWidth));
+            regop::add_dpbusd_epi32(sum3, in, I8LS::load(weight[0] + offset3 + j * B::RegWidth));
         }
 
         // This function adds horizontally 8 values from each sum together, producing 4 int32
