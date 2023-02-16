@@ -29,6 +29,7 @@ You can build the engine from source on an environment with [CMake](https://cmak
 cd Rapfi
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
+make
 ```
 
 The default setup builds Rapfi with multi-threading and AVX2 support. To build it for running on older CPU without AVX2 support, AVX2 and AVX usage can be disable through CMake options. To see description for other CMake compile options, please refer to `CMakeLists.txt`.
