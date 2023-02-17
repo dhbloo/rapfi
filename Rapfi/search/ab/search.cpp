@@ -685,6 +685,12 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         beta  = std::min(mate_in(ss->ply + 1), beta);
         if (alpha >= beta)
             return alpha;
+
+        // Initialize statScore to zero for the grandchildren of the current position.
+        // So statScore is shared between all grandchildren and only the first grandchild
+        // starts with statScore = 0. Later grandchildren start with the last calculated
+        // statScore of the previous grandchild.
+        (ss + 2)->statScore = 0;
     }
     else
         searchData->rootDelta = beta - alpha;
@@ -989,7 +995,7 @@ moves_loop:
 
         int  distOppo = Pos::distance(move, (ss - 1)->currentMove);
         int  distSelf = Pos::distance(move, (ss - 2)->currentMove);
-        bool distract = distSelf > 4 && distOppo > 4;
+        bool distract = distSelf > (Rule == RENJU ? 5 : 4) && distOppo > 4;
 
         // Step 12. Pruning at shallow depth
         // Do pruning only when we have non-losing moves, otherwise we may have a false mate.
@@ -1130,24 +1136,29 @@ moves_loop:
 
             // Increase reduction for cut nodes if is not killer moves
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
-                r += 2.0f;
+                r += 1.7f;
 
             // Increase reduction for useless defend move (~25 elo)
-            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4) {
-                r += (distOppo > 4) * 2;
-                r += (distSelf > 4);
-            }
+            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
+                r += (distOppo > 4) * 2 + (distSelf > 4);
 
             // Decrease reduction for continous attack
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
                 && (ss->moveP4[self] >= H_FLEX3 || distSelf <= 4 && ss->moveP4[self] >= J_FLEX2_2X))
-                r -= 1.0f;
+                r -= 0.75f;
 
             if constexpr (Rule == Rule::RENJU) {
                 // Decrease reduction for false forbidden move in Renju
                 if (ss->moveP4[BLACK] == FORBID)
                     r -= 1.0f;
             }
+
+            // Update statScore of this node
+            ss->statScore = searchData->mainHistory[self][move][HIST_ATTACK]
+                            + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 - 3200;
+
+            // Decrease/increase reduction for moves with a good/bad history
+            r -= ss->statScore * (1.0f / 12700);
 
             // Allow LMR to do deeper search in some circumstances
             int deeper = r < -1 && moveCount <= 4 ? 1 : 0;

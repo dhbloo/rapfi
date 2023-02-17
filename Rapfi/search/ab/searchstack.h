@@ -35,6 +35,7 @@ struct SearchStack
     int        moveCount;
     int        doubleExtensionCount;
     int        dbValueDepth;
+    int        statScore;
     Value      staticEval;
     Pos        currentMove;
     Pos        skipMove;
