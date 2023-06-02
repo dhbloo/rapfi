@@ -28,5 +28,5 @@
 
 constexpr char EngineInfo[] = "name=\"Rapfi\", "
                               "version=\"" CURRENT_VER "\", "
-                              "author=\"dblue(https://github.com/dhbloo), sigmoid(https://github.com/hzyhhzy)\", "
+                              "author=\"Rapfi developers (see AUTHORS file)\""
                               "country=\"China\"";
