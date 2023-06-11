@@ -19,6 +19,7 @@ option(USE_BMI2 "Enable BMI2 instruction" OFF)
 
 option(ENABLE_LTO "Enable link time optimization" OFF)
 option(FORCE_ASSERTION "Enable force assertion for all build type" OFF)
+option(USE_ASAN "Enable address sanitizer" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "No build type selected, default to Release" FORCE)
@@ -273,6 +274,11 @@ if(MSVC)
         string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE_UPPER)
         string(REPLACE "/DNDEBUG" "" CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER}})
     endif()
+
+    if(USE_ASAN)
+	    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fsanitize=address")
+	endif()
+	
     if(CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
         set_target_properties(rapfi PROPERTIES LINK_FLAGS "/PROFILE")
     endif()

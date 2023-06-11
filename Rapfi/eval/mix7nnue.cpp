@@ -629,7 +629,7 @@ void Mix7Evaluator::addCache(Color side, int x, int y, bool isUndo)
         else
             moveCache[c].pop_back();  // cancel out the last move cache
 
-        assert(moveCache[c].size() < boardSize * boardSize);
+        assert(moveCache[c].size() <= boardSize * boardSize);
     }
 }
 
