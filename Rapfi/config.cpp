@@ -93,7 +93,7 @@ CoordConvertionMode IOCoordMode = CoordConvertionMode::NONE;
 /// Default candidate range mode if not specified when creating board.
 CandidateRange DefaultCandidateRange = CandidateRange::SQUARE3_LINE4;
 /// Memory reserved for stuff other than hash table in max_memory option.
-size_t MemoryReservedMB = 20;
+size_t MemoryReservedMB[RULE_NB] = {0};
 /// Default hash table size (negative number for not setting).
 int64_t DefaultTTSizeKB = -1;
 
@@ -363,8 +363,20 @@ void Config::readGeneral(const cpptoml::table &t)
         }
     }
 
-    MemoryReservedMB = t.get_as<uint64_t>("memory_reserved_mb").value_or(MemoryReservedMB);
-    DefaultTTSizeKB  = t.get_as<uint64_t>("default_tt_size_kb").value_or(DefaultTTSizeKB);
+    // Read memory reserved for each rule
+    if (auto table = t.get_array("memory_reserved_mb")) {
+        if (auto array = table->get_array_of<int64_t>()) {
+            for (int i = 0; i < RULE_NB; i++)
+                MemoryReservedMB[i] = array->at(std::min<size_t>(i, array->size() - 1));
+        }
+    }
+    else {
+        auto v = t.get_as<uint64_t>("memory_reserved_mb");
+        for (int i = 0; i < RULE_NB; i++)
+            MemoryReservedMB[i] = v.value_or(MemoryReservedMB[i]);
+    }
+
+    DefaultTTSizeKB = t.get_as<uint64_t>("default_tt_size_kb").value_or(DefaultTTSizeKB);
     // Resize TT according to default TT size (overriding previous size)
     if (DefaultTTSizeKB >= 0)
         Search::TT.resize(DefaultTTSizeKB);

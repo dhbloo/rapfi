@@ -208,25 +208,26 @@ void getOption()
     else if (token == "MAX_MEMORY") {
         std::cin >> val;
         size_t maxMemSizeKB;  // max memory usage in KB
+        size_t memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
         if (val == 0) {
             maxMemSizeKB = 350 * 1024;  // use default gomocup max_memory
         }
         else {
             maxMemSizeKB = val >> 10;  // max memory usage in KB
             // Warn if max memory is less than 10MB or reserved memory size
-            if (maxMemSizeKB < std::max<size_t>(10, Config::MemoryReservedMB) * 1024)
+            if (maxMemSizeKB < std::max<size_t>(10240, memReservedKB))
                 ERRORL("Max memory too small, might exceeds memory limits");
         }
 
         options.maxMemoryKB = maxMemSizeKB;
-        if (maxMemSizeKB <= Config::MemoryReservedMB * 1024)
+        if (maxMemSizeKB <= memReservedKB)
             Search::TT.resize(1);  // minimal hash size value is 1 KB
         else
-            Search::TT.resize(maxMemSizeKB - Config::MemoryReservedMB * 1024);
+            Search::TT.resize(maxMemSizeKB - memReservedKB);
     }
     else if (token == "HASH_SIZE") {  // Yixin-Board Extension
         std::cin >> val;              // Read size of hash memory in KB
-        options.maxMemoryKB = val;
+        options.maxMemoryKB = 0;
         Search::TT.resize(val);
     }
     else if (token == "RULE") {
@@ -243,6 +244,17 @@ void getOption()
         default:
             ERRORL("Unknown rule id: " << val << ". Rule is reset to freestyle...");
             options.rule = {Rule::FREESTYLE, GameRule::FREEOPEN};
+        }
+
+        // Resize TT if memory reserved is different for this rule.
+        if (options.maxMemoryKB > 0
+            && Config::MemoryReservedMB[prevRule] != Config::MemoryReservedMB[options.rule.rule]) {
+            size_t maxMemSizeKB  = options.maxMemoryKB;  // max memory usage in KB
+            size_t memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
+            if (maxMemSizeKB <= memReservedKB)
+                Search::TT.resize(1);  // minimal hash size value is 1 KB
+            else
+                Search::TT.resize(maxMemSizeKB - memReservedKB);
         }
 
         // Clear TT if rule is changed

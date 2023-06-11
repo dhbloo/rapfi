@@ -112,7 +112,7 @@ extern size_t              DefaultThreadNum;
 extern MsgMode             MessageMode;
 extern CoordConvertionMode IOCoordMode;
 extern CandidateRange      DefaultCandidateRange;
-extern size_t              MemoryReservedMB;
+extern size_t              MemoryReservedMB[RULE_NB];
 extern int64_t             DefaultTTSizeKB;
 
 // -------------------------------------------------
