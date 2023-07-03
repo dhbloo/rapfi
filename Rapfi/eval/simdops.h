@@ -66,7 +66,6 @@ template <size_t AlignSize, typename T>
 constexpr bool isPtrAligned(const T *pointer)
 {
     static_assert(isAlignSizeOK(AlignSize), "AlignSize is not valid");
-    static_assert(AlignSize >= alignof(T), "Incorrect AlignSize");
     return (reinterpret_cast<uintptr_t>(pointer) & (AlignSize - 1)) == 0;
 }
 

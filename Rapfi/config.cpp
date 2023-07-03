@@ -627,9 +627,13 @@ void Config::readEvaluator(const cpptoml::table &t)
                 Rule                  rule,
                 std::filesystem::path weightPath,
                 const cpptoml::table &weightCfg) {
+                auto [blackWeightPath, whiteWeightPath] =
+                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
+
                 return std::make_unique<Evaluation::mix8::Mix8Evaluator>(boardSize,
                                                                          rule,
-                                                                         weightPath);
+                                                                         blackWeightPath,
+                                                                         whiteWeightPath);
             },
             true));
     }
