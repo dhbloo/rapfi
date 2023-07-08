@@ -117,12 +117,18 @@ struct DBRecord
     std::string comment() const;
     /// Set the comment text of this dbRecord.
     void setComment(const std::string &comment);
+    /// Check if this record has any board text.
+    bool hasBoardText() const;
     /// Query the board text of a canonical pos of this dbRecord.
     std::string boardText(Pos canonicalPos);
     /// Set the board text of a canonical pos of this dbRecord.
     void setBoardText(Pos canonicalPos, std::string boardText);
     /// Clear the board text segment of this dbRecord.
     void clearAllBoardText();
+    /// Overwrite the board text of this dbRecord from other dbRecord.
+    /// @param overwrite Whether to overwrite existing board texts in current record.
+    ///     If not, all existing board texts will be kept and only new board texts are saved.
+    void copyBoardTextFrom(const DBRecord &rhs, bool overwrite);
     /// Get the display label of this record.
     std::string displayLabel() const;
 };

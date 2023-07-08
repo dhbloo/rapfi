@@ -74,7 +74,10 @@ void copyDatabaseBranch(DBStorage &dbSrc,
     // Find all potential children of this board position
     std::vector<Pos> toCopyPos;
     toCopyPos.reserve(board.movesLeft());
-    FOR_EVERY_EMPTY_POS(&board, pos) { toCopyPos.push_back(pos); }
+    FOR_EVERY_EMPTY_POS(&board, pos)
+    {
+        toCopyPos.push_back(pos);
+    }
 
     // Do permutation based on thread id
     if (threadId > 0) {
@@ -236,15 +239,32 @@ size_t mergeDatabase(DBStorage &dbDst, DBStorage &dbSrc, OverwriteRule owRule)
         dbRecords.clear();
         cursor = dbSrc.scan(cursor, BatchSize, dbRecords);
 
-        for (const auto &[dbKey, dbRecord] : dbRecords) {
+        for (auto &[dbKey, dbRecord] : dbRecords) {
             if (!dbDst.get(dbKey, oldRecord, RECORD_MASK_ALL)
                 || checkOverwrite(oldRecord,
                                   dbRecord,
                                   owRule,
                                   Config::DatabaseOverwriteExactBias,
                                   0)) {
+                // Merge board texts.
+                dbRecord.copyBoardTextFrom(oldRecord, false);
+
+                // Merge comment if the newRecord does not have them.
+                if (!oldRecord.comment().empty() && dbRecord.comment().empty())
+                    dbRecord.setComment(oldRecord.comment());
+
                 dbDst.set(dbKey, dbRecord, RECORD_MASK_ALL);
                 writeCount++;
+            }
+            else {
+                // Merge board texts.
+                oldRecord.copyBoardTextFrom(dbRecord, false);
+
+                // Merge comment if the oldRecord does not have them.
+                if (oldRecord.comment().empty() && !dbRecord.comment().empty())
+                    oldRecord.setComment(dbRecord.comment());
+
+                dbDst.set(dbKey, oldRecord, RECORD_MASK_TEXT);
             }
         }
 

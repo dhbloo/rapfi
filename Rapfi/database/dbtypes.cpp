@@ -21,6 +21,8 @@
 #include "../config.h"
 #include "../core/utils.h"
 
+#include <map>
+
 namespace {
 
 constexpr char coordToHex(int coord)
@@ -32,6 +34,8 @@ constexpr int hexToCoord(char hex)
     return hex <= '9' ? hex - '0' : hex - 'A' + 10;
 }
 
+constexpr char BoardTextHeader[] = "@BTXT@";
+
 }  // namespace
 
 namespace Database {
@@ -40,7 +44,7 @@ std::string DBRecord::comment() const
 {
     size_t start = 0;
     // Skip special board text segment at beginning
-    if (text.rfind("@BTXT@", 0) == 0) {
+    if (text.rfind(BoardTextHeader, 0) == 0) {
         start = text.find('\b');
         if (start == std::string::npos)
             return {};  // empty comment
@@ -54,7 +58,7 @@ std::string DBRecord::comment() const
 void DBRecord::setComment(const std::string &comment)
 {
     // Delete all comments in text excluding special board text segment
-    if (text.rfind("@BTXT@", 0) == 0) {
+    if (text.rfind(BoardTextHeader, 0) == 0) {
         size_t start = text.find('\b');
         if (start != std::string::npos)
             text.erase(start, text.size() - start);
@@ -67,14 +71,17 @@ void DBRecord::setComment(const std::string &comment)
     text.append(comment);
 }
 
+bool DBRecord::hasBoardText() const
+{
+    return text.rfind(BoardTextHeader, 0) == 0;  // startswith
+}
+
 std::string DBRecord::boardText(Pos canonicalPos)
 {
-    if (text.rfind("@BTXT@", 0) != 0)
+    if (!hasBoardText())
         return {};  // No board text is recorded
 
-    size_t boardTextSegmentSize = text.find('\b');
-    if (boardTextSegmentSize == std::string::npos)
-        boardTextSegmentSize = text.size();
+    size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
     std::string_view boardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
 
     auto boardTextPairs = split(boardTextSegment, "\n");
@@ -99,14 +106,12 @@ void DBRecord::setBoardText(Pos canonicalPos, std::string boardText)
                        [](unsigned char c) { return c == '\n' || c == '\b' || std::isspace(c); }),
         boardText.cend());
 
-    std::string boardTextSegment = "@BTXT@";
+    std::string boardTextSegment = BoardTextHeader;
     size_t      boardTextCount   = 0;
 
     // Remove previous board text if it is recorded
-    if (text.rfind("@BTXT@", 0) == 0) {
-        size_t boardTextSegmentSize = text.find('\b');
-        if (boardTextSegmentSize == std::string::npos)
-            boardTextSegmentSize = text.size();
+    if (text.rfind(BoardTextHeader, 0) == 0) {
+        size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
         std::string_view oldBoardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
 
         auto boardTextPairs = split(oldBoardTextSegment, "\n");
@@ -147,15 +152,96 @@ void DBRecord::setBoardText(Pos canonicalPos, std::string boardText)
 
 void DBRecord::clearAllBoardText()
 {
-    if (text.rfind("@BTXT@", 0) != 0)
+    if (text.rfind(BoardTextHeader, 0) != 0)
         return;
 
-    size_t boardTextSegmentSize = text.find('\b');
-    if (boardTextSegmentSize == std::string::npos)
-        boardTextSegmentSize = text.size();
+    size_t boardTextSegmentSize = std::min(text.find('\b'), text.size());
     if (boardTextSegmentSize < text.size())
         boardTextSegmentSize++;           // Erase '\b'
     text.erase(0, boardTextSegmentSize);  // Remove board text segment
+}
+
+void DBRecord::copyBoardTextFrom(const DBRecord &rhs, bool overwrite)
+{
+    // If rhs has no board text, skip
+    if (!rhs.hasBoardText())
+        return;
+
+    // If this has no board text, copy directly from rhs
+    if (!hasBoardText()) {
+        size_t boardTextSegmentSize = std::min(rhs.text.find('\b'), rhs.text.size());
+        if (text.empty()) {
+            text = std::string_view {text.data(), boardTextSegmentSize};
+        }
+        else {
+            text.insert(0, rhs.text, 0, boardTextSegmentSize);
+            text.insert(boardTextSegmentSize, "\b");
+        }
+    }
+
+    // Merge board texts position by position
+    std::map<Pos, std::string> boardTextToMerge;
+
+    // Get all positions in rhs that have board text
+    {
+        size_t           boardTextSegmentSize = std::min(rhs.text.find('\b'), rhs.text.size());
+        std::string_view boardTextSegment(rhs.text.data() + 6, boardTextSegmentSize - 6);
+        for (std::string_view boardTextPair : split(boardTextSegment, "\n")) {
+            if (boardTextPair.size() > 2) {
+                Pos p {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
+                boardTextToMerge.emplace(p, boardTextPair);
+            }
+        }
+    }
+
+    std::string boardTextSegment = BoardTextHeader;
+    size_t      boardTextCount   = 0;
+    // Get all positions in this and remove either one according to overwrite flag
+    {
+        size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
+        std::string_view oldBoardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
+
+        for (std::string_view boardTextPair : split(oldBoardTextSegment, "\n")) {
+            if (boardTextPair.size() > 2) {
+                Pos p {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
+                if (auto it = boardTextToMerge.find(p); it != boardTextToMerge.end()) {
+                    if (overwrite)
+                        boardTextSegment.append(it->second);
+                    else
+                        boardTextSegment.append(boardTextPair);
+                    boardTextToMerge.erase(it);
+                }
+                else {
+                    boardTextSegment.append(boardTextPair);
+                }
+                boardTextSegment.push_back('\n');
+                boardTextCount++;
+            }
+        }
+
+        if (boardTextSegmentSize < text.size())
+            boardTextSegmentSize++;           // Erase '\b'
+        text.erase(0, boardTextSegmentSize);  // Remove board text segment
+    }
+
+    // Add remaining board texts in rhs
+    for (const auto &[p, boardText] : boardTextToMerge) {
+        boardTextSegment.append(boardText);
+        boardTextSegment.push_back('\n');
+        boardTextCount++;
+    }
+
+    // Do not insert board text segment if no board text
+    if (boardTextCount == 0)
+        return;
+
+    // Insert board text segment to text entry of this dbRecord
+    if (text.empty())
+        text = std::move(boardTextSegment);
+    else {
+        boardTextSegment.push_back('\b');
+        text.insert(0, boardTextSegment);
+    }
 }
 
 std::string DBRecord::displayLabel() const
