@@ -23,13 +23,15 @@
 #include <algorithm>
 #include <chrono>
 
-#if defined(_WIN32) && !defined(_MSC_VER)
+#if defined(_WIN32)
     #ifndef NOMINMAX
         #define NOMINMAX
     #endif
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
-    #define USE_WINDOWS_CODECVT
+    #if !defined(_MSC_VER)
+        #define USE_WINDOWS_CODECVT
+    #endif
 #endif
 
 Time now()
@@ -114,6 +116,93 @@ std::string nodesText(uint64_t nodes)
         return std::to_string(nodes / 1000000000) + "G";
     else
         return std::to_string(nodes / 1000000000000) + "T";
+}
+
+// -------------------------------------------------
+
+std::string ACPToUTF8(std::string str)
+{
+#if defined(_WIN32)
+    if (str.empty())
+        return {};
+
+    int nCodePage = GetACP();
+    int wideSize  = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
+
+    std::wstring wstr(wideSize + 1, '\0');
+    MultiByteToWideChar(nCodePage,
+                        0,
+                        str.c_str(),
+                        (int)str.length(),
+                        wstr.data(),
+                        (int)wstr.size());
+
+    int utf8Size = WideCharToMultiByte(CP_UTF8,
+                                       0,
+                                       wstr.c_str(),
+                                       (int)wstr.length(),
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       nullptr);
+
+    std::string utf8str(utf8Size, '\0');
+    WideCharToMultiByte(CP_UTF8,
+                        0,
+                        wstr.c_str(),
+                        (int)wstr.length(),
+                        utf8str.data(),
+                        (int)utf8str.size(),
+                        nullptr,
+                        nullptr);
+
+    return utf8str;
+#else
+    return str;
+#endif
+}
+
+std::string UTF8ToACP(std::string utf8str)
+{
+#if defined(_WIN32)
+    if (utf8str.empty())
+        return {};
+
+    int nCodePage = GetACP();
+    int wideSize =
+        MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), (int)utf8str.length(), nullptr, 0);
+
+    std::wstring wstr(wideSize + 1, '\0');
+    MultiByteToWideChar(CP_UTF8,
+                        0,
+                        utf8str.c_str(),
+                        (int)utf8str.length(),
+                        wstr.data(),
+                        (int)wstr.size());
+
+    int utf8Size = WideCharToMultiByte(nCodePage,
+                                       0,
+                                       wstr.c_str(),
+                                       (int)wstr.length(),
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       nullptr);
+
+    std::string str(utf8Size, '\0');
+    WideCharToMultiByte(nCodePage,
+                        0,
+                        wstr.c_str(),
+                        (int)wstr.length(),
+                        str.data(),
+                        (int)str.size(),
+                        nullptr,
+                        nullptr);
+
+    return str;
+#else
+    return utf8str;
+#endif
 }
 
 // -------------------------------------------------

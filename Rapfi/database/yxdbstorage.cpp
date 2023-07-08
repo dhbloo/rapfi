@@ -19,6 +19,7 @@
 #include "yxdbstorage.h"
 
 #include "../core/iohelper.h"
+#include "../core/utils.h"
 #include "dbtypes.h"
 
 #include <fstream>
@@ -221,7 +222,8 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
     std::vector<int8_t> byteBuffer;
     byteBuffer.resize(1024);  // reserve initial space
 
-    auto hint = recordsMap.begin();
+    bool isUTF8 = false;  // Is this database UTF-8 encoded?
+    auto hint   = recordsMap.begin();
     for (uint32_t recordIdx = 0; recordIdx < numRecords; recordIdx++) {
         // Read record key
         uint16_t numKeyBytes;
@@ -302,6 +304,15 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
             byteBuffer.resize(numRecordBytes);
         is.read(reinterpret_cast<char *>(byteBuffer.data()), numRecordBytes);
 
+        // Parse metadata record
+        if (boardXLen == 0 && boardYLen == 0) {
+            std::string metadata {reinterpret_cast<char *>(&byteBuffer[5]),
+                                  static_cast<size_t>(numRecordBytes - 5)};
+            if (metadata.rfind("charset=\"UTF-8\"", 0) == 0)
+                isUTF8 = true;
+            continue;
+        }
+
         // Emplace db key and db record in map
         hint = recordsMap.emplace_hint(
             hint,
@@ -318,18 +329,43 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                 numRecordBytes > 2 ? *reinterpret_cast<DBValue *>(&byteBuffer[1]) : DBValue(0),
                 numRecordBytes > 4 ? *reinterpret_cast<DBDepthBound *>(&byteBuffer[3])
                                    : DBDepthBound(0),
-                numRecordBytes > 5 ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                                  static_cast<size_t>(numRecordBytes - 5)}
-                                   : std::string {}}));
+                numRecordBytes > 5
+                    ? (isUTF8 ? UTF8ToACP(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                                       static_cast<size_t>(numRecordBytes - 5)})
+                              : std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                             static_cast<size_t>(numRecordBytes - 5)})
+                    : std::string {}}));
 
     next_record:;
     }
+
+    // Force convert old format to new utf-8 format
+    if (!isUTF8)
+        dirty = true;
 }
 
 void YXDBStorage::save(std::ostream &os) noexcept
 {
-    uint32_t numRecords = recordsMap.size();
+    uint32_t numRecords = recordsMap.size() + 1;
     os.write(reinterpret_cast<char *>(&numRecords), sizeof(numRecords));
+
+    // Write a metadata record with board size equals to 0
+    {
+        // Record charset of this database file
+        std::string metadata = "charset=\"UTF-8\"";
+
+        uint16_t numMetaKeyBytes = 3;
+        char     metaKeyData[3]  = {0};
+        os.write(reinterpret_cast<char *>(&numMetaKeyBytes), sizeof(numMetaKeyBytes));
+        os.write(reinterpret_cast<const char *>(metaKeyData), 3);
+
+        uint16_t numRecordBytes    = 5 + metadata.length();
+        char     metaRecordData[5] = {0};
+        os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
+        os.write(reinterpret_cast<const char *>(metaRecordData),
+                 sizeof(DBLabel) + sizeof(DBValue) + sizeof(DBDepthBound));
+        os.write(metadata.c_str(), metadata.length());
+    }
 
     const char PassMove[2] = {-1, -1};
     for (auto it = recordsMap.cbegin(); it != recordsMap.cend(); it++) {
@@ -359,12 +395,13 @@ void YXDBStorage::save(std::ostream &os) noexcept
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
         }
         else {
-            uint16_t numRecordBytes = 5 + record.text.length();
+            std::string utf8Text       = ACPToUTF8(record.text);
+            uint16_t    numRecordBytes = 5 + utf8Text.length();
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
             os.write(reinterpret_cast<const char *>(&record.label), sizeof(DBLabel));
             os.write(reinterpret_cast<const char *>(&record.value), sizeof(DBValue));
             os.write(reinterpret_cast<const char *>(&record.depthbound), sizeof(DBDepthBound));
-            os.write(record.text.c_str(), record.text.length());
+            os.write(utf8Text.c_str(), utf8Text.length());
         }
     }
 }

@@ -152,6 +152,15 @@ private:
 };
 
 // -------------------------------------------------
+// String encoding conversion
+
+/// Convert a string's encoding from active code page to utf-8.
+std::string ACPToUTF8(std::string str);
+
+/// Convert a string's encoding from utf-8 to active code page.
+std::string UTF8ToACP(std::string utf8str);
+
+// -------------------------------------------------
 // File system-related helpers
 
 /// Convert a filesystem path from a multi-byte string using current code page encoding.
