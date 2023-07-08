@@ -464,7 +464,7 @@ void setDatabase()
 {
     auto databaseURL = readPathFromInput();
     if (!databaseURL.empty() && !Config::DatabaseType.empty()) {
-        Config::DatabaseURL     = databaseURL.u8string();
+        Config::DatabaseURL     = pathToString(databaseURL);
         auto newDatabaseStorage = Config::createDefaultDBStorage();
         if (newDatabaseStorage)
             Search::Threads.setupDatabase(std::move(newDatabaseStorage));
@@ -1080,7 +1080,7 @@ void splitDatabase()
 {
     auto databaseURL = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToSplit = Config::createDefaultDBStorage(databaseURL.generic_string())) {
+        if (auto dbToSplit = Config::createDefaultDBStorage(pathToString(databaseURL))) {
             auto   startTime  = now();
             size_t writeCount = ::Database::splitDatabase(*Search::Threads.dbStorage(),
                                                           *dbToSplit,
@@ -1097,7 +1097,7 @@ void mergeDatabase()
 {
     auto databaseURL = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToMerge = Config::createDefaultDBStorage(databaseURL.generic_string())) {
+        if (auto dbToMerge = Config::createDefaultDBStorage(pathToString(databaseURL))) {
             size_t writeCount = mergeDatabase(*Search::Threads.dbStorage(),
                                               *dbToMerge,
                                               Config::DatabaseOverwriteRule);

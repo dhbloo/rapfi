@@ -690,9 +690,9 @@ void Config::readDatabase(const cpptoml::table &t)
             ignoreCorrupted  = args->get_as<bool>("ignore_corrupted").value_or(ignoreCorrupted);
         }
 
-        DatabaseMaker = [=](std::string u8Path) -> std::unique_ptr<::Database::DBStorage> {
+        DatabaseMaker = [=](std::string path) -> std::unique_ptr<::Database::DBStorage> {
             try {
-                auto dbPath    = std::filesystem::u8path(u8Path);
+                auto dbPath    = pathFromString(path);
                 bool existing  = std::filesystem::exists(dbPath);
                 auto startTime = now();
                 MESSAGEL("Opening yixin database at " << pathToString(dbPath) << " ...");
