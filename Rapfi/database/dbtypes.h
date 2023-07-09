@@ -113,15 +113,15 @@ struct DBRecord
                 label = LABEL_NONE;
         }
     }
-    /// Extract comment text from dbRecord.
+    /// Extract utf-8 comment text from dbRecord.
     std::string comment() const;
-    /// Set the comment text of this dbRecord.
+    /// Set the utf-8 comment text of this dbRecord.
     void setComment(const std::string &comment);
     /// Check if this record has any board text.
     bool hasBoardText() const;
-    /// Query the board text of a canonical pos of this dbRecord.
+    /// Query the utf-8 board text of a canonical pos of this dbRecord.
     std::string boardText(Pos canonicalPos);
-    /// Set the board text of a canonical pos of this dbRecord.
+    /// Set the utf-8 board text of a canonical pos of this dbRecord.
     void setBoardText(Pos canonicalPos, std::string boardText);
     /// Clear the board text segment of this dbRecord.
     void clearAllBoardText();

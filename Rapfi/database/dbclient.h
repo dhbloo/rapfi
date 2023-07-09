@@ -91,10 +91,10 @@ public:
                        Rule                                   rule,
                        std::vector<std::pair<Pos, DBRecord>> &childRecords);
 
-    /// Query the board text of an empty pos on board.
+    /// Query the utf-8 board text of an empty pos on board.
     std::string queryBoardText(const Board &board, Rule rule, Pos pos);
 
-    /// Update the board text of an empty pos on board.
+    /// Update the utf-8 board text of an empty pos on board.
     void setBoardText(const Board &board, Rule rule, Pos pos, std::string text);
 
     /// Save a new DBRecord of current position into the database.

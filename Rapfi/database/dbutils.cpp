@@ -219,7 +219,9 @@ void databaseToCSVFile(::Database::DBStorage &dbStorage, std::ostream &csvStream
             default: csvStream << "none"; break;
             }
 
-            csvStream << Sep << std::quoted(dbRecord.text) << '\n';
+            std::string escapedText = dbRecord.text;
+            replaceAll(escapedText, "\n", "\\n");
+            csvStream << Sep << std::quoted(escapedText) << '\n';
             count++;
         }
 
@@ -371,14 +373,14 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     b.undo(rule);
                     {
                         DBClient dbClient(dbDst, RECORD_MASK_TEXT);
-                        dbClient.setBoardText(b, rule, lastMove, t);
+                        dbClient.setBoardText(b, rule, lastMove, ACPToUTF8(t));
                     }
                     b.move(rule, lastMove);
                 }
             }
 
             if (comment && !Config::DatabaseLibIgnoreComment) {
-                std::string newCmt = *comment;
+                std::string newCmt = ACPToUTF8(*comment);
                 replaceAll(newCmt, "\r\n", "\n");
 
                 if (hasOldRecord) {

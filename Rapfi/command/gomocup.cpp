@@ -793,12 +793,13 @@ void queryDatabaseAll(bool getPosition)
                     displayLabelValue = (displayLabelValue << 8) | c;
             }
 
-            std::string boardText = dbClient.queryBoardText(*board, options.rule, pos);
+            std::string boardTextUTF8 = dbClient.queryBoardText(*board, options.rule, pos);
             MESSAGEL("DATABASE " << outputCoordXConvert(pos, board->size()) << ' '
                                  << outputCoordYConvert(pos, board->size()) << ' '
                                  << displayLabelValue << ' ' << record.value << ' '
                                  << record.depth() << ' ' << int(record.bound()) << ' '
-                                 << int(!record.comment().empty()) << ' ' << boardText);
+                                 << int(!record.comment().empty()) << ' '
+                                 << UTF8ToACP(boardTextUTF8));
         }
 
         MESSAGEL("DATABASE DONE");
@@ -840,7 +841,7 @@ void queryDatabaseText(bool getPosition)
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
         DBRecord record;
         if (dbClient.query(*board, options.rule, record) && !record.isNull())
-            MESSAGEL("DATABASE TEXT " << std::quoted(record.comment()));
+            MESSAGEL("DATABASE TEXT " << std::quoted(UTF8ToACP(record.comment())));
         else
             MESSAGEL("DATABASE TEXT \"\"");
     }
@@ -883,7 +884,8 @@ void editDatabaseText()
         DBRecord record;
         if (!dbClient.query(*board, options.rule, record))
             record = DBRecord {LABEL_NONE};
-        record.setComment(trimInplace(newText));
+        std::string newTextUTF8 = ACPToUTF8(trimInplace(newText));
+        record.setComment(newTextUTF8);
         dbClient.save(*board, options.rule, record, OverwriteRule::Always);
     }
 }
@@ -914,8 +916,9 @@ void editDatabaseBoardLabel()
     }
 
     if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
-        DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
-        dbClient.setBoardText(*board, options.rule, pos, trimInplace(newText));
+        DBClient    dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
+        std::string newTextUTF8 = ACPToUTF8(trimInplace(newText));
+        dbClient.setBoardText(*board, options.rule, pos, newTextUTF8);
     }
 }
 

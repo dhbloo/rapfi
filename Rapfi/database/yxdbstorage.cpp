@@ -330,10 +330,10 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                 numRecordBytes > 4 ? *reinterpret_cast<DBDepthBound *>(&byteBuffer[3])
                                    : DBDepthBound(0),
                 numRecordBytes > 5
-                    ? (isUTF8 ? UTF8ToACP(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                                       static_cast<size_t>(numRecordBytes - 5)})
-                              : std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                             static_cast<size_t>(numRecordBytes - 5)})
+                    ? (isUTF8 ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                             static_cast<size_t>(numRecordBytes - 5)}
+                              : ACPToUTF8(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                                       static_cast<size_t>(numRecordBytes - 5)}))
                     : std::string {}}));
 
     next_record:;
@@ -395,8 +395,8 @@ void YXDBStorage::save(std::ostream &os) noexcept
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
         }
         else {
-            std::string utf8Text       = ACPToUTF8(record.text);
-            uint16_t    numRecordBytes = 5 + utf8Text.length();
+            const std::string &utf8Text       = record.text;
+            uint16_t           numRecordBytes = 5 + utf8Text.length();
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
             os.write(reinterpret_cast<const char *>(&record.label), sizeof(DBLabel));
             os.write(reinterpret_cast<const char *>(&record.value), sizeof(DBValue));
