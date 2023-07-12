@@ -31,7 +31,7 @@ namespace Evaluation::mix8 {
 
 using namespace Evaluation;
 
-constexpr uint32_t ArchHashBase     = 0x2171bc0b;
+constexpr uint32_t ArchHashBase     = 0x9cc20b15;
 constexpr size_t   Alignment        = 64;
 constexpr int      ShapeNum         = 708588;
 constexpr int      FeatureDim       = 64;
@@ -39,9 +39,7 @@ constexpr int      PolicyDim        = 32;
 constexpr int      ValueDim         = 64;
 constexpr int      ValueGroupDim    = 16;
 constexpr int      FeatureDWConvDim = 32;
-constexpr int      KernelMultiplier = 2;
-constexpr int      ValueSumDim      = FeatureDim + FeatureDWConvDim * (KernelMultiplier - 1);
-constexpr int      NumBuckets       = 1;
+constexpr int      MaxNumBuckets    = 1;
 
 struct alignas(Alignment) Mix8Weight
 {
@@ -52,8 +50,8 @@ struct alignas(Alignment) Mix8Weight
     int16_t map_prelu_weight[FeatureDim];
 
     // 3  Depthwise conv
-    int16_t feature_dwconv_weight[9][KernelMultiplier * FeatureDWConvDim];
-    int16_t feature_dwconv_bias[KernelMultiplier * FeatureDWConvDim];
+    int16_t feature_dwconv_weight[9][FeatureDWConvDim];
+    int16_t feature_dwconv_bias[FeatureDWConvDim];
 
     // 4  Value sum scale
     float value_sum_scale_after_conv;
@@ -65,39 +63,37 @@ struct alignas(Alignment) Mix8Weight
     struct HeadBucket
     {
         // 5  Policy depthwise conv
-        int16_t policy_dwconv_weight[41][PolicyDim];
+        int16_t policy_dwconv_weight[33][PolicyDim];
         int16_t policy_dwconv_bias[PolicyDim];
 
         // 6  Policy dynamic pointwise conv
-        float policy_pwconv_layer_l1_weight[ValueSumDim][PolicyDim];
+        float policy_pwconv_layer_l1_weight[FeatureDim][PolicyDim];
         float policy_pwconv_layer_l1_bias[PolicyDim];
         float policy_pwconv_layer_l2_weight[PolicyDim][PolicyDim];
 
         // 7  Value Group MLP (layer 1,2)
-        float value_corner_weight[ValueSumDim][ValueGroupDim];
+        float value_corner_weight[FeatureDim][ValueGroupDim];
         float value_corner_bias[ValueGroupDim];
-        float value_edge_weight[ValueSumDim][ValueGroupDim];
+        float value_edge_weight[FeatureDim][ValueGroupDim];
         float value_edge_bias[ValueGroupDim];
-        float value_center_weight[ValueSumDim][ValueGroupDim];
+        float value_center_weight[FeatureDim][ValueGroupDim];
         float value_center_bias[ValueGroupDim];
         float value_quadrant_weight[ValueGroupDim][ValueGroupDim];
         float value_quadrant_bias[ValueGroupDim];
 
-        // 7  Value MLP (layer 1,2,3,4)
-        float value_l1_weight[ValueSumDim + ValueGroupDim * 4][ValueDim];
+        // 7  Value MLP (layer 1,2,3)
+        float value_l1_weight[FeatureDim + ValueGroupDim * 4][ValueDim];
         float value_l1_bias[ValueDim];
         float value_l2_weight[ValueDim][ValueDim];
         float value_l2_bias[ValueDim];
-        float value_l3_weight[ValueDim][ValueDim];
-        float value_l3_bias[ValueDim];
-        float value_l4_weight[ValueDim][3];
-        float value_l4_bias[3];
+        float value_l3_weight[ValueDim][3];
+        float value_l3_bias[3];
 
         // 8  Policy PReLU
         float policy_neg_weight;
         float policy_pos_weight;
         char  __padding_to_64bytes_1[44];
-    } buckets[NumBuckets];
+    } buckets[MaxNumBuckets];
 };
 
 class alignas(Alignment) Mix8Accumulator
@@ -107,8 +103,8 @@ public:
     {
         static constexpr int NGroup = 3;
 
-        std::array<int32_t, ValueSumDim> global;
-        std::array<int32_t, ValueSumDim> group[NGroup][NGroup];
+        std::array<int32_t, FeatureDim> global;
+        std::array<int32_t, FeatureDim> group[NGroup][NGroup];
     };
 
     Mix8Accumulator(int boardSize);
@@ -132,14 +128,13 @@ private:
     // Mix8 network states
 
     /// Value feature sum of the full board
-    ValueSumType valueSum;  // [ValueSumDim] (aligned to 64)
+    ValueSumType valueSum;  // [FeatureDim] (aligned to 64)
     /// Index table to convert line shape to map feature
     std::array<uint32_t, 4> *indexTable;  // [H*W, 4] (unaligned)
     /// Sumed map feature of four directions
     std::array<int16_t, FeatureDim> *mapSum;  // [H*W, FeatureDim] (aligned)
     /// Map feature after depth wise conv
-    std::array<int16_t, KernelMultiplier * FeatureDWConvDim>
-        *mapAfterDWConv;  // [(H+2)*(W+2), KernelMultiplier*DWConvDim] (aligned)
+    std::array<int16_t, FeatureDWConvDim> *mapAfterDWConv;  // [(H+2)*(W+2), DWConvDim] (aligned)
 
     //=============================================================
     int    boardSize;

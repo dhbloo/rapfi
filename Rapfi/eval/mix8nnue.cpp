@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -49,14 +50,6 @@ constexpr int8_t Conv1dLine4Len9Points[33][2] = {
     {3, -3},  {3, 0},  {3, 3},  {4, -4},  {4, 0},  {4, 4},
 };
 
-constexpr int8_t Conv1dLine4Len11Points[41][2] = {
-    {-5, -5}, {-5, 0}, {-5, 5}, {-4, -4}, {-4, 0}, {-4, 4}, {-3, -3}, {-3, 0}, {-3, 3},
-    {-2, -2}, {-2, 0}, {-2, 2}, {-1, -1}, {-1, 0}, {-1, 1}, {0, -5},  {0, -4}, {0, -3},
-    {0, -2},  {0, -1}, {0, 0},  {0, 1},   {0, 2},  {0, 3},  {0, 4},   {0, 5},  {1, -1},
-    {1, 0},   {1, 1},  {2, -2}, {2, 0},   {2, 2},  {3, -3}, {3, 0},   {3, 3},  {4, -4},
-    {4, 0},   {4, 4},  {5, -5}, {5, 0},   {5, 5},
-};
-
 static Evaluation::WeightRegistry<Mix8Weight> Mix8WeightRegistry;
 
 struct Mix8BinaryWeightLoader : WeightLoader<Mix8Weight>
@@ -76,13 +69,19 @@ struct Mix8BinaryWeightLoader : WeightLoader<Mix8Weight>
         in.read(reinterpret_cast<char *>(&w->value_sum_scale_direct), sizeof(float));
 
         in.read(reinterpret_cast<char *>(&w->numHeadBuckets), sizeof(int32_t));
-        if (w->numHeadBuckets > NumBuckets)  // can not hold all head buckets
+        if (w->numHeadBuckets < 1
+            || w->numHeadBuckets > MaxNumBuckets)  // can not hold all head buckets
             return nullptr;
 
         in.ignore(sizeof(Mix8Weight::__padding_to_64bytes_0));
 
-        for (size_t i = 0; i < NumBuckets; i++) {
-            in.read(reinterpret_cast<char *>(&w->buckets[i]), sizeof(Mix8Weight::HeadBucket));
+        for (size_t i = 0; i < MaxNumBuckets; i++) {
+            if (i < w->numHeadBuckets)
+                in.read(reinterpret_cast<char *>(&w->buckets[i]), sizeof(Mix8Weight::HeadBucket));
+            else
+                std::memset(reinterpret_cast<char *>(&w->buckets[i]),
+                            0,
+                            sizeof(Mix8Weight::HeadBucket));
         }
 
         if (in && in.peek() == std::ios::traits_type::eof())
@@ -115,9 +114,8 @@ Mix8Accumulator::Mix8Accumulator(int boardSize)
     int nCells = boardSize * boardSize;
     indexTable = new std::array<uint32_t, 4>[nCells];
     mapSum     = MemAlloc::alignedArrayAlloc<std::array<int16_t, FeatureDim>, Alignment>(nCells);
-    mapAfterDWConv =
-        MemAlloc::alignedArrayAlloc<std::array<int16_t, KernelMultiplier * FeatureDWConvDim>,
-                                    Alignment>(fullBoardSize * fullBoardSize);
+    mapAfterDWConv = MemAlloc::alignedArrayAlloc<std::array<int16_t, FeatureDWConvDim>, Alignment>(
+        fullBoardSize * fullBoardSize);
 
     std::fill_n(groupIndex, arraySize(groupIndex), 0);
     int size1 = (boardSize / 3) + (boardSize % 3 == 2);
@@ -202,13 +200,16 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
 
     // Init mapAfterDWConv to bias
     for (int i = 0; i < fullBoardSize * fullBoardSize; i++)
-        simd::copy<KernelMultiplier * FeatureDWConvDim>(mapAfterDWConv[i].data(),
-                                                        w.feature_dwconv_bias);
+        simd::copy<FeatureDWConvDim>(mapAfterDWConv[i].data(), w.feature_dwconv_bias);
     // Init valueSum to zeros
-    simd::zero<ValueSumDim>(valueSum.global.data());
+    simd::zero<FeatureDim>(valueSum.global.data());
     for (int i = 0; i < ValueSumType::NGroup; i++)
         for (int j = 0; j < ValueSumType::NGroup; j++)
-            simd::zero<ValueSumDim>(valueSum.group[i][j].data());
+            simd::zero<FeatureDim>(valueSum.group[i][j].data());
+
+    typedef Batch<FeatureDim, int16_t>       FeatB;
+    typedef Batch<FeatureDWConvDim, int16_t> ConvB;
+    typedef Batch<FeatureDim, int32_t>       VSumB;
 
     for (int y = 0, innerIdx = 0; y < boardSize; y++) {
         for (int x = 0; x < boardSize; x++, innerIdx++) {
@@ -220,9 +221,6 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
                                       w.mapping[indexTable[innerIdx][dir]]);
 
             // Init mapAfterDWConv from mapSum
-            typedef Batch<FeatureDim, int16_t>       FeatB;
-            typedef Batch<FeatureDWConvDim, int16_t> ConvB;
-            typedef Batch<ValueDim, int32_t>         ValueB;
             for (int b = 0; b < FeatB::NumBatch; b++) {
                 // Apply PReLU for mapSum
                 auto feature = I16LS::load(mapSum[innerIdx].data() + b * FeatB::RegWidth);
@@ -237,18 +235,13 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
                             int xi       = x + dx;
                             int outerIdx = xi + yi * fullBoardSize;
 
-                            // Compute each depth-wise kernel
-                            for (int k = 0; k < KernelMultiplier; k++) {
-                                auto convWeight =
-                                    I16LS::load(w.feature_dwconv_weight[8 - dy * 3 - dx]
-                                                + k * FeatureDWConvDim + b * FeatB::RegWidth);
-                                auto convPtr = mapAfterDWConv[outerIdx].data()
-                                               + k * FeatureDWConvDim + b * FeatB::RegWidth;
-                                auto convFeat  = I16LS::load(convPtr);
-                                auto deltaFeat = I16Op::mulhrs(feature, convWeight);
-                                convFeat       = I16Op::add(convFeat, deltaFeat);
-                                I16LS::store(convPtr, convFeat);
-                            }
+                            auto convWeight = I16LS::load(w.feature_dwconv_weight[8 - dy * 3 - dx]
+                                                          + b * FeatB::RegWidth);
+                            auto convPtr    = mapAfterDWConv[outerIdx].data() + b * FeatB::RegWidth;
+                            auto convFeat   = I16LS::load(convPtr);
+                            auto deltaFeat  = I16Op::mulhrs(feature, convWeight);
+                            convFeat        = I16Op::add(convFeat, deltaFeat);
+                            I16LS::store(convPtr, convFeat);
                         }
                     }
                 }
@@ -257,15 +250,14 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
 
                     // Add map feature to map value sum
                     auto addToAccumulator =
-                        [&, v0_ = v0, v1_ = v1](std::array<int32_t, ValueSumDim> &vSum) {
-                            auto vSumPtr = vSum.data() + (KernelMultiplier - 1) * FeatureDWConvDim
-                                           + b * 2 * ValueB::RegWidth;
-                            auto vSum0 = I32LS::load(vSumPtr);
-                            auto vSum1 = I32LS::load(vSumPtr + ValueB::RegWidth);
-                            vSum0      = I32Op::add(vSum0, v0_);
-                            vSum1      = I32Op::add(vSum1, v1_);
+                        [&, v0_ = v0, v1_ = v1](std::array<int32_t, FeatureDim> &vSum) {
+                            auto vSumPtr = vSum.data() + b * 2 * VSumB::RegWidth;
+                            auto vSum0   = I32LS::load(vSumPtr);
+                            auto vSum1   = I32LS::load(vSumPtr + VSumB::RegWidth);
+                            vSum0        = I32Op::add(vSum0, v0_);
+                            vSum1        = I32Op::add(vSum1, v1_);
                             I32LS::store(vSumPtr, vSum0);
-                            I32LS::store(vSumPtr + ValueB::RegWidth, vSum1);
+                            I32LS::store(vSumPtr + VSumB::RegWidth, vSum1);
                         };
                     addToAccumulator(valueSum.global);
                     addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]]);
@@ -277,23 +269,21 @@ void Mix8Accumulator::clear(const Mix8Weight &w)
     // Init valueSum by adding all dwconv value features
     for (int y = 0, outerIdx = fullBoardSize + 1; y < boardSize; y++, outerIdx += 2) {
         for (int x = 0; x < boardSize; x++, outerIdx++) {
-            typedef Batch<KernelMultiplier * FeatureDWConvDim, int16_t> KMConvB;
-            typedef Batch<ValueDim, int32_t>                            ValueB;
-            for (int b = 0; b < KMConvB::NumBatch; b++) {
-                auto feature = I16LS::load(mapAfterDWConv[outerIdx].data() + b * KMConvB::RegWidth);
+            for (int b = 0; b < ConvB::NumBatch; b++) {
+                auto feature  = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
                 auto [v0, v1] = Convert<int16_t, int32_t>::convert(feature);
                 v0            = I32Op::max(v0, I32Op::setzero());  // relu
                 v1            = I32Op::max(v1, I32Op::setzero());  // relu
 
                 auto addToAccumulator =
-                    [&, v0_ = v0, v1_ = v1](std::array<int32_t, ValueSumDim> &vSum) {
-                        auto vSumPtr = vSum.data() + b * 2 * ValueB::RegWidth;
+                    [&, v0_ = v0, v1_ = v1](std::array<int32_t, FeatureDim> &vSum) {
+                        auto vSumPtr = vSum.data() + b * 2 * VSumB::RegWidth;
                         auto vSum0   = I32LS::load(vSumPtr);
-                        auto vSum1   = I32LS::load(vSumPtr + ValueB::RegWidth);
+                        auto vSum1   = I32LS::load(vSumPtr + VSumB::RegWidth);
                         vSum0        = I32Op::add(vSum0, v0_);
                         vSum1        = I32Op::add(vSum1, v1_);
                         I32LS::store(vSumPtr, vSum0);
-                        I32LS::store(vSumPtr + ValueB::RegWidth, vSum1);
+                        I32LS::store(vSumPtr + VSumB::RegWidth, vSum1);
                     };
                 addToAccumulator(valueSum.global);
                 addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]]);
@@ -345,11 +335,9 @@ void Mix8Accumulator::update(const Mix8Weight &w,
         }
     }
 
-    typedef Batch<FeatureDim, int16_t>                          FeatB;
-    typedef Batch<ValueSumDim, int32_t>                         VSumB;
-    typedef Batch<FeatureDim - FeatureDWConvDim, int16_t>       VDirB;
-    typedef Batch<FeatureDWConvDim, int16_t>                    ConvB;
-    typedef Batch<KernelMultiplier * FeatureDWConvDim, int16_t> KMConvB;
+    typedef Batch<FeatureDim, int16_t>       FeatB;
+    typedef Batch<FeatureDWConvDim, int16_t> ConvB;
+    typedef Batch<FeatureDim, int32_t>       VSumB;
 
     // Load value sum
     I32Op::R vSumGlobal[VSumB::NumBatch];
@@ -376,16 +364,16 @@ void Mix8Accumulator::update(const Mix8Weight &w,
             for (int xi = x0; xi <= x1; xi++) {
                 int outerIdx = xi + outerIdxBase;
                 int j        = groupIndex[xi - 1];
-                for (int b = 0; b < KMConvB::NumBatch; b++) {
-                    auto convF =
-                        I16LS::load(mapAfterDWConv[outerIdx].data() + b * KMConvB::RegWidth);
-                    convF         = I16Op::max(convF, I16Op::setzero());  // relu
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convF = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
+                    convF      = I16Op::max(convF, I16Op::setzero());  // relu
                     auto [v0, v1] = Convert<int16_t, int32_t>::convert(convF);
 
-                    vSumGlobal[2 * b + 0]      = I32Op::sub(vSumGlobal[2 * b + 0], v0);
-                    vSumGlobal[2 * b + 1]      = I32Op::sub(vSumGlobal[2 * b + 1], v1);
-                    vSumGroup[i][j][2 * b + 0] = I32Op::sub(vSumGroup[i][j][2 * b + 0], v0);
-                    vSumGroup[i][j][2 * b + 1] = I32Op::sub(vSumGroup[i][j][2 * b + 1], v1);
+                    const int offset            = 2 * b;
+                    vSumGlobal[offset + 0]      = I32Op::sub(vSumGlobal[offset + 0], v0);
+                    vSumGlobal[offset + 1]      = I32Op::sub(vSumGlobal[offset + 1], v1);
+                    vSumGroup[i][j][offset + 0] = I32Op::sub(vSumGroup[i][j][offset + 0], v0);
+                    vSumGroup[i][j][offset + 1] = I32Op::sub(vSumGroup[i][j][offset + 1], v1);
                 }
             }
         }
@@ -421,14 +409,12 @@ void Mix8Accumulator::update(const Mix8Weight &w,
                 auto *convWeightBase = w.feature_dwconv_weight[8 - dy * 3 - dx];
                 auto *convBase       = mapAfterDWConv[dx + outerIdxBase].data();
 
-                for (int b = 0; b < KMConvB::NumBatch; b++) {
-                    auto convPtr  = convBase + b * KMConvB::RegWidth;
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convPtr  = convBase + b * ConvB::RegWidth;
                     auto oldConvF = I16LS::load(convPtr);
-                    auto convW    = I16LS::load(convWeightBase + b * KMConvB::RegWidth);
-                    auto oldFeat  = oldFeats[b % KernelMultiplier];
-                    auto newFeat  = newFeats[b % KernelMultiplier];
-                    auto newConvF = I16Op::sub(oldConvF, I16Op::mulhrs(oldFeat, convW));
-                    newConvF      = I16Op::add(newConvF, I16Op::mulhrs(newFeat, convW));
+                    auto convW    = I16LS::load(convWeightBase + b * ConvB::RegWidth);
+                    auto newConvF = I16Op::sub(oldConvF, I16Op::mulhrs(oldFeats[b], convW));
+                    newConvF      = I16Op::add(newConvF, I16Op::mulhrs(newFeats[b], convW));
                     I16LS::store(convPtr, newConvF);
                 }
             }
@@ -436,15 +422,13 @@ void Mix8Accumulator::update(const Mix8Weight &w,
 
         if constexpr (UT == MOVE) {
             // Update valueSum
-            for (int b = 0; b < VDirB::NumBatch; b++) {
-                auto [oldv0, oldv1] =
-                    Convert<int16_t, int32_t>::convert(oldFeats[b + ConvB::NumBatch]);
-                auto [newv0, newv1] =
-                    Convert<int16_t, int32_t>::convert(newFeats[b + ConvB::NumBatch]);
+            for (int b = ConvB::NumBatch; b < FeatB::NumBatch; b++) {
+                auto [oldv0, oldv1] = Convert<int16_t, int32_t>::convert(oldFeats[b]);
+                auto [newv0, newv1] = Convert<int16_t, int32_t>::convert(newFeats[b]);
 
                 auto addToAccumulator =
                     [b, ov0 = oldv0, ov1 = oldv1, nv0 = newv0, nv1 = newv1](auto &vSum) {
-                        const int offset = 2 * (b + KMConvB::NumBatch);
+                        const int offset = 2 * b;
                         vSum[offset + 0] = I32Op::sub(vSum[offset + 0], ov0);
                         vSum[offset + 1] = I32Op::sub(vSum[offset + 1], ov1);
                         vSum[offset + 0] = I32Op::add(vSum[offset + 0], nv0);
@@ -464,16 +448,16 @@ void Mix8Accumulator::update(const Mix8Weight &w,
             for (int xi = x0; xi <= x1; xi++) {
                 int outerIdx = xi + outerIdxBase;
                 int j        = groupIndex[xi - 1];
-                for (int b = 0; b < KMConvB::NumBatch; b++) {
-                    auto convF =
-                        I16LS::load(mapAfterDWConv[outerIdx].data() + b * KMConvB::RegWidth);
-                    convF         = I16Op::max(convF, I16Op::setzero());  // relu
+                for (int b = 0; b < ConvB::NumBatch; b++) {
+                    auto convF = I16LS::load(mapAfterDWConv[outerIdx].data() + b * ConvB::RegWidth);
+                    convF      = I16Op::max(convF, I16Op::setzero());  // relu
                     auto [v0, v1] = Convert<int16_t, int32_t>::convert(convF);
 
-                    vSumGlobal[2 * b + 0]      = I32Op::add(vSumGlobal[2 * b + 0], v0);
-                    vSumGlobal[2 * b + 1]      = I32Op::add(vSumGlobal[2 * b + 1], v1);
-                    vSumGroup[i][j][2 * b + 0] = I32Op::add(vSumGroup[i][j][2 * b + 0], v0);
-                    vSumGroup[i][j][2 * b + 1] = I32Op::add(vSumGroup[i][j][2 * b + 1], v1);
+                    const int offset            = 2 * b;
+                    vSumGlobal[offset + 0]      = I32Op::add(vSumGlobal[offset + 0], v0);
+                    vSumGlobal[offset + 1]      = I32Op::add(vSumGlobal[offset + 1], v1);
+                    vSumGroup[i][j][offset + 0] = I32Op::add(vSumGroup[i][j][offset + 0], v0);
+                    vSumGroup[i][j][offset + 1] = I32Op::add(vSumGroup[i][j][offset + 1], v1);
                 }
             }
         }
@@ -481,7 +465,6 @@ void Mix8Accumulator::update(const Mix8Weight &w,
         // Store value sum
         for (int b = 0; b < VSumB::NumBatch; b++)
             I32LS::store(valueSum.global.data() + b * VSumB::RegWidth, vSumGlobal[b]);
-
         for (int i = 0; i < ValueSumType::NGroup; i++)
             for (int j = 0; j < ValueSumType::NGroup; j++)
                 for (int b = 0; b < VSumB::NumBatch; b++)
@@ -497,21 +480,21 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
 {
     const auto &bucket = w.buckets[getBucketIndex()];
 
-    typedef Batch<ValueSumDim, float>                         VSumB;
-    typedef Batch<KernelMultiplier * FeatureDWConvDim, float> KMConvB;
+    typedef Batch<FeatureDim, float>       VSumB;
+    typedef Batch<FeatureDWConvDim, float> ConvB;
 
     // convert value sum from int32 to float
     auto valueSumToFloat =
-        [&w](float *output, const std::array<int32_t, ValueSumDim> &vSum, float sizeScale) {
+        [&w](float *output, const std::array<int32_t, FeatureDim> &vSum, float sizeScale) {
             auto scaleConv   = F32Op::set1(sizeScale * w.value_sum_scale_after_conv);
             auto scaleDirect = F32Op::set1(sizeScale * w.value_sum_scale_direct);
-            for (int b = 0; b < KMConvB::NumBatch; b++) {
+            for (int b = 0; b < ConvB::NumBatch; b++) {
                 auto valueI32 = I32LS::load(vSum.data() + b * VSumB::RegWidth);
                 auto valueF32 = Convert<int32_t, float>::convert1(valueI32);
                 valueF32      = F32Op::mul(valueF32, scaleConv);
                 F32LS::store(output + b * VSumB::RegWidth, valueF32);
             }
-            for (int b = KMConvB::NumBatch; b < VSumB::NumBatch; b++) {
+            for (int b = ConvB::NumBatch; b < VSumB::NumBatch; b++) {
                 auto valueI32 = I32LS::load(vSum.data() + b * VSumB::RegWidth);
                 auto valueF32 = Convert<int32_t, float>::convert1(valueI32);
                 valueF32      = F32Op::mul(valueF32, scaleDirect);
@@ -519,8 +502,8 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
             }
         };
 
-    alignas(Alignment) float layer0[ValueSumDim + ValueGroupDim * 4];
-    alignas(Alignment) float group0[ValueSumType::NGroup][ValueSumType::NGroup][ValueSumDim];
+    alignas(Alignment) float layer0[FeatureDim + ValueGroupDim * 4];
+    alignas(Alignment) float group0[ValueSumType::NGroup][ValueSumType::NGroup][FeatureDim];
     valueSumToFloat(layer0, valueSum.global, boardSizeScale);
     for (int i = 0; i < ValueSumType::NGroup; i++)
         for (int j = 0; j < ValueSumType::NGroup; j++)
@@ -532,38 +515,38 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
                                               group0[0][0],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[0][1],
-                                              group0[0][1],
-                                              bucket.value_edge_weight,
-                                              bucket.value_edge_bias);
     simd::linearLayer<simd::Activation::Relu>(group1[0][2],
                                               group0[0][2],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
+    simd::linearLayer<simd::Activation::Relu>(group1[2][0],
+                                              group0[2][0],
+                                              bucket.value_corner_weight,
+                                              bucket.value_corner_bias);
+    simd::linearLayer<simd::Activation::Relu>(group1[2][2],
+                                              group0[2][2],
+                                              bucket.value_corner_weight,
+                                              bucket.value_corner_bias);
+    simd::linearLayer<simd::Activation::Relu>(group1[0][1],
+                                              group0[0][1],
+                                              bucket.value_edge_weight,
+                                              bucket.value_edge_bias);
     simd::linearLayer<simd::Activation::Relu>(group1[1][0],
                                               group0[1][0],
+                                              bucket.value_edge_weight,
+                                              bucket.value_edge_bias);
+    simd::linearLayer<simd::Activation::Relu>(group1[1][2],
+                                              group0[1][2],
+                                              bucket.value_edge_weight,
+                                              bucket.value_edge_bias);
+    simd::linearLayer<simd::Activation::Relu>(group1[2][1],
+                                              group0[2][1],
                                               bucket.value_edge_weight,
                                               bucket.value_edge_bias);
     simd::linearLayer<simd::Activation::Relu>(group1[1][1],
                                               group0[1][1],
                                               bucket.value_center_weight,
                                               bucket.value_center_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[1][2],
-                                              group0[1][2],
-                                              bucket.value_edge_weight,
-                                              bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][0],
-                                              group0[2][0],
-                                              bucket.value_corner_weight,
-                                              bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][1],
-                                              group0[2][1],
-                                              bucket.value_edge_weight,
-                                              bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][2],
-                                              group0[2][2],
-                                              bucket.value_corner_weight,
-                                              bucket.value_corner_bias);
 
     // quadrant linear layer
     alignas(Alignment) float quad0[2][2][ValueGroupDim];
@@ -579,10 +562,10 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
                                                       bucket.value_quadrant_weight,
                                                       bucket.value_quadrant_bias);
         }
-    simd::copy<ValueGroupDim>(layer0 + ValueSumDim + 0 * ValueGroupDim, quad1[0][0]);
-    simd::copy<ValueGroupDim>(layer0 + ValueSumDim + 1 * ValueGroupDim, quad1[0][1]);
-    simd::copy<ValueGroupDim>(layer0 + ValueSumDim + 2 * ValueGroupDim, quad1[1][0]);
-    simd::copy<ValueGroupDim>(layer0 + ValueSumDim + 3 * ValueGroupDim, quad1[1][1]);
+    simd::copy<ValueGroupDim>(layer0 + FeatureDim + 0 * ValueGroupDim, quad1[0][0]);
+    simd::copy<ValueGroupDim>(layer0 + FeatureDim + 1 * ValueGroupDim, quad1[0][1]);
+    simd::copy<ValueGroupDim>(layer0 + FeatureDim + 2 * ValueGroupDim, quad1[1][0]);
+    simd::copy<ValueGroupDim>(layer0 + FeatureDim + 3 * ValueGroupDim, quad1[1][1]);
 
     // linear 1
     alignas(Alignment) float layer1[ValueDim];
@@ -598,19 +581,12 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
                                               bucket.value_l2_weight,
                                               bucket.value_l2_bias);
 
-    // linear 3
-    alignas(Alignment) float layer3[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer3,
+    // linear 3 final
+    alignas(Alignment) float value[16];
+    simd::linearLayer<simd::Activation::None>(value,
                                               layer2,
                                               bucket.value_l3_weight,
                                               bucket.value_l3_bias);
-
-    // linear 4 final
-    alignas(Alignment) float value[16];
-    simd::linearLayer<simd::Activation::None>(value,
-                                              layer3,
-                                              bucket.value_l4_weight,
-                                              bucket.value_l4_bias);
 
     return {value[0], value[1], value[2]};
 }
@@ -619,21 +595,21 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
 {
     const auto &bucket = w.buckets[getBucketIndex()];
 
-    typedef Batch<ValueSumDim, float>                         VSumB;
-    typedef Batch<KernelMultiplier * FeatureDWConvDim, float> KMConvB;
+    typedef Batch<FeatureDim, float>       VSumB;
+    typedef Batch<FeatureDWConvDim, float> ConvB;
 
     // convert global value sum from int32 to float
-    alignas(Alignment) float globalValueMean[ValueSumDim];
+    alignas(Alignment) float globalValueMean[FeatureDim];
 
     auto scaleConv   = F32Op::set1(boardSizeScale * w.value_sum_scale_after_conv);
     auto scaleDirect = F32Op::set1(boardSizeScale * w.value_sum_scale_direct);
-    for (int b = 0; b < KMConvB::NumBatch; b++) {
+    for (int b = 0; b < ConvB::NumBatch; b++) {
         auto valueI32 = I32LS::load(valueSum.global.data() + b * VSumB::RegWidth);
         auto valueF32 = Convert<int32_t, float>::convert1(valueI32);
         valueF32      = F32Op::mul(valueF32, scaleConv);
         F32LS::store(globalValueMean + b * VSumB::RegWidth, valueF32);
     }
-    for (int b = KMConvB::NumBatch; b < VSumB::NumBatch; b++) {
+    for (int b = ConvB::NumBatch; b < VSumB::NumBatch; b++) {
         auto valueI32 = I32LS::load(valueSum.global.data() + b * VSumB::RegWidth);
         auto valueF32 = Convert<int32_t, float>::convert1(valueI32);
         valueF32      = F32Op::mul(valueF32, scaleDirect);
@@ -660,9 +636,8 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
 
             typedef Batch<PolicyDim, int16_t> DWConvB;
             typedef Batch<PolicyDim, float>   PWConvB;
-            static_assert(
-                PolicyDim <= KernelMultiplier * FeatureDWConvDim,
-                "Assume PolicyDim <= KernelMultiplier * FeatureDWConvDim in evaluatePolicy()!");
+            static_assert(PolicyDim <= FeatureDWConvDim,
+                          "Assume PolicyDim <= FeatureDWConvDim in evaluatePolicy()!");
 
             // Copy dwconv bias to dwconv feature sum register
             I16Op::R policyDWConvSum[DWConvB::NumBatch];
@@ -670,8 +645,8 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
                 policyDWConvSum[b] = I16LS::load(bucket.policy_dwconv_bias + b * DWConvB::RegWidth);
 
             // Do conv1d for 4 directions
-            for (int i = 0; i < arraySize(Conv1dLine4Len11Points); i++) {
-                int dy = Conv1dLine4Len11Points[i][0], dx = Conv1dLine4Len11Points[i][1];
+            for (int i = 0; i < arraySize(Conv1dLine4Len9Points); i++) {
+                int dy = Conv1dLine4Len9Points[i][0], dx = Conv1dLine4Len9Points[i][1];
                 int yi = y + dy, xi = x + dx;
 
                 // zero padding for point outside the board
