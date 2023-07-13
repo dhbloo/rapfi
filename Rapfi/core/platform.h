@@ -125,7 +125,7 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 /// Preloads the given address in L1/L2 cache. This is a non-blocking
 /// function that doesn't stall the CPU waiting for data to be loaded
 /// from memory, which can be quite slow.
-inline void prefetch(void *addr)
+inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
 
@@ -142,6 +142,119 @@ inline void prefetch(void *addr)
     #endif
 
 #endif
+}
+
+namespace _PrefetchImpl {
+
+template <int N>
+struct PrefetchImpl
+{};
+
+template <>
+struct PrefetchImpl<1>
+{
+    inline static void call(const char *addr) { ::prefetch(addr); }
+};
+
+template <>
+struct PrefetchImpl<2>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+    }
+};
+
+template <>
+struct PrefetchImpl<3>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+    }
+};
+
+template <>
+struct PrefetchImpl<4>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+    }
+};
+
+template <>
+struct PrefetchImpl<5>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+    }
+};
+
+template <>
+struct PrefetchImpl<6>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+    }
+};
+
+template <>
+struct PrefetchImpl<7>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+        ::prefetch(addr + 384);
+    }
+};
+
+template <>
+struct PrefetchImpl<8>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+        ::prefetch(addr + 384);
+        ::prefetch(addr + 448);
+    }
+};
+
+}  // namespace _PrefetchImpl
+
+template <int NumBytes>
+inline void multiPrefetch(const void *addr)
+{
+    constexpr int CacheLineSize = 64;
+    constexpr int NumCacheLines = (NumBytes + CacheLineSize - 1) / CacheLineSize;
+    _PrefetchImpl::PrefetchImpl<NumCacheLines>::call(reinterpret_cast<const char *>(addr));
 }
 
 // -------------------------------------------------

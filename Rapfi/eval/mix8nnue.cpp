@@ -300,40 +300,6 @@ void Mix8Accumulator::update(const Mix8Weight &w,
                              ValueSumType     *valueSumBoardBackup)
 {
     assert(pieceColor == BLACK || pieceColor == WHITE);
-    struct OnePointChange
-    {
-        int8_t   x;
-        int8_t   y;
-        int16_t  dir;
-        int16_t  innerIdx;
-        uint32_t oldShape;
-        uint32_t newShape;
-    } changeTable[4 * 11];
-    int changeCount = 0;
-    int dPower3     = UT == MOVE ? pieceColor + 1 : -1 - pieceColor;
-
-    // Update shape table and record changes
-    int boardSizeSub1 = boardSize - 1;
-    for (int dir = 0; dir < 4; dir++) {
-        for (int dist = -5; dist <= 5; dist++) {
-            int xi = x - dist * DX[dir];
-            int yi = y - dist * DY[dir];
-
-            // less-branch test: xi < 0 || xi >= boardSize || yi < 0 || yi >= boardSize
-            if ((xi | (boardSizeSub1 - xi) | yi | (boardSizeSub1 - yi)) < 0)
-                continue;
-
-            OnePointChange &c           = changeTable[changeCount++];
-            c.x                         = xi;
-            c.y                         = yi;
-            c.dir                       = dir;
-            c.innerIdx                  = boardSize * yi + xi;
-            c.oldShape                  = indexTable[c.innerIdx][dir];
-            c.newShape                  = c.oldShape + dPower3 * Power3[dist + 5];
-            indexTable[c.innerIdx][dir] = c.newShape;
-            assert(0 <= c.newShape && c.newShape < ShapeNum);
-        }
-    }
 
     typedef Batch<FeatureDim, int16_t>       FeatB;
     typedef Batch<FeatureDWConvDim, int16_t> ConvB;
@@ -379,9 +345,48 @@ void Mix8Accumulator::update(const Mix8Weight &w,
         }
     }
 
+    struct OnePointChange
+    {
+        int8_t   x;
+        int8_t   y;
+        int16_t  dir;
+        int16_t  innerIdx;
+        uint32_t oldShape;
+        uint32_t newShape;
+    } changeTable[4 * 11];
+    int changeCount = 0;
+    int dPower3     = UT == MOVE ? pieceColor + 1 : -1 - pieceColor;
+
+    // Update shape table and record changes
+    int boardSizeSub1 = boardSize - 1;
+    for (int dir = 0; dir < 4; dir++) {
+        for (int dist = -5; dist <= 5; dist++) {
+            int xi = x - dist * DX[dir];
+            int yi = y - dist * DY[dir];
+
+            // less-branch test: xi < 0 || xi >= boardSize || yi < 0 || yi >= boardSize
+            if ((xi | (boardSizeSub1 - xi) | yi | (boardSizeSub1 - yi)) < 0)
+                continue;
+
+            OnePointChange &c           = changeTable[changeCount++];
+            c.x                         = xi;
+            c.y                         = yi;
+            c.dir                       = dir;
+            c.innerIdx                  = boardSize * yi + xi;
+            c.oldShape                  = indexTable[c.innerIdx][dir];
+            c.newShape                  = c.oldShape + dPower3 * Power3[dist + 5];
+            indexTable[c.innerIdx][dir] = c.newShape;
+            assert(0 <= c.newShape && c.newShape < ShapeNum);
+        }
+    }
+
     // Incremental update feature sum
     for (int i = 0; i < changeCount; i++) {
         const OnePointChange &c = changeTable[i];
+        if (i + 1 < changeCount) {
+            multiPrefetch<FeatureDim * sizeof(int16_t)>(w.mapping[changeTable[i + 1].oldShape]);
+            multiPrefetch<FeatureDim * sizeof(int16_t)>(w.mapping[changeTable[i + 1].newShape]);
+        }
 
         // Update mapSum and mapAfterDWConv
         I16Op::R oldFeats[FeatB::NumBatch];
