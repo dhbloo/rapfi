@@ -68,15 +68,15 @@ struct Mix8BinaryWeightLoader : WeightLoader<Mix8Weight>
         in.read(reinterpret_cast<char *>(&w->value_sum_scale_after_conv), sizeof(float));
         in.read(reinterpret_cast<char *>(&w->value_sum_scale_direct), sizeof(float));
 
-        in.read(reinterpret_cast<char *>(&w->numHeadBuckets), sizeof(int32_t));
-        if (w->numHeadBuckets < 1
-            || w->numHeadBuckets > MaxNumBuckets)  // can not hold all head buckets
+        in.read(reinterpret_cast<char *>(&w->num_head_buckets), sizeof(int32_t));
+        if (w->num_head_buckets < 1
+            || w->num_head_buckets > MaxNumBuckets)  // can not hold all head buckets
             return nullptr;
 
         in.ignore(sizeof(Mix8Weight::__padding_to_64bytes_0));
 
         for (size_t i = 0; i < MaxNumBuckets; i++) {
-            if (i < w->numHeadBuckets)
+            if (i < w->num_head_buckets)
                 in.read(reinterpret_cast<char *>(&w->buckets[i]), sizeof(Mix8Weight::HeadBucket));
             else
                 std::memset(reinterpret_cast<char *>(&w->buckets[i]),
@@ -511,42 +511,51 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
 
     // group linear layer
     alignas(Alignment) float group1[ValueSumType::NGroup][ValueSumType::NGroup][ValueGroupDim];
-    simd::linearLayer<simd::Activation::Relu>(group1[0][0],
+    simd::linearLayer<simd::Activation::None>(group1[0][0],
                                               group0[0][0],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[0][2],
+    simd::linearLayer<simd::Activation::None>(group1[0][2],
                                               group0[0][2],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][0],
+    simd::linearLayer<simd::Activation::None>(group1[2][0],
                                               group0[2][0],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][2],
+    simd::linearLayer<simd::Activation::None>(group1[2][2],
                                               group0[2][2],
                                               bucket.value_corner_weight,
                                               bucket.value_corner_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[0][1],
+    simd::linearLayer<simd::Activation::None>(group1[0][1],
                                               group0[0][1],
                                               bucket.value_edge_weight,
                                               bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[1][0],
+    simd::linearLayer<simd::Activation::None>(group1[1][0],
                                               group0[1][0],
                                               bucket.value_edge_weight,
                                               bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[1][2],
+    simd::linearLayer<simd::Activation::None>(group1[1][2],
                                               group0[1][2],
                                               bucket.value_edge_weight,
                                               bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[2][1],
+    simd::linearLayer<simd::Activation::None>(group1[2][1],
                                               group0[2][1],
                                               bucket.value_edge_weight,
                                               bucket.value_edge_bias);
-    simd::linearLayer<simd::Activation::Relu>(group1[1][1],
+    simd::linearLayer<simd::Activation::None>(group1[1][1],
                                               group0[1][1],
                                               bucket.value_center_weight,
                                               bucket.value_center_bias);
+    simd::preluLayer(group1[0][0], group1[0][0], bucket.value_corner_prelu);
+    simd::preluLayer(group1[0][2], group1[0][2], bucket.value_corner_prelu);
+    simd::preluLayer(group1[2][0], group1[2][0], bucket.value_corner_prelu);
+    simd::preluLayer(group1[2][2], group1[2][2], bucket.value_corner_prelu);
+    simd::preluLayer(group1[0][1], group1[0][1], bucket.value_edge_prelu);
+    simd::preluLayer(group1[1][0], group1[1][0], bucket.value_edge_prelu);
+    simd::preluLayer(group1[1][2], group1[1][2], bucket.value_edge_prelu);
+    simd::preluLayer(group1[2][1], group1[2][1], bucket.value_edge_prelu);
+    simd::preluLayer(group1[1][1], group1[1][1], bucket.value_center_prelu);
 
     // quadrant linear layer
     alignas(Alignment) float quad0[2][2][ValueGroupDim];
@@ -557,10 +566,11 @@ std::tuple<float, float, float> Mix8Accumulator::evaluateValue(const Mix8Weight 
             simd::add<ValueGroupDim>(quad0[i][j], quad0[i][j], group1[i + 0][j + 1]);
             simd::add<ValueGroupDim>(quad0[i][j], quad0[i][j], group1[i + 1][j + 0]);
             simd::add<ValueGroupDim>(quad0[i][j], quad0[i][j], group1[i + 1][j + 1]);
-            simd::linearLayer<simd::Activation::Relu>(quad1[i][j],
+            simd::linearLayer<simd::Activation::None>(quad1[i][j],
                                                       quad0[i][j],
-                                                      bucket.value_quadrant_weight,
-                                                      bucket.value_quadrant_bias);
+                                                      bucket.value_quad_weight,
+                                                      bucket.value_quad_bias);
+            simd::preluLayer(quad1[i][j], quad1[i][j], bucket.value_quad_prelu);
         }
     simd::copy<ValueGroupDim>(layer0 + FeatureDim + 0 * ValueGroupDim, quad1[0][0]);
     simd::copy<ValueGroupDim>(layer0 + FeatureDim + 1 * ValueGroupDim, quad1[0][1]);
@@ -617,16 +627,18 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
     }
 
     // policy pwconv weight layer
-    alignas(Alignment) float pwconvWeightLayer1[PolicyDim];
-    simd::linearLayer<simd::Activation::Relu>(pwconvWeightLayer1,
+    alignas(Alignment) float pwconvWeight1[PolicyDim];
+    simd::linearLayer<simd::Activation::None>(pwconvWeight1,
                                               globalValueMean,
                                               bucket.policy_pwconv_layer_l1_weight,
                                               bucket.policy_pwconv_layer_l1_bias);
+    simd::preluLayer(pwconvWeight1, pwconvWeight1, bucket.policy_pwconv_layer_l1_prelu);
 
-    alignas(Alignment) float pwconvWeightLayer2[PolicyDim];
-    simd::linearLayer<simd::Activation::None>(pwconvWeightLayer2,
-                                              pwconvWeightLayer1,
-                                              bucket.policy_pwconv_layer_l2_weight);
+    alignas(Alignment) float pwconvWeight2[4 * PolicyDim];
+    simd::linearLayer<simd::Activation::None>(pwconvWeight2,
+                                              pwconvWeight1,
+                                              bucket.policy_pwconv_layer_l2_weight,
+                                              bucket.policy_pwconv_layer_l2_bias);
 
     int boardSizeSub1 = boardSize - 1;
     for (int y = 0, innerIdx = 0, outerIdx = fullBoardSize + 1; y < boardSize; y++, outerIdx += 2) {
@@ -634,61 +646,46 @@ void Mix8Accumulator::evaluatePolicy(const Mix8Weight &w, PolicyBuffer &policyBu
             if (!policyBuffer.getComputeFlag(innerIdx))
                 continue;
 
-            typedef Batch<PolicyDim, int16_t> DWConvB;
+            typedef Batch<PolicyDim, int16_t> PolicyB;
             typedef Batch<PolicyDim, float>   PWConvB;
             static_assert(PolicyDim <= FeatureDWConvDim,
                           "Assume PolicyDim <= FeatureDWConvDim in evaluatePolicy()!");
 
-            // Copy dwconv bias to dwconv feature sum register
-            I16Op::R policyDWConvSum[DWConvB::NumBatch];
-            for (int b = 0; b < DWConvB::NumBatch; b++)
-                policyDWConvSum[b] = I16LS::load(bucket.policy_dwconv_bias + b * DWConvB::RegWidth);
-
-            // Do conv1d for 4 directions
-            for (int i = 0; i < arraySize(Conv1dLine4Len9Points); i++) {
-                int dy = Conv1dLine4Len9Points[i][0], dx = Conv1dLine4Len9Points[i][1];
-                int yi = y + dy, xi = x + dx;
-
-                // zero padding for point outside the board
-                // less-branch test: xi < 0 || xi >= boardSize || yi < 0 || yi >= boardSize
-                if ((xi | (boardSizeSub1 - xi) | yi | (boardSizeSub1 - yi)) < 0)
-                    continue;
-
-                int   convOuterIdx = fullBoardSize * (yi + 1) + xi + 1;
-                auto *convWeight   = bucket.policy_dwconv_weight[i];
-                auto *convInput    = mapAfterDWConv[convOuterIdx].data();
-                for (int b = 0; b < DWConvB::NumBatch; b++) {
-                    auto convW         = I16LS::load(convWeight + b * DWConvB::RegWidth);
-                    auto convI         = I16LS::load(convInput + b * DWConvB::RegWidth);
-                    convI              = I16Op::max(convI, I16Op::setzero());  // relu
-                    auto convF         = I16Op::mulhrs(convI, convW);
-                    policyDWConvSum[b] = I16Op::adds(policyDWConvSum[b], convF);
-                }
-            }
-
             // Apply relu, convert to float and accumulate all channels of pwconv feature
-            float policy = 0.0f;
-            for (int b = 0; b < DWConvB::NumBatch; b++) {
+            float policy[4] = {0.0f};
+            for (int b = 0; b < PolicyB::NumBatch; b++) {
                 // Apply relu to dwconv feature sum
-                auto policyI16Feat = I16Op::max(policyDWConvSum[b], I16Op::setzero());
+                auto policyI16Feat =
+                    I16LS::load(mapAfterDWConv[outerIdx].data() + b * PolicyB::RegWidth);
+                policyI16Feat = I16Op::max(policyI16Feat, I16Op::setzero());
 
-                // Convert dwconv feature from int16 to float
+                // Convert policy feature from int16 to float
                 auto [policyI32Feat0, policyI32Feat1] =
                     Convert<int16_t, int32_t>::convert(policyI16Feat);
                 auto policyFeat0 = Convert<int32_t, float>::convert1(policyI32Feat0);
                 auto policyFeat1 = Convert<int32_t, float>::convert1(policyI32Feat1);
 
                 // Apply pwconv by accumulating all channels of pwconv feature
-                auto convW0   = F32LS::load(pwconvWeightLayer2 + (b * 2) * PWConvB::RegWidth);
-                auto convW1   = F32LS::load(pwconvWeightLayer2 + (b * 2 + 1) * PWConvB::RegWidth);
-                auto convSum0 = F32Op::mul(convW0, policyFeat0);
-                auto convSum1 = F32Op::mul(convW1, policyFeat1);
-                auto convSum  = F32Op::add(convSum0, convSum1);
-                policy += F32Op::reduceadd(convSum);
+                const int offset0 = (b * 2) * PWConvB::RegWidth;
+                const int offset1 = (b * 2 + 1) * PWConvB::RegWidth;
+                for (int i = 0; i < 4; i++) {
+                    auto convW0   = F32LS::load(pwconvWeight2 + i * PolicyDim + offset0);
+                    auto convW1   = F32LS::load(pwconvWeight2 + i * PolicyDim + offset1);
+                    auto convSum0 = F32Op::mul(convW0, policyFeat0);
+                    auto convSum1 = F32Op::mul(convW1, policyFeat1);
+                    auto convSum  = F32Op::add(convSum0, convSum1);
+                    policy[i] += F32Op::reduceadd(convSum);
+                }
             }
 
-            policy *= (policy < 0 ? bucket.policy_neg_weight : bucket.policy_pos_weight);
-            policyBuffer(innerIdx) = policy;
+            // Apply policy output PReLU and linear
+            for (int i = 0; i < 4; i++) {
+                float w   = policy[i] < 0 ? bucket.policy_output_neg_weight[i]
+                                          : bucket.policy_output_pos_weight[i];
+                policy[i] = policy[i] * w;
+            }
+            policyBuffer(innerIdx) =
+                policy[0] + policy[1] + policy[2] + policy[3] + bucket.policy_output_bias;
         }
     }
 }

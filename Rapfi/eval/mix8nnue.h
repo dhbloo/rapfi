@@ -38,7 +38,7 @@ constexpr int      FeatureDim       = 64;
 constexpr int      PolicyDim        = 32;
 constexpr int      ValueDim         = 64;
 constexpr int      ValueGroupDim    = 16;
-constexpr int      FeatureDWConvDim = 32;
+constexpr int      FeatureDWConvDim = 48;
 constexpr int      MaxNumBuckets    = 1;
 
 struct alignas(Alignment) Mix8Weight
@@ -57,29 +57,31 @@ struct alignas(Alignment) Mix8Weight
     float value_sum_scale_after_conv;
     float value_sum_scale_direct;
 
-    int32_t numHeadBuckets;  // used to validate the number of head buckets
+    int32_t num_head_buckets;  // used to validate the number of head buckets
     char    __padding_to_64bytes_0[52];
 
     struct HeadBucket
     {
-        // 5  Policy depthwise conv
-        int16_t policy_dwconv_weight[33][PolicyDim];
-        int16_t policy_dwconv_bias[PolicyDim];
-
-        // 6  Policy dynamic pointwise conv
+        // 5  Policy dynamic pointwise conv
         float policy_pwconv_layer_l1_weight[FeatureDim][PolicyDim];
         float policy_pwconv_layer_l1_bias[PolicyDim];
-        float policy_pwconv_layer_l2_weight[PolicyDim][PolicyDim];
+        float policy_pwconv_layer_l1_prelu[PolicyDim];
+        float policy_pwconv_layer_l2_weight[PolicyDim][4 * PolicyDim];
+        float policy_pwconv_layer_l2_bias[4 * PolicyDim];
 
-        // 7  Value Group MLP (layer 1,2)
+        // 6  Value Group MLP (layer 1,2)
         float value_corner_weight[FeatureDim][ValueGroupDim];
         float value_corner_bias[ValueGroupDim];
+        float value_corner_prelu[ValueGroupDim];
         float value_edge_weight[FeatureDim][ValueGroupDim];
         float value_edge_bias[ValueGroupDim];
+        float value_edge_prelu[ValueGroupDim];
         float value_center_weight[FeatureDim][ValueGroupDim];
         float value_center_bias[ValueGroupDim];
-        float value_quadrant_weight[ValueGroupDim][ValueGroupDim];
-        float value_quadrant_bias[ValueGroupDim];
+        float value_center_prelu[ValueGroupDim];
+        float value_quad_weight[ValueGroupDim][ValueGroupDim];
+        float value_quad_bias[ValueGroupDim];
+        float value_quad_prelu[ValueGroupDim];
 
         // 7  Value MLP (layer 1,2,3)
         float value_l1_weight[FeatureDim + ValueGroupDim * 4][ValueDim];
@@ -90,9 +92,10 @@ struct alignas(Alignment) Mix8Weight
         float value_l3_bias[3];
 
         // 8  Policy PReLU
-        float policy_neg_weight;
-        float policy_pos_weight;
-        char  __padding_to_64bytes_1[44];
+        float policy_output_pos_weight[4];
+        float policy_output_neg_weight[4];
+        float policy_output_bias;
+        char  __padding_to_64bytes_1[16];
     } buckets[MaxNumBuckets];
 };
 
