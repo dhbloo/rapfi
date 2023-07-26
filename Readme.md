@@ -4,7 +4,7 @@
 
 ## Overview
 
-Rapfi is a powerful Gomoku/Renju (Five in a row) playing engine supporting [Piskvork protocol](http://petr.lastovicka.sweb.cz/protocl2en.htm). Since Piskvork protocol requires AI to communicate through standard input and output, in order to use it comfortably, you may need the compatible GUI such as [Piskvork](https://github.com/wind23/piskvork_renju), [qpiskvork](https://github.com/Joker2770/qpiskvork) or [Yixin-Board](https://github.com/dhbloo/Yixin-Board). Piskvork interface can be  downloaded from [here](https://raw.githubusercontent.com/wind23/piskvork_renju/master/Release/piskvork_renju.zip).
+Rapfi is a powerful Gomoku/Renju (Five in a row) playing engine supporting [Piskvork protocol](https://plastovicka.github.io/protocl2en.htm). Since Piskvork protocol requires AI to communicate through standard input and output, in order to use it comfortably, you may need the compatible GUI such as [Piskvork](https://github.com/wind23/piskvork_renju), [qpiskvork](https://github.com/Joker2770/qpiskvork) or [Yixin-Board](https://github.com/dhbloo/Yixin-Board). Piskvork interface can be  downloaded from [here](https://raw.githubusercontent.com/wind23/piskvork_renju/master/Release/piskvork_renju.zip).
 
 Rapfi engine currently uses alpha-beta search algorithm with classical and NNUE (Efficiently Updateable Neural Network) evaluation. NNUE evaluations achieves more precise evaluation with a significantly larger computation which can benefit from the vector instructions (such as SSE or AVX).
 
