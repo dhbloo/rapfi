@@ -8,6 +8,7 @@ As Rapfi adopts some of Stockfish's code, we acknowledge all authors of Stockfis
 https://github.com/official-stockfish/Stockfish/blob/HEAD/AUTHORS
 
 We also acknowledge Pikafish team for providing engine testing platform and computation resources:
+CPU Contributors, https://github.com/official-pikafish/Pikafish/blob/master/Top%20CPU%20Contributors.txt
 Vincentzyx, https://github.com/Vincentzyx
 PikaCat, https://github.com/PikaCat-OuO
 skystarspython, https://github.com/skystarspython
