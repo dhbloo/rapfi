@@ -149,13 +149,13 @@ constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
 /// will be searched will late move reduction even without other condition.
 constexpr int lateMoveCount(Depth d, bool improving)
 {
-    return 1 + 2 * improving + int((improving ? 1.76f : 1.10f) * d);
+    return 1 + 2 * improving + int((improving ? 1.68f : 1.17f) * d);
 }
 
 /// Init Reductions table according to num threads.
 inline void initReductionLUT(std::array<Depth, MAX_MOVES + 1> &lut, int numThreads = 1)
 {
-    double factor     = 1.0 / std::sqrt(1.95);
+    double factor     = 0.786;
     double threadBias = 0.1 * std::log(numThreads);
     lut[0]            = 0.0f;
     for (size_t i = 1; i < lut.size(); i++)
@@ -180,18 +180,32 @@ constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> &lut,
         return r + (improvement <= 0 && r > 1.0f);
 }
 
-constexpr Depth CR1[RULE_NB]                  = {0.01f * 8.475f, 0.01f * 9.0f, 0.01f * 7.200f};
-constexpr Depth CR2[RULE_NB]                  = {0.01f * 4.143f, 0.01f * 4.0f, 0.01f * 3.628f};
-constexpr Depth CR3[RULE_NB]                  = {0.01f * 2.189f, 0.01f * 2.0f, 0.01f * 1.950f};
-constexpr Depth CR4[RULE_NB]                  = {0.01f * 0.719f, 0.01f * 0.7f, 0.01f * 0.681f};
-constexpr Depth PolicyReductionScale[RULE_NB] = {2.818f, 3.2f, 3.469f};
-constexpr Depth PolicyReductionBias[RULE_NB]  = {3.724f, 5.0f, 5.205f};
-constexpr Depth PolicyReductionMax[RULE_NB]   = {3.696f, 4.0f, 4.047f};
+constexpr Depth CR1[RULE_NB]                  = {0.0841f, 0.01f * 9.0f, 0.01f * 7.200f};
+constexpr Depth CR2[RULE_NB]                  = {0.0479f, 0.01f * 4.0f, 0.01f * 3.628f};
+constexpr Depth CR3[RULE_NB]                  = {0.0211f, 0.01f * 2.0f, 0.01f * 1.950f};
+constexpr Depth CR4[RULE_NB]                  = {0.0056f, 0.01f * 0.7f, 0.01f * 0.681f};
+constexpr Depth PolicyReductionScale[RULE_NB] = {2.42f, 3.2f, 3.469f};
+constexpr Depth PolicyReductionBias[RULE_NB]  = {3.67f, 5.0f, 5.205f};
+constexpr Depth PolicyReductionMax[RULE_NB]   = {4.00f, 4.0f, 4.047f};
 
 template <Rule R>
 constexpr Depth complexityReduction(bool trivialMove, bool importantMove, bool distract)
 {
     return (trivialMove ? (distract ? CR1 : CR2) : !importantMove ? CR3 : CR4)[R];
+}
+
+/// Policy pruning score at given depth. Moves lower than this are pruned at low depth.
+template <Rule R>
+inline int policyPruningScore(Depth d)
+{
+    return 339 - int(d * 57);
+}
+
+/// Policy reduction score at given depth. Moves lower than this will do lmr.
+template <Rule R>
+inline int policyReductionScore(Depth d)
+{
+    return 457;
 }
 
 }  // namespace Search::AB

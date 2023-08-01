@@ -1009,7 +1009,7 @@ moves_loop:
                 continue;
 
             // Policy based pruning
-            if (mp.hasPolicyScore() && mp.curMoveScore() < 414 - int(depth * 47))
+            if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth))
                 continue;
 
             // Prun distract defence move (which is likely to drastically delay a winning)
@@ -1107,8 +1107,8 @@ moves_loop:
                 || distract     // do LMR for distract move
                 || cutNode      // do LMR for all moves in cut node
                 || moveCount >= lateMoveCount(depth, improvement > 0)  // do LMR for late move
-                || mp.hasPolicyScore() && mp.curMoveScore() < 416)     // do LMR for low policy
-        ) {
+                || mp.hasPolicyScore()                                 // do LMR for low policy
+                       && mp.curMoveScore() < policyReductionScore<Rule>(depth))) {
             Value delta = beta - alpha;
             Depth r     = reduction<PvNode>(searcher->reductions,
                                         depth,

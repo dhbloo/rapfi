@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "mix6Qnnue.h"
 
@@ -83,7 +83,7 @@ struct Mix6QWeightLoader : WeightLoader<Mix6QWeight>
 
         if (in && in.peek() == std::ios::traits_type::eof()) {
             preprocessWeight(*weight);
-            return std::move(weight);
+            return weight;
         }
         else
             return nullptr;
@@ -92,7 +92,9 @@ struct Mix6QWeightLoader : WeightLoader<Mix6QWeight>
     void preprocessWeight(Mix6QWeight &w)
     {
         // Shifting pw conv weight from signed to unsigned int8
-        simd::add<PolicyDim>(w.policy_pw_conv_weight, w.policy_pw_conv_weight, (int8_t)128);
+        simd::add<PolicyDim, int8_t, alignof(int8_t), simd::AVX2>(w.policy_pw_conv_weight,
+                                                                  w.policy_pw_conv_weight,
+                                                                  (int8_t)128);
     }
 };
 
@@ -175,9 +177,10 @@ void Mix6QAccumulator::clear(const Mix6QWeight &w, int alignBoardSize)
 
     // Init featureSum, featureAfterPReLU, policyAfterDWConv, valueSumBoard
     for (int cellIdx = 0; cellIdx < numCells; cellIdx++) {
-        simd::copy<PolicyDim>(policyAfterDWConv[cellIdx].data(), w.policy_dw_conv_bias);
+        simd::copy<PolicyDim, int16_t, alignof(int16_t)>(policyAfterDWConv[cellIdx].data(),
+                                                         w.policy_dw_conv_bias);
     }
-    simd::zero<ValueDim>(valueSumBoard.data());
+    simd::zero<ValueDim, int16_t, alignof(int16_t)>(valueSumBoard.data());
 
     for (int cellIdx = 0; cellIdx < numCells; cellIdx++) {
         int y = cellIdx / boardSize, x = cellIdx % boardSize;
@@ -520,27 +523,29 @@ std::tuple<float, float, float> Mix6QAccumulator::evaluateValue(const Mix6QWeigh
     // layer 1 Linear1
     int32_t layer1i32[ValueDim];
     int8_t  layer1[ValueDim];
-    simd::linear<ValueDim, ValueDim, ScaleWeight>(layer1i32,
-                                                  layer0,
-                                                  w.value_linear1_weight,
-                                                  w.value_linear1_bias);
-    simd::crelu32<ValueDim>(layer1, layer1i32);
+    simd::linear<ValueDim, ValueDim, ScaleWeight, alignof(int8_t), simd::AVX2>(
+        layer1i32,
+        layer0,
+        w.value_linear1_weight,
+        w.value_linear1_bias);
+    simd::crelu32<ValueDim, alignof(int8_t), simd::AVX2>(layer1, layer1i32);
 
     // layer 2 Linear2
     int32_t layer2i32[ValueDim];
     int8_t  layer2[ValueDim];
-    simd::linear<ValueDim, ValueDim, ScaleWeight>(layer2i32,
-                                                  layer1,
-                                                  w.value_linear2_weight,
-                                                  w.value_linear2_bias);
-    simd::crelu32<ValueDim>(layer2, layer2i32);
+    simd::linear<ValueDim, ValueDim, ScaleWeight, alignof(int8_t), simd::AVX2>(
+        layer2i32,
+        layer1,
+        w.value_linear2_weight,
+        w.value_linear2_bias);
+    simd::crelu32<ValueDim, alignof(int8_t), simd::AVX2>(layer2, layer2i32);
 
     // layer 3 Linear3
     int32_t layer3i32[4];
-    simd::linear<4, ValueDim, ScaleWeight>(layer3i32,
-                                           layer2,
-                                           w.value_linear3_weight,
-                                           w.value_linear3_bias);
+    simd::linear<4, ValueDim, ScaleWeight, alignof(int8_t), simd::AVX2>(layer3i32,
+                                                                        layer2,
+                                                                        w.value_linear3_weight,
+                                                                        w.value_linear3_bias);
 
     return {
         layer3i32[0] * w.value_output_scale,
@@ -596,7 +601,7 @@ void Mix6QAccumulator::evaluatePolicy(const Mix6QWeight &w, PolicyBuffer &policy
 
             simd::debug::assertInRange<int16_t>(policy, -504, 504);
 
-            int16_t partialPolicySum = simd::regop::hsumI16(policy);
+            auto partialPolicySum = simd::detail::VecOp<int16_t, simd::AVX2>::reduceadd(policy);
 
             assert(-8064 <= partialPolicySum && partialPolicySum <= 8064);
 
@@ -688,6 +693,8 @@ void Mix6QEvaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuff
     // Apply all incremental update and calculate policy
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight, policyBuffer);
+
+    policyBuffer.setScoreBias(300);
 }
 
 void Mix6QEvaluator::clearCache(Color side)

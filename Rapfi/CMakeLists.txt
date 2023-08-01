@@ -15,6 +15,7 @@ option(USE_ROTR "Enable ROTR instruction" ON)
 option(USE_SSE  "Enable SSE-SSE4.2 instruction" ON)
 option(USE_AVX  "Enable AVX instruction" ON)
 option(USE_AVX2 "Enable AVX2/FMA instruction" ON)
+option(USE_AVX512 "Enable AVX512 instruction" OFF)
 option(USE_BMI2 "Enable BMI2 instruction" OFF)
 
 option(ENABLE_LTO "Enable link time optimization" OFF)
@@ -49,6 +50,7 @@ set(CORE_SOURCES
     eval/mix6nnue.cpp
     eval/mix6Qnnue.cpp
     eval/mix7nnue.cpp
+    eval/mix8nnue.cpp
     eval/nnuev2.cpp
 
     game/board.cpp
@@ -106,6 +108,7 @@ set(HEADERS
     eval/mix6nnue.h
     eval/mix6Qnnue.h
     eval/mix7nnue.h
+    eval/mix8nnue.h
     eval/nnuev2.h
     eval/simdops.h
     eval/weightloader.h
@@ -174,6 +177,7 @@ if(EMSCRIPTEN)
     set(USE_ROTR OFF)
     set(USE_AVX OFF)
     set(USE_AVX2 OFF)
+    set(USE_AVX512 OFF)
     set(USE_BMI2 OFF)
 
     target_compile_options(rapfi
@@ -242,6 +246,9 @@ endif()
 if(USE_AVX2)
     target_compile_definitions(rapfi PRIVATE USE_AVX2)
 endif()
+if(USE_AVX512)
+    target_compile_definitions(rapfi PRIVATE USE_AVX512)
+endif()
 if(USE_BMI2)
     target_compile_definitions(rapfi PRIVATE USE_BMI2)
 endif()
@@ -262,7 +269,9 @@ if(MSVC)
     string(REGEX REPLACE "/O2" "/Ox"
         CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-    if(USE_AVX2)
+	if(USE_AVX512)
+	    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX512")
+    elseif(USE_AVX2)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
     elseif(USE_AVX)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX")
@@ -289,7 +298,9 @@ if(MSVC)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     message(STATUS "Setting up build for GNU or Clang.")
 
-    if(USE_AVX2)
+	if(USE_AVX512)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512bw")
+    elseif(USE_AVX2)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
     elseif(USE_AVX)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")

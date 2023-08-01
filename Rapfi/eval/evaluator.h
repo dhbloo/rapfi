@@ -70,7 +70,6 @@ class PolicyBuffer
 public:
     using PolicyType                       = float;
     static constexpr PolicyType ScoreScale = 32;
-    static constexpr Score      ScoreBias  = 300;
 
     PolicyBuffer(int boardSize) : PolicyBuffer(boardSize, boardSize) {}
     PolicyBuffer(int boardWidth, int boardHeight);
@@ -86,8 +85,8 @@ public:
     void  setComputeFlagForAllCandidateCell(const Board &board, bool enabled = true);
     bool  getComputeFlag(int x, int y) const { return computeFlag[boardWidth * y + x]; }
     bool  getComputeFlag(int index) const { return computeFlag[index]; }
-    void  setScoreBias(Score bias) { policyScoreBias = ScoreBias + bias; }
-    Score score(Pos pos) const { return Score((*this)[pos] * ScoreScale) + policyScoreBias; }
+    void  setScoreBias(Score bias) { scoreBias = bias; }
+    Score score(Pos pos) const { return Score((*this)[pos] * ScoreScale) + scoreBias; }
 
     /// Applies softmax to all computed policy.
     void applySoftmax();
@@ -103,7 +102,7 @@ private:
 
     int        boardWidth;
     int        bufferSize;
-    float      policyScoreBias;
+    Score      scoreBias;
     bool       computeFlag[MAX_MOVES];
     PolicyType policy[MAX_MOVES];
 };

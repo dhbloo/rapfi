@@ -18,17 +18,12 @@
 
 #pragma once
 
-#include <simde/x86/avx2.h>
-#include <simde/x86/fma.h>
-
 #if defined(USE_BMI2)
     #include <immintrin.h>
 #endif
 
-#ifndef NO_PREFETCH
-    #if defined(__INTEL_COMPILER) || defined(_MSC_VER)
-        #include <xmmintrin.h>
-    #endif
+#if !defined(NO_PREFETCH) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
+    #include <xmmintrin.h>
 #endif
 
 #ifdef USE_ROTR
@@ -40,6 +35,27 @@
 #endif
 
 #include <cstdint>
+
+// Define some macros for platform specific optimization hint
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
+    #define FORCE_INLINE inline __attribute__((always_inline))
+    #define NO_INLINE    __attribute__((noinline))
+    #define RESTRICT     __restrict__
+    #define LIKELY(x)    __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
+#elif defined(_MSC_VER)
+    #define FORCE_INLINE __forceinline
+    #define NO_INLINE    __declspec(noinline)
+    #define RESTRICT     __restrict
+    #define LIKELY(x)    (x)
+    #define UNLIKELY(x)  (x)
+#else
+    #define FORCE_INLINE inline
+    #define NO_INLINE
+    #define RESTRICT
+    #define LIKELY(x)   (x)
+    #define UNLIKELY(x) (x)
+#endif
 
 // -------------------------------------------------
 // Platform related functions
@@ -109,7 +125,7 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 /// Preloads the given address in L1/L2 cache. This is a non-blocking
 /// function that doesn't stall the CPU waiting for data to be loaded
 /// from memory, which can be quite slow.
-inline void prefetch(void *addr)
+inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
 
@@ -126,6 +142,119 @@ inline void prefetch(void *addr)
     #endif
 
 #endif
+}
+
+namespace _PrefetchImpl {
+
+template <int N>
+struct PrefetchImpl
+{};
+
+template <>
+struct PrefetchImpl<1>
+{
+    inline static void call(const char *addr) { ::prefetch(addr); }
+};
+
+template <>
+struct PrefetchImpl<2>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+    }
+};
+
+template <>
+struct PrefetchImpl<3>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+    }
+};
+
+template <>
+struct PrefetchImpl<4>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+    }
+};
+
+template <>
+struct PrefetchImpl<5>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+    }
+};
+
+template <>
+struct PrefetchImpl<6>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+    }
+};
+
+template <>
+struct PrefetchImpl<7>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+        ::prefetch(addr + 384);
+    }
+};
+
+template <>
+struct PrefetchImpl<8>
+{
+    inline static void call(const char *addr)
+    {
+        ::prefetch(addr);
+        ::prefetch(addr + 64);
+        ::prefetch(addr + 128);
+        ::prefetch(addr + 192);
+        ::prefetch(addr + 256);
+        ::prefetch(addr + 320);
+        ::prefetch(addr + 384);
+        ::prefetch(addr + 448);
+    }
+};
+
+}  // namespace _PrefetchImpl
+
+template <int NumBytes>
+inline void multiPrefetch(const void *addr)
+{
+    constexpr int CacheLineSize = 64;
+    constexpr int NumCacheLines = (NumBytes + CacheLineSize - 1) / CacheLineSize;
+    _PrefetchImpl::PrefetchImpl<NumCacheLines>::call(reinterpret_cast<const char *>(addr));
 }
 
 // -------------------------------------------------

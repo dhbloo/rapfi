@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "mix7nnue.h"
 
@@ -145,18 +145,18 @@ void Mix7Accumulator::clear(const Mix7Weight &w, int alignBoardSize)
 
     // Init mapAfterDWConv to bias
     for (int i = 0; i < fullBoardSize * fullBoardSize; i++)
-        simd::copy<DWConvDim>(mapAfterDWConv[i].data(), w.dw_conv_bias);
+        simd::copy<DWConvDim, int16_t, Alignment>(mapAfterDWConv[i].data(), w.dw_conv_bias);
     // Init valueSum to zeros
-    simd::zero<ValueDim>(valueSum.data());
+    simd::zero<ValueDim, int32_t, Alignment>(valueSum.data());
 
     for (int y = 0, innerIdx = 0; y < boardSize; y++)
         for (int x = 0; x < boardSize; x++, innerIdx++) {
             // Init mapSum from four directions
-            simd::zero<MapDim>(mapSum[innerIdx].data());
+            simd::zero<MapDim, int16_t, Alignment>(mapSum[innerIdx].data());
             for (int dir = 0; dir < 4; dir++)
-                simd::add<MapDim>(mapSum[innerIdx].data(),
-                                  mapSum[innerIdx].data(),
-                                  w.mapping[indexTable[innerIdx][dir]]);
+                simd::add<MapDim, int16_t, Alignment>(mapSum[innerIdx].data(),
+                                                      mapSum[innerIdx].data(),
+                                                      w.mapping[indexTable[innerIdx][dir]]);
 
             // Init mapAfterDWConv from mapSum
             DEF_BATCH256(int16_t, MapDim, RegWidth, MapBatches);
@@ -446,16 +446,27 @@ std::tuple<float, float, float> Mix7Accumulator::evaluateValue(const Mix7Weight 
     }
 
     // linear 1
-    float layer1[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer1, layer0, w.value_l1_weight, w.value_l1_bias);
+    alignas(Alignment) float layer1[ValueDim];
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, Alignment>(
+        layer1,
+        layer0,
+        w.value_l1_weight,
+        w.value_l1_bias);
 
     // linear 2
-    float layer2[ValueDim];
-    simd::linearLayer<simd::Activation::Relu>(layer2, layer1, w.value_l2_weight, w.value_l2_bias);
+    alignas(Alignment) float layer2[ValueDim];
+    simd::linearLayer<simd::Activation::Relu, ValueDim, ValueDim, float, Alignment>(
+        layer2,
+        layer1,
+        w.value_l2_weight,
+        w.value_l2_bias);
 
     // final linear
-    float value[8];
-    simd::linearLayer<simd::Activation::None>(value, layer2, w.value_l3_weight, w.value_l3_bias);
+    alignas(Alignment) float value[16];
+    simd::linearLayer<simd::Activation::None, 3, ValueDim, float, Alignment>(value,
+                                                                             layer2,
+                                                                             w.value_l3_weight,
+                                                                             w.value_l3_bias);
 
     return {value[0], value[1], value[2]};
 }
@@ -479,7 +490,8 @@ void Mix7Accumulator::evaluatePolicy(const Mix7Weight &w, PolicyBuffer &policyBu
                     reinterpret_cast<const simde__m256i *>(w.policy_pw_conv_weight + b * RegWidth));
                 feature = simde_mm256_max_epi16(feature, simde_mm256_setzero_si256());  // relu
                 feature = simde_mm256_mulhrs_epi16(feature, convW);
-                policy += static_cast<float>(simd::regop::hsumI16(feature));
+                policy += static_cast<float>(
+                    simd::detail::VecOp<int16_t, simd::AVX2>::reduceadd(feature));
             }
 
             policyBuffer(innerIdx) =
@@ -582,6 +594,8 @@ void Mix7Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffe
     // Apply all incremental update and calculate policy
     clearCache(self);
     accumulator[self]->evaluatePolicy(*weight[self], policyBuffer);
+
+    policyBuffer.setScoreBias(300);
 }
 
 void Mix7Evaluator::clearCache(Color side)
