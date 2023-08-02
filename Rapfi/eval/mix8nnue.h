@@ -37,8 +37,8 @@ constexpr int      ShapeNum         = 708588;
 constexpr int      FeatureDim       = 64;
 constexpr int      PolicyDim        = 32;
 constexpr int      ValueDim         = 64;
-constexpr int      ValueGroupDim    = 16;
-constexpr int      FeatureDWConvDim = 48;
+constexpr int      ValueGroupDim    = 32;
+constexpr int      FeatureDWConvDim = 32;
 constexpr int      MaxNumBuckets    = 1;
 
 struct alignas(Alignment) Mix8Weight
