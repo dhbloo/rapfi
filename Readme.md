@@ -11,7 +11,7 @@
   · 
   [Discord](https://discord.gg/7kEpFCGdb5)
   ·
-  [Gomocsalc](https://gomocalc.com)
+  [Gomocalc](https://gomocalc.com)
   <br>
   
   [![Build](https://img.shields.io/github/actions/workflow/status/dhbloo/rapfi/rapfi.yml?branch=master&style=for-the-badge&label=rapfi&logo=github)](https://github.com/dhbloo/rapfi/blob/master/.github/workflows/rapfi.yml)
