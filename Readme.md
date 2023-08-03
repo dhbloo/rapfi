@@ -1,5 +1,5 @@
 <div align="center">
-
+  <img src="https://github.com/nguyencongminh090/Gomobot/blob/master/Artboard%201.png?raw=true">
   <h3>Rapfi</h3>
   A free and powerful Gomoku/Renju engine.
   <br>
@@ -11,7 +11,7 @@
   · 
   [Discord](https://discord.gg/7kEpFCGdb5)
   ·
-  [Gomocalc](https://gomocalc.com)
+  [Gomocsalc](https://gomocalc.com)
   <br>
   
   [![Build](https://img.shields.io/github/actions/workflow/status/dhbloo/rapfi/rapfi.yml?branch=master&style=for-the-badge&label=rapfi&logo=github)](https://github.com/dhbloo/rapfi/blob/master/.github/workflows/rapfi.yml)
@@ -89,3 +89,36 @@ For more detailed instructions for building on all platforms, please refer to th
 Rapfi is free and distributed under the [**GNU General Public License version 3**](https://github.com/dhbloo/rapfi/blob/master/Copying.txt) (GPL v3). Essentially, this means you are free to do almost exactly what you want with the program, including distributing it among your friends, making it available for download from your website, selling it (either by itself or as part of some bigger software package), or using it as the starting point for a software project of your own.
 
 The only real limitation is that whenever you distribute Rapfi in some way, you MUST always include the license and the full source code (or a pointer to where the source code can be found) to generate the exact binary you are distributing. If you make any changes to the source code, these changes must also be made available under GPL v3.
+
+[authors-link]:			https://github.com/official-pikafish/Pikafish/blob/master/AUTHORS
+[build-badge]:			https://img.shields.io/github/actions/workflow/status/official-pikafish/Pikafish/pikafish.yml?branch=master&style=for-the-badge&label=pikafish&logo=github
+[build-link]:				https://github.com/official-pikafish/Pikafish/actions/workflows/pikafish.yml
+[commits-badge]:		https://img.shields.io/github/commits-since/official-pikafish/Pikafish/latest?style=for-the-badge
+[commits-link]:			https://github.com/official-pikafish/Pikafish/commits/master
+[discord-badge]:			https://img.shields.io/discord/1013130558089478144?style=for-the-badge&label=discord&logo=Discord
+[discord-link]:			https://discord.com/invite/uSb3RXb7cY
+[discussions-link]:   https://github.com/official-pikafish/Pikafish/discussions/new
+[fishtest-badge]:			https://img.shields.io/website?style=for-the-badge&down_color=red&down_message=Offline&label=Fishtest&up_color=success&up_message=Online&url=https://test.pikafish.org
+[fishtest-link]:			https://test.pikafish.org
+[guideline-link]:			https://github.com/glinscott/fishtest/wiki/Creating-my-first-test
+[issue-link]:         https://github.com/official-pikafish/Pikafish/issues/new?assignees=&labels=&template=BUG-REPORT.yml
+[license-badge]:			https://img.shields.io/github/license/official-pikafish/Pikafish?style=for-the-badge&label=license&color=success
+[license-link]:			https://github.com/official-pikafish/Pikafish/blob/master/Copying.txt
+[pikafish-logo]:			https://pikafish.org/assets/logo_256.png
+[programming-link]:		https://www.chessprogramming.org/Main_Page
+[programmingsf-link]:	https://www.chessprogramming.org/Stockfish
+[qqgroup-link]:			https://jq.qq.com/?_wv=1027&k=FORWUh4W
+[readme-link]:			https://github.com/official-pikafish/Pikafish/blob/master/README.md
+[release-badge]:			https://img.shields.io/github/v/release/official-pikafish/Pikafish?style=for-the-badge&label=official%20release
+[release-link]:			https://github.com/official-pikafish/Pikafish/releases/latest
+[src-link]:				https://github.com/official-pikafish/Pikafish/tree/master/src
+[stockfish-link]:			https://github.com/official-stockfish/Stockfish
+[uci-link]:				https://backscattering.de/chess/uci/
+[website-badge]:		https://img.shields.io/website?style=for-the-badge&down_color=red&down_message=Offline&label=website&up_color=success&up_message=Online&url=https://pikafish.org
+[website-link]:			https://pikafish.org
+[website-blog-link]:  https://pikafish.org/
+[wiki-link]:          https://github.com/official-pikafish/Pikafish/wiki
+[wiki-usage-link]:    https://github.com/official-pikafish/Pikafish/wiki/Download-and-usage
+[wiki-compile-link]:  https://github.com/official-pikafish/Pikafish/wiki/Compiling-from-source
+[wiki-commands-link]: https://github.com/official-pikafish/Pikafish/wiki/Commands
+[worker-link]:			https://github.com/xyztnecniV/yolo
