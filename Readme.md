@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/nguyencongminh090/Gomobot/blob/master/Artboard%201.png?raw=true">
+  <img src="https://github.com/dhbloo/rapfi/blob/master/Logo.png?raw=true">
   <h3>Rapfi</h3>
   A free and powerful Gomoku/Renju engine.
   <br>
