@@ -69,9 +69,9 @@ constexpr Value razorVerifyMargin(Depth d)
 }
 
 /// Static futility pruning depth & margins
-constexpr Value futilityMargin(Depth d, bool improving)
+constexpr Value futilityMargin(Depth d, bool noTtCutNode, bool improving)
 {
-    return Value(std::max(int(55 * (d - improving)), 0));
+    return Value(std::max(int((55 - 14 * noTtCutNode) * (d - improving)), 0));
 }
 
 /// Null move pruning margin

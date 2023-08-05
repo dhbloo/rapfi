@@ -846,9 +846,10 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     }
 
     // Step 8. Futility pruning: child node (~70 elo)
-    if (!PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
+    if (depth < 9
+        && !PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
         && beta > VALUE_MATED_IN_MAX_PLY         // Confirm non-losing move exists
-        && eval - futilityMargin(depth, improvement > 0) >= beta
+        && eval - futilityMargin(depth - 1, cutNode && !ttHit, improvement > 0) >= beta
         && !((ss - 2)->moveP4[self] >= E_BLOCK4 && (ss - 4)->moveP4[self] >= E_BLOCK4))
         return eval;
 
@@ -1158,7 +1159,8 @@ moves_loop:
                             + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 - 3200;
 
             // Decrease/increase reduction for moves with a good/bad history
-            r -= ss->statScore * (1.0f / 12700);
+            //Adjust reduction less at medium depths          Mix alpha and statScore for reduction
+            r -= (ss->statScore + 5 * alpha) * (1.0f / (12700 + 4000 * (depth > 7 && depth < 19)));
 
             // Allow LMR to do deeper search in some circumstances
             int deeper = r < -1 && moveCount <= 4 ? 1 : 0;
@@ -1167,6 +1169,14 @@ moves_loop:
             Depth d = std::max(std::min(newDepth - r, newDepth + deeper), 1.0f);
 
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
+            
+            if (value > alpha && d < newDepth)
+            {
+                const bool doDeeperSearch = value > (alpha + 40 + Value(8 * (newDepth - d)));
+                const bool doEvenDeeperSearch = value > (alpha + 350 + Value(20 * (newDepth - d)));
+                const bool doShallowerSearch = value < bestValue + Value(newDepth);
+                newDepth += doDeeperSearch - doShallowerSearch + doEvenDeeperSearch;
+            }
 
             doFullDepthSearch = (value > alpha && d < newDepth);
         }
@@ -1274,11 +1284,19 @@ moves_loop:
                 bestMove = move;  // Only update best move in pv or fail high node
 
                 if (PvNode && !RootNode)  // Update pv even in fail-high case
-                    ss->updatePv(move);
+                    ss->updatePv(move); 
 
                 if (PvNode && value < beta) {
                     alpha = value;  // Update alpha, make sure alpha < beta
-
+                    
+                    //Reduce other moves if we have found at least one score improvement
+                    if(depth > 2
+                       && depth < 12
+                       && beta  <  14000
+                       && value > -14000) {
+                       depth -= 1;
+                       assert(depth > 0);
+                    }
                     // If we are in balance move mode, we also shrink beta as to narrow
                     // the search window to [-abs(v-bias)+bias, abs(v-bias)+bias].
                     if (RootNode && options.balanceMode) {
