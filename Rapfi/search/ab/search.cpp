@@ -664,7 +664,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
             static_cast<MainSearchThread *>(thisThread)->checkExit();
 
         // Check if the board has been filled or we have reached the max game ply.
-        if (board.movesLeft() <= 2 || board.nonPassMoveCount() >= options.maxMoves)
+        if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
             return getDrawValue(board, options, ss->ply);
 
         // Check if we have reached the max ply

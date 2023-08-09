@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "board.h"
 
@@ -64,8 +64,8 @@ Board::Board(int boardSize, CandidateRange candRange)
     , thisThread_(nullptr)
 {
     assert(0 < boardSize && boardSize <= ACTUAL_BOARD_SIZE);
-    stateInfos  = new StateInfo[1 + boardCellCount + MAX_PASS_MOVES] {};
-    updateCache = new UpdateCache[1 + boardCellCount];
+    stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
+    updateCache = new UpdateCache[1 + boardCellCount * 2];
 
     // Set candidate range of the board
     switch (candRange) {
@@ -118,8 +118,8 @@ Board::Board(const Board &other, Search::SearchThread *thread)
     std::copy_n(other.bitKey2, arraySize(bitKey2), bitKey2);
     std::copy_n(other.bitKey3, arraySize(bitKey3), bitKey3);
 
-    stateInfos  = new StateInfo[1 + boardCellCount + MAX_PASS_MOVES] {};
-    updateCache = new UpdateCache[1 + boardCellCount];
+    stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
+    updateCache = new UpdateCache[1 + boardCellCount * 2];
     // Only copy stateinfo in [0, moveCount]
     std::copy_n(other.stateInfos, 1 + moveCount, stateInfos);
     std::copy_n(other.updateCache, 1 + moveCount, updateCache);
@@ -392,12 +392,12 @@ template void Board::undo<RENJU, Board::MoveType::NO_EVAL>();
 
 void Board::doPassMove()
 {
-    assert(passMoveCount() < MAX_PASS_MOVES);
+    assert(passMoveCount() < cellCount());
 
     StateInfo &st = stateInfos[++moveCount];
     st            = stateInfos[moveCount - 1];
     st.lastMove   = Pos::PASS;
-    
+
     passCount[currentSide]++;
     currentSide = ~currentSide;
 }

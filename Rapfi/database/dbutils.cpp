@@ -552,7 +552,7 @@ size_t RenlibReader::processNode(Board                       &board,
     do {
         bool ignoreChildren = false;
         if (node->move == Pos::NONE) {
-            if (board.passMoveCount() >= MAX_PASS_MOVES - 1)
+            if (board.passMoveCount() >= board.cellCount())
                 throw std::runtime_error("too many pass move");
             board.doPassMove();
         }

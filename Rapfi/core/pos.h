@@ -30,7 +30,6 @@ constexpr int BOARD_BOUNDARY        = 5;
 constexpr int FULL_BOARD_CELL_COUNT = FULL_BOARD_SIZE * FULL_BOARD_SIZE;
 constexpr int ACTUAL_BOARD_SIZE     = FULL_BOARD_SIZE - 2 * BOARD_BOUNDARY;
 constexpr int MAX_MOVES             = ACTUAL_BOARD_SIZE * ACTUAL_BOARD_SIZE;
-constexpr int MAX_PASS_MOVES        = MAX_MOVES;
 
 // -------------------------------------------------
 

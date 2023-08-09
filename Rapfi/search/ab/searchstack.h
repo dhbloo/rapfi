@@ -22,6 +22,7 @@
 #include "../../core/types.h"
 
 #include <vector>
+#include <cassert>
 
 namespace Search::AB {
 

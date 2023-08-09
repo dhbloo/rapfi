@@ -251,6 +251,7 @@ public:
     // general board info queries
 
     int                    size() const { return boardSize; }
+    int                    cellCount() const { return boardCellCount; }
     Pos                    centerPos() const { return {boardSize / 2, boardSize / 2}; }
     Pos                    startPos() const { return {0, 0}; }
     Pos                    endPos() const { return {boardSize - 1, boardSize - 1}; }
