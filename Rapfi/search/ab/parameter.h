@@ -69,9 +69,9 @@ constexpr Value razorVerifyMargin(Depth d)
 }
 
 /// Static futility pruning depth & margins
-constexpr Value futilityMargin(Depth d, bool noTtCutNode, bool improving)
+constexpr Value futilityMargin(Depth d, bool noTTCutNode, bool improving)
 {
-    return Value(std::max(int((55 - 14 * noTtCutNode) * (d - improving)), 0));
+    return Value(std::max(int((55 - 12 * noTTCutNode) * (d - improving)), 0));
 }
 
 /// Null move pruning margin
@@ -150,6 +150,19 @@ constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
 constexpr int lateMoveCount(Depth d, bool improving)
 {
     return 1 + 2 * improving + int((improving ? 1.68f : 1.17f) * d);
+}
+
+/// Extension for full-depth search when reduced LMR search fails high
+constexpr int lmrFullSearchExtension(Depth newDepth,
+                                     Depth searchedDepth,
+                                     Value value,
+                                     Value alpha,
+                                     Value bestValue)
+{
+    bool doDeeperSearch     = value > (alpha + 70 + Value(15 * (newDepth - searchedDepth)));
+    bool doEvenDeeperSearch = value > (alpha + 350 + Value(30 * (newDepth - searchedDepth)));
+    bool doShallowerSearch  = value < bestValue + Value(newDepth);
+    return doDeeperSearch + doEvenDeeperSearch - doShallowerSearch;
 }
 
 /// Init Reductions table according to num threads.

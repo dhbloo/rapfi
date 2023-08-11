@@ -11,7 +11,7 @@ on:
 jobs:
   Fishtest:
     name: linux-avx2
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     env:
       CC: clang
       CXX: clang++
