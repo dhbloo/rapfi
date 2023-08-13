@@ -59,8 +59,6 @@ void TimeControl::init(Time turnTime, Time matchTime, Time matchTimeLeft, MovePa
 {
     startTime = now();
 
-    if (matchTime <= 0)  // unlimited match time
-        matchTimeLeft = std::numeric_limits<Time>::max();
     float movesToGo = std::max(params.movesLeft, 1);
     maximumTime     = Time(matchTimeLeft / std::min(Config::MatchSpaceMin, movesToGo));
     maximumTime     = std::max(std::min(turnTime, maximumTime) - Config::TurnTimeReserved, (Time)0);

@@ -203,7 +203,11 @@ void getOption()
             options.timeLimit = false;
     }
     else if (token == "TIME_LEFT") {
-        std::cin >> options.timeLeft;
+        std::cin >> val;
+        if (val == 2147483647)  // unlimited match time specificed in the protocol
+            options.timeLeft = std::numeric_limits<Time>::max();
+        else
+            options.timeLeft = val;
     }
     else if (token == "MAX_MEMORY") {
         std::cin >> val;
