@@ -114,6 +114,7 @@ public:
     // Common thread-related statistics
     std::atomic<uint64_t> numNodes;  /// Nodes count searched by this thread
     int                   selDepth;  /// Maximum depth reached by this thread
+    Value RootAlpha;
 };
 
 /// MainSearchThread class is the master thread in the Lazy SMP algorithm.
