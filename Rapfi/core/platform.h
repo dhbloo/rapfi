@@ -18,7 +18,7 @@
 
 #pragma once
 
-#if defined(USE_BMI2)
+#if defined(USE_BMI2) || defined(USE_AVX512)
     #include <immintrin.h>
 #endif
 

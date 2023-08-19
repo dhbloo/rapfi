@@ -4,7 +4,7 @@
   A free and powerful Gomoku/Renju engine.
   <br>
   <br>
-  
+
   [Report bug](https://github.com/dhbloo/rapfi/issues/new)
   ·
   [Open a discussion](https://github.com/dhbloo/rapfi/discussions/new)
@@ -13,7 +13,7 @@
   ·
   [Gomocalc](https://gomocalc.com)
   <br>
-  
+
   [![Build](https://img.shields.io/github/actions/workflow/status/dhbloo/rapfi/rapfi.yml?branch=master&style=for-the-badge&label=rapfi&logo=github)](https://github.com/dhbloo/rapfi/blob/master/.github/workflows/rapfi.yml)
   [![License](https://img.shields.io/github/license/dhbloo/rapfi?style=for-the-badge&label=license&color=success)](https://github.com/dhbloo/rapfi/blob/master/Copying.txt)
   <br>
@@ -77,6 +77,8 @@ The default setup builds Rapfi with multi-threading and AVX2 support. To build i
 ```bash
 cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_AVX=OFF -DUSE_AVX2=OFF
 ```
+
+It is recommended to use the Clang compiler, which provides the best speed across different compilers. When compiling for Windows, consider using one of **LLVM/Clang for Windows** / **Clang-CL for Visual Studio** / **MinGW-w64-Clang**, which compiles the engine binary with significantly higher speed than the builtin MSVC compiler in Visual Studio.
 
 For more detailed instructions for building on all platforms, please refer to the [wiki](https://github.com/dhbloo/rapfi/wiki/Compiling).
 

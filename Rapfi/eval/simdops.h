@@ -20,7 +20,6 @@
 #include "../core/platform.h"
 #include "../core/utils.h"
 
-#include <immintrin.h>
 #include <simde/x86/avx2.h>
 #include <simde/x86/fma.h>
 #include <tuple>
@@ -277,6 +276,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <typename T, int Alignment>
     struct VecLoadStore<T, Alignment, AVX512, std::enable_if_t<std::is_integral_v<T>>>
     {
@@ -296,6 +296,7 @@ namespace detail {
                 _mm512_storeu_si512(addr, data);
         }
     };
+#endif
 
     template <int Alignment>
     struct VecLoadStore<float, Alignment, SSE>
@@ -337,6 +338,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <int Alignment>
     struct VecLoadStore<float, Alignment, AVX512>
     {
@@ -356,6 +358,7 @@ namespace detail {
                 _mm512_storeu_ps(addr, data);
         }
     };
+#endif
 
     // ------------------------------------------------------------------------
     // Vec type conversion template
@@ -474,6 +477,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <typename FT, typename TT>
     struct VecCvt<FT, TT, AVX512, std::enable_if_t<std::is_integral_v<TT>>>
     {
@@ -530,6 +534,7 @@ namespace detail {
             }
         }
     };
+#endif
 
     template <>
     struct VecCvt<int32_t, float, SSE>
@@ -549,6 +554,7 @@ namespace detail {
         static FORCE_INLINE TR convert1(FR a) { return simde_mm256_cvtepi32_ps(a); }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecCvt<int32_t, float, AVX512>
     {
@@ -557,6 +563,7 @@ namespace detail {
 
         static FORCE_INLINE TR convert1(FR a) { return _mm512_cvtepi32_ps(a); }
     };
+#endif
 
     // ------------------------------------------------------------------------
     // Vec operation set template
@@ -583,6 +590,7 @@ namespace detail {
         static FORCE_INLINE R bitwisexor(R a, R b) { return simde_mm256_xor_si256(a, b); }
     };
 
+#ifdef USE_AVX512
     struct VecOpSIAVX512
     {
         typedef __m512i       R;
@@ -591,6 +599,7 @@ namespace detail {
         static FORCE_INLINE R bitwiseand(R a, R b) { return _mm512_and_si512(a, b); }
         static FORCE_INLINE R bitwisexor(R a, R b) { return _mm512_xor_si512(a, b); }
     };
+#endif
 
     template <>
     struct VecOp<int8_t, SSE> : VecOpSISSE
@@ -618,6 +627,7 @@ namespace detail {
         static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi8(a, b); }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecOp<int8_t, AVX512> : VecOpSIAVX512
     {
@@ -630,6 +640,7 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi8(a, b); }
     };
+#endif
 
     template <>
     struct VecOp<int16_t, SSE> : VecOpSISSE
@@ -675,6 +686,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecOp<int16_t, AVX512> : VecOpSIAVX512
     {
@@ -690,6 +702,7 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi16(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi16(a, b); }
     };
+#endif
 
     template <>
     struct VecOp<int32_t, SSE> : VecOpSISSE
@@ -732,6 +745,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecOp<int32_t, AVX512> : VecOpSIAVX512
     {
@@ -743,6 +757,7 @@ namespace detail {
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi32(a, b); }
         static FORCE_INLINE T reduceadd(R a) { return _mm512_reduce_add_epi32(a); }
     };
+#endif
 
     template <>
     struct VecOp<int64_t, SSE> : VecOpSISSE
@@ -762,6 +777,7 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return simde_mm256_sub_epi64(a, b); }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecOp<int64_t, AVX512> : VecOpSIAVX512
     {
@@ -770,6 +786,7 @@ namespace detail {
         static FORCE_INLINE R add(R a, R b) { return _mm512_add_epi64(a, b); }
         static FORCE_INLINE R sub(R a, R b) { return _mm512_sub_epi64(a, b); }
     };
+#endif
 
     template <>
     struct VecOp<float, SSE>
@@ -822,6 +839,7 @@ namespace detail {
         }
     };
 
+#ifdef USE_AVX512
     template <>
     struct VecOp<float, AVX512>
     {
@@ -838,6 +856,7 @@ namespace detail {
         static FORCE_INLINE R fmadd(R a, R b, R c) { return _mm512_fmadd_ps(a, b, c); }
         static FORCE_INLINE T reduceadd(R a) { return _mm512_reduce_add_ps(a); }
     };
+#endif
 
     template <typename T>
     struct VecOp<T, SCALAR>

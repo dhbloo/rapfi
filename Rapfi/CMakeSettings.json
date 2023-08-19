@@ -48,6 +48,29 @@
       ]
     },
     {
+      "name": "x64-Release-AVX512",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "ENABLE_LTO",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX512",
+          "value": "True",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
       "name": "x64-Release-ST",
       "generator": "Ninja",
       "configurationType": "Release",
@@ -76,7 +99,7 @@
       ]
     },
     {
-      "name": "x64-Release-SSE",
+      "name": "x64-Clang-Release",
       "generator": "Ninja",
       "configurationType": "Release",
       "buildRoot": "${projectDir}\\build\\${name}",
@@ -84,27 +107,28 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": [ "clang_cl_x64_x64" ]
+    },
+    {
+      "name": "x64-Clang-Release-AVX512",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_x64_x64" ],
       "variables": [
         {
-          "name": "ENABLE_LTO",
+          "name": "USE_AVX512",
           "value": "True",
-          "type": "BOOL"
-        },
-        {
-          "name": "USE_AVX2",
-          "value": "False",
-          "type": "BOOL"
-        },
-        {
-          "name": "USE_AVX",
-          "value": "False",
           "type": "BOOL"
         }
       ]
     },
     {
-      "name": "x64-Release-AVX",
+      "name": "x64-Clang-Release-ST",
       "generator": "Ninja",
       "configurationType": "Release",
       "buildRoot": "${projectDir}\\build\\${name}",
@@ -112,16 +136,16 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": [ "clang_cl_x64_x64" ],
       "variables": [
         {
-          "name": "ENABLE_LTO",
+          "name": "NO_MULTI_THREADING",
           "value": "True",
           "type": "BOOL"
         },
         {
-          "name": "USE_AVX2",
-          "value": "False",
+          "name": "NO_COMMAND_MODULES",
+          "value": "True",
           "type": "BOOL"
         }
       ]

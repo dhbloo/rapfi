@@ -249,7 +249,7 @@ endif()
 if(USE_AVX512)
     target_compile_definitions(rapfi PRIVATE USE_AVX512)
 endif()
-if(USE_BMI2)
+if(USE_BMI2 OR USE_AVX512)
     target_compile_definitions(rapfi PRIVATE USE_BMI2)
 endif()
 
@@ -308,7 +308,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse -msse2 -msse3 -mssse3 -msse4 -msse4a -msse4.1 -msse4.2")
     endif()
 
-    if(USE_BMI2)
+    if(USE_BMI2 OR USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi2")
     endif()
 
@@ -323,13 +323,10 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
 	endif()
 
     if(WIN32)
-        target_link_libraries(rapfi PRIVATE
-            $<$<CONFIG:Release>:-static-libstdc++>
-            $<$<CONFIG:Release>:-static-libgcc>
-            $<$<CONFIG:Release>:-Wl,-Bstatic> stdc++ pthread
-        )
-        if(NOT NO_COMMAND_MODULES)
-            target_link_libraries(rapfi PRIVATE -Wl,-Bdynamic tbb12)
+        if(NO_COMMAND_MODULES)
+            target_link_libraries(rapfi PRIVATE -static)
+		else()
+            target_link_libraries(rapfi PRIVATE tbb12)
         endif()
     elseif(NOT EMSCRIPTEN)
 	    if((NOT NO_MULTI_THREADING) OR (NOT NO_COMMAND_MODULES))
