@@ -496,6 +496,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
     while (true) {
         // Decrease search depth if multiple fail high occurs
         Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 4);
+        thisThread->RootAlpha = alpha;
 
         // Search at root node with rule
         Value value = ::search<Root>(rule, board, ss, alpha, beta, adjustedDepth, false);
@@ -533,7 +534,9 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         // In case of failing low/high increase aspiration window and re-search,
         // otherwise exit the loop.
         if (value <= alpha) {
-            beta        = (alpha + beta) / 2;
+            //increase aspiration window by 1% for each increase in depth
+            double alphaPercentage = std::min(0.5 + 0.01 * (searchData->completedDepth - 1), 0.99);
+            beta = Value( (double) alpha * alphaPercentage + (double) beta * (1 - alphaPercentage));
             alpha       = std::max(value - delta, -VALUE_INFINITE);
             failHighCnt = 0;
         }
@@ -1009,7 +1012,7 @@ moves_loop:
                 continue;
 
             // Policy based pruning
-            if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth))
+            if (mp.hasPolicyScore() && mp.curMovePolicyDiff() > 150 && depth < 12)
                 continue;
 
             // Prun distract defence move (which is likely to drastically delay a winning)
@@ -1133,6 +1136,10 @@ moves_loop:
             // the node is not likely to fail low.
             if (ss->ttPv && !likelyFailLow)
                 r -= 1.0f;
+            
+            if (ss->ply & 1 && bestValue >= -thisThread->RootAlpha)
+                r += 1.0f;
+          
 
             // Increase reduction for cut nodes if is not killer moves
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
@@ -1288,6 +1295,9 @@ moves_loop:
 
                 if (PvNode && value < beta) {
                     alpha = value;  // Update alpha, make sure alpha < beta
+                    
+                    if (RootNode)
+                        thisThread->RootAlpha = alpha;
 
                     // Reduce other moves if we have found at least one score improvement
                     if (depth > 2 && depth < 12 && beta < 2000 && value > -2000)
