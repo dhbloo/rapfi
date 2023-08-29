@@ -837,26 +837,22 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     }
 
     // Step 7. Razoring with VCF (~55 elo)
-    if (!PvNode && eval + razorMargin(depth) < alpha) {
-        Value ralpha = alpha - razorVerifyMargin(depth);
-        Value v      = vcfsearch<Rule, NonPV>(board, ss, ralpha, ralpha + 1);
-
-        if (depth < RAZOR_PRUN_DEPTH || v <= ralpha)
-            return v;
+    if (!PvNode && eval + razorMargin<Rule>(depth) < alpha) {
+        return vcfsearch<Rule, NonPV>(board, ss, alpha, alpha + 1);
     }
 
     // Step 8. Futility pruning: child node (~70 elo)
     if (!PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
         && beta > VALUE_MATED_IN_MAX_PLY         // Confirm non-losing move exists
-        && eval - futilityMargin(depth - 1, cutNode && !ttHit, improvement > 0) >= beta
+        && eval - futilityMargin<Rule>(depth - 1, cutNode && !ttHit, improvement > 0) >= beta
         && !((ss - 2)->moveP4[self] >= E_BLOCK4 && (ss - 4)->moveP4[self] >= E_BLOCK4))
         return eval;
 
     // Step 9. Null move pruning (~35 elo)
     if (!PvNode && !oppo4 && !skipMove && eval >= beta
         && board.getLastMove() != Pos::PASS  // No consecutive pass moves
-        && ss->staticEval >= beta + nullMoveMargin(depth)) {
-        Depth r         = nullMoveReduction(depth);
+        && ss->staticEval >= beta + nullMoveMargin<Rule>(depth)) {
+        Depth r         = nullMoveReduction<Rule>(depth);
         ss->currentMove = Pos::PASS;
 
         board.doPassMove();
@@ -896,7 +892,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         depth -= IIR_REDUCTION;
 
         // We only need best move from the iid search, so we just discard its result
-        search<Rule, NT>(board, ss, alpha, beta, depth - iidDepthReduction(depth), cutNode);
+        search<Rule, NT>(board, ss, alpha, beta, depth - iidDepthReduction<Rule>(depth), cutNode);
 
         // Get best move from transposition table, which should be just written by the search.
         Value tmpEval;
@@ -922,12 +918,12 @@ moves_loop:
 
     // Fail-High reduction (~50 elo)
     // Indicate cutNode that will probably fail high if current eval is far above beta
-    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
+    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin<Rule>(depth, oppo4);
 
     // Indicate PvNodes that will probably fail low if node was searched with non-PV search
     // at depth equal or greater to current depth and result of this search was far below alpha
     bool likelyFailLow = PvNode && ttHit && (ttBound & BOUND_UPPER) && ttDepth >= depth
-                         && ttValue < alpha + failLowMargin(depth);
+                         && ttValue < alpha + failLowMargin<Rule>(depth);
 
     MovePicker mp(Rule,
                   board,
@@ -1056,7 +1052,7 @@ moves_loop:
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
                 if (!PvNode && value < singularBeta - doubleSEMargin(depth)
-                    && ss->doubleExtensionCount < searchData->rootDepth / 4)
+                    && ss->extraExtension < SE_EXTRA_MAX_DEPTH)
                     extension = 2.0f;
                 else
                     extension = 1.0f;
@@ -1076,7 +1072,7 @@ moves_loop:
 
             // Additional extension for near B4 ttmove
             if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
-                extension += (distSelf <= 4 ? 0.19f : 0.05f);
+                extension += (distSelf <= 4 ? 0.20f : 0.05f);
         }
 
         // Fail high reduction
@@ -1091,9 +1087,9 @@ moves_loop:
         }
 
         // Calculate new depth for this move
-        Depth newDepth           = depth - 1.0f + extension;
-        ss->currentMove          = move;
-        ss->doubleExtensionCount = (ss - 1)->doubleExtensionCount + (extension >= 2.0f);
+        Depth newDepth     = depth - 1.0f + extension;
+        ss->currentMove    = move;
+        ss->extraExtension = (ss - 1)->extraExtension + std::max(extension - 1.0f, 0.0f);
 
         // Step 14. Make the move
         board.move<Rule>(move);
@@ -1106,25 +1102,21 @@ moves_loop:
             && (!importantMove  // do LMR for non important move
                 || distract     // do LMR for distract move
                 || cutNode      // do LMR for all moves in cut node
-                || moveCount >= lateMoveCount(depth, improvement > 0)  // do LMR for late move
-                || mp.hasPolicyScore()                                 // do LMR for low policy
+                || moveCount >= lateMoveCount<Rule>(depth, improvement > 0)  // do LMR for late move
+                || mp.hasPolicyScore()  // do LMR for low policy
                        && mp.curMoveScore() < policyReductionScore<Rule>(depth))) {
             Value delta = beta - alpha;
-            Depth r     = reduction<PvNode>(searcher->reductions,
-                                        depth,
-                                        moveCount,
-                                        improvement,
-                                        delta,
-                                        searchData->rootDelta);
+            Depth r     = reduction<Rule, PvNode>(searcher->reductions,
+                                              depth,
+                                              moveCount,
+                                              improvement,
+                                              delta,
+                                              searchData->rootDelta);
 
             // Policy based reduction
-            if (mp.hasPolicyScore()) {
-                const float Scale =
-                    PolicyReductionScale[Rule] * (0.1f / Evaluation::PolicyBuffer::ScoreScale);
-                r += std::clamp(PolicyReductionBias[Rule] - mp.curMoveScore() * Scale,
-                                0.0f,
-                                PolicyReductionMax[Rule]);
-            }
+            if (mp.hasPolicyScore())
+                r += policyReduction<Rule>(mp.curMoveScore()
+                                           * (0.1f / Evaluation::PolicyBuffer::ScoreScale));
 
             // Dynamic reduction based on complexity
             r += complexity * complexityReduction<Rule>(trivialMove, importantMove, distract);
@@ -1170,11 +1162,12 @@ moves_loop:
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
 
             if (value > alpha && d < newDepth) {
-                Depth ext = lmrFullSearchExtension(newDepth, d, value, alpha, bestValue);
-                if (ss->doubleExtensionCount > searchData->rootDepth / 4)
+                Depth ext = lmrExtension<Rule>(newDepth, d, value, alpha, bestValue);
+                // Do not allow more extension if extra extension is already high
+                if (ss->extraExtension >= LMR_EXTRA_MAX_DEPTH)
                     ext = std::min(ext, 1.0f);
                 else
-                    ss->doubleExtensionCount += static_cast<int>(ext > 1.0f);
+                    ss->extraExtension += std::max(ext - 1.0f, 0.0f);
                 newDepth += ext;
             }
 

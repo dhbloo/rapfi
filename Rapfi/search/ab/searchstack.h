@@ -21,8 +21,8 @@
 #include "../../core/pos.h"
 #include "../../core/types.h"
 
-#include <vector>
 #include <cassert>
+#include <vector>
 
 namespace Search::AB {
 
@@ -34,7 +34,7 @@ struct SearchStack
     Pos *const pv;
     const int  ply;
     int        moveCount;
-    int        doubleExtensionCount;
+    Depth      extraExtension;  /// cumulative extension depth that larger than one ply
     int        dbValueDepth;
     int        statScore;
     Value      staticEval;

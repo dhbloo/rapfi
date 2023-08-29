@@ -60,7 +60,7 @@ public:
     Value previousBestValue;      // (keep for one game)
 
     /// Lookup tables used for reduction/purning, where index is depth or moveCount.
-    std::array<Depth, MAX_MOVES + 1> reductions;
+    std::array<Depth, MAX_MOVES + 1> reductions[RULE_NB];
 
     ~ABSearcher() = default;
     std::unique_ptr<SearchData> makeSearchData(SearchThread &th) override
