@@ -36,6 +36,7 @@ struct ABSearchData : SearchData
     uint32_t         pvIdx;            /// Current searched pv index
     int              rootDepth;        /// Current searched depth
     Value            rootDelta;        /// Current window size of the root node
+    Value            rootAlpha;        /// Current alpha value of the root node
     bool             singularRoot;     /// Is there only a single response at root?
     std::atomic<int> completedDepth;   /// Previously completed depth
     std::atomic<int> bestMoveChanges;  /// How many time best move has changed in this search
