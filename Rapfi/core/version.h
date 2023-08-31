@@ -19,7 +19,7 @@
 #pragma once
 
 #define RAPFI_MAJOR_VER    0
-#define RAPFI_MINOR_VER    39
+#define RAPFI_MINOR_VER    40
 #define RAPFI_REVISION_VER 01
 
 #define MACRO_STR(s)         #s
