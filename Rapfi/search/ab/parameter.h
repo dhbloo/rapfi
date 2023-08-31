@@ -34,16 +34,18 @@ constexpr int MAX_PLY   = 256;
 // -------------------------------------------------
 // Depth & Value Constants
 
-constexpr Value MARGIN_INFINITE     = Value(INT16_MAX);
-constexpr Depth ASPIRATION_DEPTH    = 5.0f;
-constexpr Depth IID_DEPTH           = 14.8f;
-constexpr Depth IIR_REDUCTION       = 0.9f;
-constexpr Depth IIR_REDUCTION_PV    = 0.35f;
-constexpr Depth SE_DEPTH            = 7.8f;
-constexpr Depth SE_TTE_DEPTH        = 1.9f;
-constexpr Depth TRIVIAL_PRUN_DEPTH  = 3.9f;
-constexpr Depth SE_EXTRA_MAX_DEPTH  = 12.0f;
-constexpr Depth LMR_EXTRA_MAX_DEPTH = 5.0f;
+constexpr Value MARGIN_INFINITE      = Value(INT16_MAX);
+constexpr Depth ASPIRATION_DEPTH     = 5.0f;
+constexpr Depth IID_DEPTH            = 15.3f;
+constexpr Depth IIR_REDUCTION        = 0.7f;
+constexpr Depth IIR_REDUCTION_PV     = 0.32f;
+constexpr Depth IIR_REDUCTION_TT     = 0.337f;
+constexpr Depth IIR_REDUCTION_TT_MAX = 3.6f;
+constexpr Depth SE_DEPTH             = 7.2f;
+constexpr Depth SE_TTE_DEPTH         = 1.95f;
+constexpr Depth TRIVIAL_PRUN_DEPTH   = 4.7f;
+constexpr Depth SE_EXTRA_MAX_DEPTH   = 12.0f;
+constexpr Depth LMR_EXTRA_MAX_DEPTH  = 5.0f;
 
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
@@ -121,7 +123,7 @@ constexpr Value failLowMargin(Depth d)
 inline const auto FutilityMC = []() {
     std::array<int, MAX_MOVES + 1> MC {0};  // [depth]
     for (size_t i = 1; i < MC.size(); i++)
-        MC[i] = 3 + int(std::pow(i, 1.39));
+        MC[i] = 3 + int(std::pow(i, 1.33));
     return MC;
 }();
 
@@ -136,25 +138,25 @@ constexpr int futilityMoveCount(Depth d, bool improving)
 /// Singular extension margin
 constexpr Value singularMargin(Depth d, bool formerPv)
 {
-    return Value((0.95f + formerPv) * d);
+    return Value((0.91f + formerPv) * d);
 }
 
 /// Depth reduction for singular move test search
 constexpr Depth singularReduction(Depth d, bool formerPv)
 {
-    return d * 0.53f - formerPv;
+    return d * 0.515f - formerPv;
 }
 
 /// Margin for double singular extension
 constexpr Value doubleSEMargin(Depth d)
 {
-    return Value(33 - std::min(int(d * 0.7f), 8));
+    return Value(29 - std::min(int(d * 0.56f), 9));
 }
 
 /// Delta pruning margin for QVCF search
 constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
 {
-    return Value(std::max(2526 + 61 * int(d), 700));
+    return Value(std::max(2086 + 60 * int(d), 768));
 }
 
 /// LMR move count. For non-PV all node, moves that exceeds late move count

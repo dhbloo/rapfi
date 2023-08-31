@@ -887,7 +887,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Reduce for pv ttMove that has not been chosen for a few iterations
     if (PvNode && depth > 1 && ttMove)
-        depth -= std::clamp((depth - ttDepth) * 0.425f, 0.0f, 3.4f);
+        depth -= std::clamp((depth - ttDepth) * IIR_REDUCTION_TT, 0.0f, IIR_REDUCTION_TT_MAX);
 
     // Drop to vcfsearch if depth is below zero
     if (depth <= 0)
@@ -1156,11 +1156,11 @@ moves_loop:
 
             // Update statScore of this node
             ss->statScore = searchData->mainHistory[self][move][HIST_ATTACK]
-                            + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 - 3200;
+                            + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 - 3391;
 
             // Decrease/increase reduction for moves with a good/bad history
             // Use less stat score at higher depths
-            r -= ss->statScore * (1.0f / (12700 + 4000 * (depth > 6)));
+            r -= ss->statScore * (1.0f / (12633 + 4055 * (depth > 7)));
 
             // Allow LMR to do deeper search in some circumstances
             int deeper = r < -1 && moveCount <= 4 ? 1 : 0;
