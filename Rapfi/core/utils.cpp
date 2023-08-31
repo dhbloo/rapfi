@@ -128,14 +128,17 @@ std::string ACPToUTF8(std::string str)
 
     int nCodePage = GetACP();
     int wideSize  = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
+    if (!wideSize)
+        return {};  // error
 
     std::wstring wstr(wideSize + 1, '\0');
-    MultiByteToWideChar(nCodePage,
-                        0,
-                        str.c_str(),
-                        (int)str.length(),
-                        wstr.data(),
-                        (int)wstr.size());
+    if (!MultiByteToWideChar(nCodePage,
+                             0,
+                             str.c_str(),
+                             (int)str.length(),
+                             wstr.data(),
+                             (int)wstr.size()))
+        return {};  // error
 
     int utf8Size = WideCharToMultiByte(CP_UTF8,
                                        0,
@@ -145,16 +148,19 @@ std::string ACPToUTF8(std::string str)
                                        0,
                                        nullptr,
                                        nullptr);
+    if (!utf8Size)
+        return {};  // error
 
     std::string utf8str(utf8Size, '\0');
-    WideCharToMultiByte(CP_UTF8,
-                        0,
-                        wstr.c_str(),
-                        (int)wstr.length(),
-                        utf8str.data(),
-                        (int)utf8str.size(),
-                        nullptr,
-                        nullptr);
+    if (!WideCharToMultiByte(CP_UTF8,
+                             0,
+                             wstr.c_str(),
+                             (int)wstr.length(),
+                             utf8str.data(),
+                             (int)utf8str.size(),
+                             nullptr,
+                             nullptr))
+        return {};  // error
 
     return utf8str;
 #else
@@ -171,14 +177,17 @@ std::string UTF8ToACP(std::string utf8str)
     int nCodePage = GetACP();
     int wideSize =
         MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), (int)utf8str.length(), nullptr, 0);
+    if (!wideSize)
+        return {};  // error
 
     std::wstring wstr(wideSize + 1, '\0');
-    MultiByteToWideChar(CP_UTF8,
-                        0,
-                        utf8str.c_str(),
-                        (int)utf8str.length(),
-                        wstr.data(),
-                        (int)wstr.size());
+    if (!MultiByteToWideChar(CP_UTF8,
+                             0,
+                             utf8str.c_str(),
+                             (int)utf8str.length(),
+                             wstr.data(),
+                             (int)wstr.size()))
+        return {};  // error
 
     int utf8Size = WideCharToMultiByte(nCodePage,
                                        0,
@@ -188,16 +197,19 @@ std::string UTF8ToACP(std::string utf8str)
                                        0,
                                        nullptr,
                                        nullptr);
+    if (!utf8Size)
+        return {};  // error
 
     std::string str(utf8Size, '\0');
-    WideCharToMultiByte(nCodePage,
-                        0,
-                        wstr.c_str(),
-                        (int)wstr.length(),
-                        str.data(),
-                        (int)str.size(),
-                        nullptr,
-                        nullptr);
+    if (!WideCharToMultiByte(nCodePage,
+                             0,
+                             wstr.c_str(),
+                             (int)wstr.length(),
+                             str.data(),
+                             (int)str.size(),
+                             nullptr,
+                             nullptr))
+        return {};  // error
 
     return str;
 #else

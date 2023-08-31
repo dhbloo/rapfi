@@ -222,8 +222,10 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
     std::vector<int8_t> byteBuffer;
     byteBuffer.resize(1024);  // reserve initial space
 
-    bool isUTF8 = false;  // Is this database UTF-8 encoded?
-    auto hint   = recordsMap.begin();
+    bool              isUTF8       = false;  // Is this database UTF-8 encoded?
+    const std::string utf8Metadata = "charset=\"UTF-8\"";
+
+    auto hint = recordsMap.begin();
     for (uint32_t recordIdx = 0; recordIdx < numRecords; recordIdx++) {
         // Read record key
         uint16_t numKeyBytes;
@@ -305,10 +307,10 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
         is.read(reinterpret_cast<char *>(byteBuffer.data()), numRecordBytes);
 
         // Parse metadata record
-        if (boardXLen == 0 && boardYLen == 0) {
+        if (boardXLen == 0 && boardYLen == 0 && numRecordBytes >= 5 + utf8Metadata.length()) {
             std::string metadata {reinterpret_cast<char *>(&byteBuffer[5]),
                                   static_cast<size_t>(numRecordBytes - 5)};
-            if (metadata.rfind("charset=\"UTF-8\"", 0) == 0)
+            if (metadata.rfind(utf8Metadata, 0) == 0)
                 isUTF8 = true;
             continue;
         }
