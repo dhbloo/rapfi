@@ -100,7 +100,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
         endMove = generate<WINNING>(board, curMove);
     else if (board.p4Count(oppo, B_FLEX4)) {
         endMove = generate<DEFEND_FOUR | ALL>(board, curMove);
-        endMove = generate<VCF>(board, endMove);
+        endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -113,7 +113,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
         if (endMove == curMove)
             endMove = generate<ALL>(board, curMove);
         else
-            endMove = generate<VCF>(board, endMove);
+            endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
     }
     else
         endMove = generate<ALL>(board, curMove);
@@ -203,7 +203,7 @@ Pos MovePicker::pickNextMove(Pred filter)
         if constexpr (T == Best)
             std::swap(*curMove, *std::max_element(curMove, endMove));
 
-        if (curMove->pos != ttMove && (!forbidden || !board.checkForbiddenPoint(*curMove))
+        if (curMove->pos != ttMove && (!forbidden || !board.checkForbiddenPoint(curMove->pos))
             && filter()) {
             curScore       = curMove->score;
             curPolicyScore = curMove->rawScore;
@@ -318,7 +318,7 @@ top:
 
         curMove = moves;
         endMove = generate<DEFEND_FOUR>(board, curMove);
-        endMove = generate<VCF>(board, endMove);
+        endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
         scoreMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
         fastPartialSort(curMove, endMove, 0);
@@ -342,7 +342,7 @@ top:
             goto top;
         }
 
-        endMove = generate<VCF>(board, endMove);
+        endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
         scoreMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
         fastPartialSort(curMove, endMove, 0);

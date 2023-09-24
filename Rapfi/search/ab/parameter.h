@@ -209,7 +209,7 @@ constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB]
                           Value rootDelta)
 {
     assert(d > 0.0f);
-    assert(moveCount > 0 && moveCount < lut.size());
+    assert(moveCount > 0 && moveCount < lut[R].size());
     Depth r = lut[R][(int)d] * lut[R][moveCount];
     if constexpr (PvNode)
         return std::max(r - Depth(delta) / Depth(rootDelta), 0.0f);

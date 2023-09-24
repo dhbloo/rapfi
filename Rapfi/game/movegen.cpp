@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "movegen.h"
 
@@ -30,9 +30,10 @@ constexpr int MaxFindDist = 4;
 
 /// Filter move by Pattern4 according to GenType.
 template <GenType Type>
-constexpr bool basicPatternFilter(const Board &board, Pos pos, Color side)
+inline bool basicPatternFilter(const Board &board, Pos pos, Color side)
 {
-    Pattern4 p4 = board.cell(pos).pattern4[side];
+    const Cell &c  = board.cell(pos);
+    Pattern4    p4 = c.pattern4[side];
 
     if (bool(Type & WINNING)) {
         if (p4 >= B_FLEX4)
@@ -42,6 +43,13 @@ constexpr bool basicPatternFilter(const Board &board, Pos pos, Color side)
     if (bool(Type & VCF)) {
         if constexpr (bool(Type & COMB)) {
             if (p4 >= D_BLOCK4_PLUS)
+                return true;
+        }
+        else if constexpr (bool(Type & RULE_RENJU)) {
+            if (p4 >= E_BLOCK4
+                || p4 == FORBID
+                       && (c.pattern(side, 0) >= B4 || c.pattern(side, 1) >= B4
+                           || c.pattern(side, 2) >= B4 || c.pattern(side, 3) >= B4))
                 return true;
         }
         else {
@@ -617,6 +625,7 @@ Move *generate(const Board &board, Move *moveList)
 }
 
 template Move *generate<VCF>(const Board &, Move *);
+template Move *generate<VCF | RULE_RENJU>(const Board &, Move *);
 template Move *generate<ALL>(const Board &, Move *);
 
 template <GenType Type>
