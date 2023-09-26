@@ -456,7 +456,8 @@ bool Board::checkForbiddenPoint(Pos pos) const
 
             if (const Cell &c = cell(posi); c.piece == EMPTY) {
                 if (c.pattern4[BLACK] == B_FLEX4 || c.pattern(BLACK, dir) == F5
-                    || c.pattern4[BLACK] == FORBID && !checkForbiddenPoint(posi)) {
+                    || c.pattern4[BLACK] == FORBID && c.pattern(BLACK, dir) == F4
+                           && !checkForbiddenPoint(posi)) {
                     winByThree++;
                     goto next_direction;
                 }
@@ -471,7 +472,8 @@ bool Board::checkForbiddenPoint(Pos pos) const
 
             if (const Cell &c = cell(posi); c.piece == EMPTY) {
                 if (c.pattern4[BLACK] == B_FLEX4 || c.pattern(BLACK, dir) == F5
-                    || c.pattern4[BLACK] == FORBID && !checkForbiddenPoint(posi)) {
+                    || c.pattern4[BLACK] == FORBID && c.pattern(BLACK, dir) == F4
+                           && !checkForbiddenPoint(posi)) {
                     winByThree++;
                     goto next_direction;
                 }
