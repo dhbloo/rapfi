@@ -24,8 +24,10 @@
 
 #include <iomanip>
 #include <sstream>
-#include <thread>
 #include <vector>
+#ifdef MULTI_THREADING
+    #include <thread>
+#endif
 
 namespace {
 
@@ -277,11 +279,12 @@ size_t mergeDatabase(DBStorage &dbDst, DBStorage &dbSrc, OverwriteRule owRule)
 
 size_t splitDatabase(DBStorage &dbSrc, DBStorage &dbDst, const Board &board, Rule rule)
 {
+    size_t sizeBeforeSplit = dbDst.size();
+
+#if defined(MULTI_THREADING)
     const size_t             numDeleteThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
     threads.reserve(numDeleteThreads);
-
-    size_t sizeBeforeSplit = dbDst.size();
 
     for (int i = 0; i < numDeleteThreads; i++) {
         threads.emplace_back(
@@ -291,10 +294,12 @@ size_t splitDatabase(DBStorage &dbSrc, DBStorage &dbDst, const Board &board, Rul
             std::make_unique<Board>(board, nullptr));
     }
 
-    copyDatabasePathToRoot(dbSrc, dbDst, const_cast<Board &>(board), rule);
-
     for (auto &th : threads)
         th.join();
+#else
+    copyDatabaseBranch(dbSrc, dbDst, const_cast<Board &>(board), rule, 0, 0);
+#endif
+    copyDatabasePathToRoot(dbSrc, dbDst, const_cast<Board &>(board), rule);
 
     size_t sizeAfterSplit = dbDst.size();
     return sizeAfterSplit - sizeBeforeSplit;

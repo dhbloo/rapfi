@@ -25,7 +25,9 @@
 #include <map>
 #include <mutex>
 #include <set>
-#include <thread>
+#ifdef MULTI_THREADING
+    #include <thread>
+#endif
 
 namespace {
 
@@ -191,7 +193,10 @@ void recursiveDeleteChildren(DBStorage                                          
     // Find all potential children of this board position
     std::vector<Pos> toDeletePos;
     toDeletePos.reserve(board.movesLeft());
-    FOR_EVERY_EMPTY_POS(&board, pos) { toDeletePos.push_back(pos); }
+    FOR_EVERY_EMPTY_POS(&board, pos)
+    {
+        toDeletePos.push_back(pos);
+    }
 
     // Do permutation based on thread id
     if (threadId > 0) {
@@ -710,6 +715,7 @@ void DBClient::delChildren(const Board                       &board,
 {
     sync();  // clear all cached records first
 
+#if defined(MULTI_THREADING)
     const size_t             numDeleteThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
     threads.reserve(numDeleteThreads);
@@ -724,6 +730,10 @@ void DBClient::delChildren(const Board                       &board,
 
     for (auto &th : threads)
         th.join();
+#else
+    auto boardClone = std::make_unique<Board>(board, nullptr);
+    recursiveDeleteChildren<true>(storage, *boardClone, rule, deleteFilter, 0, 0);
+#endif
 
     DBRecord parentRecord;
     if (query(board, rule, parentRecord)) {
