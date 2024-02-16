@@ -31,6 +31,22 @@ namespace Command {
 /// Throws std::invalid_argument if ruleStr is not valid.
 Rule parseRule(std::string_view ruleStr);
 
+/// Dataset type
+enum class DatasetType { SimpleBinary, PackedBinary, KatagoNumpy };
+enum class DataWriterType {
+    PlainText,
+    SimpleBinary,
+    SimpleBinaryLZ4,
+    PackedBinary,
+    PackedBinaryLZ4,
+    Numpy
+};
+
+/// Parse dataset type from string. Throws std::invalid_argument if not matched.
+DatasetType parseDatasetType(std::string dsType);
+/// Parse data writer type from string. Throws std::invalid_argument if not matched.
+DataWriterType parseDataWriterType(std::string dwType);
+
 /// Parse a position from the position string, eg 'h8h7j6'
 /// Throws std::invalid_argument if posStr is not correct.
 /// @return The parsed pos sequence.

@@ -1174,15 +1174,15 @@ void traceSearch()
     std::vector<Pos>   moveList;
     while (Pos move = movePicker())
         moveList.push_back(move);
-    MESSAGEL("Legal Moves[" << moveList.size() << "]: " << moveList);
+    MESSAGEL("Legal Moves[" << moveList.size() << "]: " << PVText {moveList});
 
     Opening::filterSymmetryMoves(board, moveList);
-    MESSAGEL("Root Moves(exclude symmetry)[" << moveList.size() << "]: " << moveList);
+    MESSAGEL("Root Moves(exclude symmetry)[" << moveList.size() << "]: " << PVText {moveList});
 
     // Static evaluation (black point of view)
     Value eval    = Evaluation::evaluate(board, options.rule);
     Value evalPOB = board.sideToMove() == BLACK ? eval : -eval;
-    MESSAGEL("Static Eval[Black]: " << evalPOB << " (WDL " << std::fixed << std::setprecision(1)
+    MESSAGEL("Static Eval[Black]: " << evalPOB << " (WDL " << std::fixed << std::setprecision(2)
                                     << (Config::valueToWinRate(evalPOB) * 100.0) << ", SF "
                                     << std::setprecision(2) << Config::ScalingFactor << ")");
 

@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "../core/iohelper.h"
 #include "../core/utils.h"
@@ -31,21 +31,6 @@
 #include <memory>
 #include <stdexcept>
 
-namespace {
-
-enum class DatasetType { PackedBinary, KatagoNumpy };
-DatasetType parseDatasetType(std::string dsType)
-{
-    if (dsType == "binary")
-        return DatasetType::PackedBinary;
-    else if (dsType == "katago")
-        return DatasetType::KatagoNumpy;
-    else
-        throw std::invalid_argument("unknown dataset type " + dsType);
-}
-
-}  // namespace
-
 using namespace Tuning;
 
 void Command::dataprep(int argc, char *argv[])
@@ -53,31 +38,35 @@ void Command::dataprep(int argc, char *argv[])
     std::unique_ptr<Dataset>    inputDataset;
     std::unique_ptr<DataWriter> dataWriter;
     DatasetType                 datasetType;
+    DataWriterType              dataWriterType;
     Rule                        defaultRule;
     std::vector<std::string>    pathList;
     std::vector<std::string>    extensions;
-    std::string                 outdir;
+    std::string                 outputPath;
     size_t                      maxNumEntriesPerFile;
     Time                        reportInterval;
 
     cxxopts::Options options("rapfi data preparation utility"
-                             "\nConverting input dataset to numpy dataset for external trainer.");
-    options.add_options()                                                //
-        ("o,output", "Output directory", cxxopts::value<std::string>())  //
-        ("d,dataset",
+                             "\nConverting the input dataset to the target dataset.");
+    options.add_options()                                                         //
+        ("o,output", "Output filename/directory", cxxopts::value<std::string>())  //
+        ("i,input",
          "Input dataset filename/directory(s)",
          cxxopts::value<std::vector<std::string>>())  //
-        ("t,dataset-type",
-         "Input dataset type, one of [binary, katago]",
+        ("input-type",
+         "Input dataset type, one of [bin, binpack, katago]",
          cxxopts::value<std::string>())  //
-        ("r,default-rule",
+        ("output-type",
+         "Output dataset type, one of [txt, bin, bin_lz4, binpack, binpack_lz4, numpy]",
+         cxxopts::value<std::string>()->default_value("numpy"))  //
+        ("default-rule",
          "Default rule for dataset type that does not contain rule infomation",
          cxxopts::value<std::string>()->default_value("freestyle"))  //
         ("dataset-file-extensions",
          "Extensions to filter dataset file in a directory",
-         cxxopts::value<std::vector<std::string>>()->default_value(".bin,.lz4,.npz"))  //
+         cxxopts::value<std::vector<std::string>>()->default_value(".bin,.binpack,.lz4,.npz"))  //
         ("max-entries-per-file",
-         "Max number of entries per npz file",
+         "Max number of entries per NPZ file",
          cxxopts::value<size_t>()->default_value("25000"))  //
         ("report-interval",
          "Time (ms) between two progress report message",
@@ -92,16 +81,15 @@ void Command::dataprep(int argc, char *argv[])
             std::exit(EXIT_SUCCESS);
         }
 
-        if (!args.count("dataset"))
+        if (!args.count("input"))
             throw std::invalid_argument("there must be at least one input dataset");
-        if (!args.count("dataset-type"))
-            throw std::invalid_argument("must specify the dataset type");
 
-        datasetType          = parseDatasetType(args["dataset-type"].as<std::string>());
+        datasetType          = parseDatasetType(args["input-type"].as<std::string>());
+        dataWriterType       = parseDataWriterType(args["output-type"].as<std::string>());
         defaultRule          = parseRule(args["default-rule"].as<std::string>());
-        pathList             = args["dataset"].as<std::vector<std::string>>();
+        pathList             = args["input"].as<std::vector<std::string>>();
         extensions           = args["dataset-file-extensions"].as<std::vector<std::string>>();
-        outdir               = args["output"].as<std::string>();
+        outputPath           = args["output"].as<std::string>();
         maxNumEntriesPerFile = args["max-entries-per-file"].as<size_t>();
         reportInterval       = args["report-interval"].as<Time>();
     }
@@ -111,34 +99,61 @@ void Command::dataprep(int argc, char *argv[])
     }
 
     try {
-        // Create output directory
-        ensureDir(outdir);
-
         // Make path list
         pathList = makeFileListFromPathList(pathList, extensions);
 
         // Create input dataset
         switch (datasetType) {
+        case DatasetType::SimpleBinary:
+            inputDataset = std::make_unique<SimpleBinaryDataset>(pathList);
+            break;
+
         case DatasetType::PackedBinary:
             inputDataset = std::make_unique<PackedBinaryDataset>(pathList);
             break;
+
         case DatasetType::KatagoNumpy:
             inputDataset = std::make_unique<KatagoNumpyDataset>(pathList, defaultRule);
             break;
         }
 
-        size_t numEntriesProcessed = 0;
-        size_t numFilesWrote       = 0;
+        // Create data writer
+        switch (dataWriterType) {
+        case DataWriterType::PlainText:
+            dataWriter = std::make_unique<PlainTextDataWriter>(outputPath);
+            break;
 
-        // Create numpy data writer
-        dataWriter = std::make_unique<NumpyDataWriter>(outdir,
-                                                       maxNumEntriesPerFile,
-                                                       [&](std::string filename) {
-                                                           MESSAGEL("Wrote to " << filename);
-                                                           numFilesWrote++;
-                                                       });
+        case DataWriterType::SimpleBinary:
+            dataWriter = std::make_unique<SimpleBinaryDataWriter>(outputPath, false);
+            break;
+
+        case DataWriterType::SimpleBinaryLZ4:
+            dataWriter = std::make_unique<SimpleBinaryDataWriter>(outputPath, true);
+            break;
+
+        case DataWriterType::PackedBinary:
+            dataWriter = std::make_unique<PackedBinaryDataWriter>(outputPath, false);
+            break;
+
+        case DataWriterType::PackedBinaryLZ4:
+            dataWriter = std::make_unique<PackedBinaryDataWriter>(outputPath, true);
+            break;
+
+        case DataWriterType::Numpy:
+            // Create output directory
+            ensureDir(outputPath);
+            dataWriter = std::make_unique<NumpyDataWriter>(
+                outputPath,
+                maxNumEntriesPerFile,
+                [&, numFilesWrote = 0](std::string filename) mutable {
+                    MESSAGEL("Wrote npz to " << filename << ", saved " << ++numFilesWrote
+                                             << " npz in total.");
+                });
+            break;
+        }
 
         // Start processing loop
+        size_t    numEntriesProcessed = 0;
         Time      startTime = now(), lastTime = startTime;
         DataEntry entry;
         while (inputDataset->next(&entry)) {
@@ -147,8 +162,7 @@ void Command::dataprep(int argc, char *argv[])
 
             // Print out processing progress over time
             if (now() - lastTime >= reportInterval) {
-                MESSAGEL("Processed " << numEntriesProcessed << " entries, wrote " << numFilesWrote
-                                      << " files, entry/s = "
+                MESSAGEL("Processed " << numEntriesProcessed << " entries, entry/s = "
                                       << numEntriesProcessed / ((now() - startTime) / 1000.0));
                 lastTime = now();
             }

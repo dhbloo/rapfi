@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "datawriter.h"
 
@@ -73,9 +73,14 @@ uint64_t entryHash(const Tuning::DataEntry &entry)
     hasher << entry.rule;
     hasher << entry.result;
     hasher << entry.move;
-    if (entry.policy) {
-        int numCells = (int)entry.boardsize * (int)entry.boardsize;
-        hasher(entry.policy.get(), numCells);
+    hasher << entry.eval;
+    if (entry.moveData) {
+        int numCells = (int)entry.boardsize * (int)entry.boardsize + 1;
+        switch (entry.moveDataTag) {
+        case Tuning::DataEntry::POLICY_ARRAY_FLOAT: hasher(entry.policyF32, numCells); break;
+        case Tuning::DataEntry::POLICY_ARRAY_INT16: hasher(entry.policyI16, numCells); break;
+        default: hasher(entry.multiPvMoves, entry.numMultiPv()); break;
+        }
     }
 
     return hasher;
@@ -93,29 +98,81 @@ void DataWriter::writeGame(const GameEntry &gameEntry)
 void DataWriter::writeEntriesInGame(const GameEntry                       &gameEntry,
                                     std::function<bool(const DataEntry &)> filter)
 {
-    size_t startPly = std::max(gameEntry.numOpeningMoves, 0);
-    assert(startPly < gameEntry.moves.size());
+    assert(gameEntry.initPly < gameEntry.moves.size());
 
-    Color     startSide = startPly % 2 == 0 ? BLACK : WHITE;
-    DataEntry dataEntry {
-        {gameEntry.moves.begin(), gameEntry.moves.begin() + startPly},
-        gameEntry.boardsize,
-        gameEntry.rule,
-        startSide == WHITE ? gameEntry.result : Result(RESULT_WIN - gameEntry.result),
-    };
+    Color     startSide = gameEntry.initPly % 2 == 0 ? BLACK : WHITE;
+    DataEntry dataEntry {{gameEntry.moves.begin(), gameEntry.moves.begin() + gameEntry.initPly},
+                         gameEntry.boardsize,
+                         gameEntry.rule,
+                         startSide == WHITE ? gameEntry.result
+                                            : Result(RESULT_WIN - gameEntry.result)};
 
-    for (size_t i = startPly; i < gameEntry.moves.size(); i++) {
+    for (size_t i = gameEntry.initPly; i < gameEntry.moves.size(); i++) {
         dataEntry.move   = gameEntry.moves[i];
+        dataEntry.eval   = i < gameEntry.evals.size() ? gameEntry.evals[i] : VALUE_NONE;
         dataEntry.result = Result(RESULT_WIN - dataEntry.result);
+        if (i < gameEntry.moveDatas.size()) {
+            dataEntry.moveDataTag = gameEntry.moveDatas[i].tag;
+            dataEntry.moveData    = gameEntry.moveDatas[i].moveData;
+        }
+        else
+            dataEntry.moveData = nullptr;
 
         if (!filter || filter(dataEntry))
             writeEntry(dataEntry);
 
         dataEntry.position.push_back(gameEntry.moves[i]);
     }
+
+    // Remember to reset the move data pointer, as we do not own it
+    dataEntry.moveData = nullptr;
 }
 
-class PackedBinaryDataWriter::DataStream
+// ==============================================
+
+class PlainTextDataWriter::DataStream
+{
+public:
+    DataStream(std::ofstream ofs) : file(std::move(ofs)) {}
+    std::ostream &getStream() { return file; }
+
+private:
+    std::ofstream file;
+};
+
+PlainTextDataWriter::PlainTextDataWriter(std::string filename)
+{
+    std::ofstream file(filename);
+    if (!file.is_open())
+        throw std::runtime_error("can not open output file: " + filename);
+
+    dataStream = std::make_unique<DataStream>(std::move(file));
+}
+
+PlainTextDataWriter::~PlainTextDataWriter() {}
+
+void PlainTextDataWriter::writeEntry(const DataEntry &entry)
+{
+    std::ostream &dst = dataStream->getStream();
+    dst << int(entry.boardsize) << ',' << entry.rule << ',' << MoveSeqText {entry.position} << ','
+        << int(entry.result) << ',' << entry.move << ',' << entry.eval;
+
+    if (entry.numMultiPv() > 0) {
+        dst << ',';
+        for (int i = 0; i < entry.numMultiPv(); i++) {
+            if (i)
+                dst << '|';
+            auto multiPvMove = entry.multiPvMoves[i];
+            dst << multiPvMove.move << '(' << multiPvMove.eval << ')';
+        }
+    }
+
+    dst << '\n';
+}
+
+// ==============================================
+
+class SimpleBinaryDataWriter::DataStream
 {
 public:
     DataStream(std::ofstream ofs, bool compress)
@@ -134,7 +191,7 @@ private:
     std::ostream *ostream;
 };
 
-PackedBinaryDataWriter::PackedBinaryDataWriter(std::string filename, bool compress)
+SimpleBinaryDataWriter::SimpleBinaryDataWriter(std::string filename, bool compress)
 {
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open())
@@ -143,9 +200,9 @@ PackedBinaryDataWriter::PackedBinaryDataWriter(std::string filename, bool compre
     dataStream = std::make_unique<DataStream>(std::move(file), compress);
 }
 
-PackedBinaryDataWriter::~PackedBinaryDataWriter() {}
+SimpleBinaryDataWriter::~SimpleBinaryDataWriter() {}
 
-void PackedBinaryDataWriter::writeEntry(const DataEntry &entry)
+void SimpleBinaryDataWriter::writeEntry(const DataEntry &entry)
 {
     struct EntryHead
     {
@@ -177,6 +234,232 @@ void PackedBinaryDataWriter::writeEntry(const DataEntry &entry)
 
 // ==============================================
 
+class PackedBinaryDataWriter::DataStream
+{
+public:
+    DataStream(std::ofstream ofs, bool compress)
+        : file(std::move(ofs))
+        , compressor(file, compress ? Compressor::Type::LZ4_DEFAULT : Compressor::Type::NO_COMPRESS)
+        , ostream(compressor.openOutputStream())
+    {
+        if (!ostream)
+            throw std::runtime_error("failed to open output stream");
+    }
+
+    ~DataStream()
+    {
+        // Flush previous game entry if any
+        flushGameEntry(getStream());
+    }
+
+    std::ostream &getStream() { return *ostream; }
+
+    void addDataEntry(const DataEntry &dataEntry)
+    {
+        // Setup game entry for the first data entry
+        if (moveSequence.empty() || !checkDataEntryMatched(dataEntry)) {
+            // Flush previous game entry if any
+            flushGameEntry(getStream());
+
+            // Setup new game entry
+            boardSize     = dataEntry.boardsize;
+            rule          = dataEntry.rule;
+            result        = dataEntry.result;
+            curResult     = dataEntry.result;
+            curSideToMove = dataEntry.sideToMove();
+            totalPly      = (uint32_t)dataEntry.position.size();
+            initPosition  = {dataEntry.position.begin(), dataEntry.position.end()};
+        }
+
+        PVList pvList;
+        // Add main pv move and eval
+        pvList.push_back({dataEntry.move, dataEntry.eval});
+        // Add extra multi-pv moves and evals
+        if (dataEntry.moveData && dataEntry.moveDataTag > DataEntry::MULTIPV_BEGIN) {
+            uint32_t numMultiPv = dataEntry.moveDataTag - DataEntry::MULTIPV_BEGIN + 1;
+            for (uint32_t i = 1; i < numMultiPv; i++)
+                pvList.push_back(dataEntry.multiPvMoves[i]);
+        }
+        moveSequence.push_back(std::move(pvList));
+
+        if (dataEntry.move != Pos::PASS) {
+            curResult     = Result(RESULT_WIN - curResult);
+            curSideToMove = ~curSideToMove;
+            totalPly++;
+        }
+    }
+
+    void addGameEntry(const GameEntry &gameEntry)
+    {
+        // Flush previous game entry if any
+        flushGameEntry(getStream());
+
+        // Write game entry
+        boardSize    = gameEntry.boardsize;
+        rule         = gameEntry.rule;
+        result       = gameEntry.result;
+        totalPly     = (uint16_t)gameEntry.moves.size();
+        initPosition = {gameEntry.moves.begin(), gameEntry.moves.begin() + gameEntry.initPly};
+
+        for (size_t i = gameEntry.initPly; i < gameEntry.moves.size(); i++) {
+            PVList pvList;
+            // Add main pv move and eval
+            pvList.push_back({gameEntry.moves[i],
+                              i < gameEntry.evals.size() ? gameEntry.evals[i] : Eval(VALUE_NONE)});
+            // Add extra multi-pv moves and evals
+            if (i < gameEntry.moveDatas.size() && gameEntry.moveDatas[i].moveData
+                && gameEntry.moveDatas[i].tag >= DataEntry::MULTIPV_BEGIN) {
+                uint32_t numMultiPv = gameEntry.moveDatas[i].tag - DataEntry::MULTIPV_BEGIN + 1;
+                for (uint32_t j = 1; j < numMultiPv; j++)
+                    pvList.push_back(gameEntry.moveDatas[i].multiPvMoves[j]);
+            }
+            // Add pv list to move sequence
+            moveSequence.push_back(std::move(pvList));
+        }
+
+        // Flush current game entry as it is completed
+        flushGameEntry(getStream());
+    }
+
+private:
+    std::ofstream file;
+    Compressor    compressor;
+    std::ostream *ostream;
+
+    // PVList contains all PVs in a move.
+    using PVList = std::vector<MultiPvMove>;
+    // GameEntry represents a full game in the dataset.
+    uint8_t             boardSize;      // board size in [5-22]
+    Rule                rule;           // game rule: 0=freestyle, 1=standard, 4=renju
+    Result              result;         // first player pov
+    Result              curResult;      // current result of the game
+    Color               curSideToMove;  // current side to move
+    uint32_t            totalPly;       // total number of stones on board after game ended
+    std::vector<Pos>    initPosition;   // move sequence that representing an opening position
+    std::vector<PVList> moveSequence;   // move sequence that representing a game
+
+    bool checkDataEntryMatched(const DataEntry &dataEntry) const
+    {
+        if (boardSize != dataEntry.boardsize)
+            return false;
+        if (rule != dataEntry.rule)
+            return false;
+        if (curResult != dataEntry.result)
+            return false;
+        if (curSideToMove != dataEntry.sideToMove())
+            return false;
+        if (dataEntry.position.size() > totalPly)
+            return false;
+        if (initPosition.size() + moveSequence.size() < dataEntry.position.size())
+            return false;
+
+        size_t i = 0;
+        for (; i < initPosition.size(); i++) {
+            if (initPosition[i] != dataEntry.position[i])
+                return false;
+        }
+        for (const auto &pvList : moveSequence) {
+            if (pvList[0].move != dataEntry.position[i])
+                return false;
+            i++;
+        }
+
+        return true;
+    }
+
+    void flushGameEntry(std::ostream &os)
+    {
+        if (moveSequence.empty())
+            return;
+
+        struct EntryHead
+        {
+            uint32_t boardSize : 5;   // board size in [5-22]
+            uint32_t rule : 3;        // game rule: 0=freestyle, 1=standard, 4=renju
+            uint32_t result : 4;      // game outcome: 0=loss, 1=draw, 2=win (first player pov)
+            uint32_t totalPly : 10;   // total number of stones on board after game ended
+            uint32_t initPly : 10;    // initial number of stones on board when game started
+            uint32_t gameTag : 14;    // game tag of this game, reserved for future use
+            uint32_t moveCount : 18;  // the count of move sequence
+        } ehead;
+        uint16_t position[MAX_MOVES];  // move sequence that representing an opening position
+
+        ehead.boardSize = boardSize;
+        ehead.rule      = rule == RENJU ? 4 : (uint16_t)rule;
+        ehead.result    = result;
+        ehead.totalPly  = totalPly;
+        ehead.initPly   = (uint16_t)initPosition.size();
+        ehead.gameTag   = 0;
+        // Move count is summed for all pv lists
+        uint32_t moveCount = 0;
+        for (const auto &pvList : moveSequence)
+            moveCount += pvList.size();
+        ehead.moveCount = moveCount;
+
+        // Write entry header first
+        os.write(reinterpret_cast<char *>(&ehead), sizeof(EntryHead));
+
+        /// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
+        /// constructed with two index x and y using uint16_t move = (x << 5) | y.
+        const auto makeMove = [](Pos move) -> uint16_t { return (move.x() << 5) | move.y(); };
+
+        // Write initial position
+        for (size_t i = 0; i < ehead.initPly; i++)
+            position[i] = makeMove(initPosition[i]);
+        os.write(reinterpret_cast<char *>(position), sizeof(uint16_t) * ehead.initPly);
+
+        struct Move
+        {
+            uint16_t isFirst : 1;   // is this move the first in multipv?
+            uint16_t isLast : 1;    // is this move the last in multipv?
+            uint16_t isNoEval : 1;  // does this move contain no eval info?
+            uint16_t isPass : 1;    // is this move a pass move (side not changed after this move)?
+            uint16_t reserved : 2;  // reserved for future use
+            uint16_t move : 10;     // move output from engine
+            int16_t  eval;          // eval output from engine
+        } moveData;
+        moveData.reserved = 0;
+        for (const auto &pvList : moveSequence) {
+            for (size_t i = 0; i < pvList.size(); i++) {
+                moveData.isFirst  = i == 0;
+                moveData.isLast   = i == pvList.size() - 1;
+                moveData.isNoEval = pvList[i].eval == VALUE_NONE;
+                moveData.isPass   = pvList[i].move == Pos::PASS;
+                moveData.move     = makeMove(pvList[i].move);
+                moveData.eval     = moveData.isNoEval ? 0 : pvList[i].eval;
+                os.write(reinterpret_cast<char *>(&moveData), sizeof(Move));
+            }
+        }
+
+        // Mark as flushed, and reset the game entry
+        initPosition.clear();
+        moveSequence.clear();
+    }
+};
+
+PackedBinaryDataWriter::PackedBinaryDataWriter(std::string filename, bool compress)
+{
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open())
+        throw std::runtime_error("can not open output file: " + filename);
+
+    dataStream = std::make_unique<DataStream>(std::move(file), compress);
+}
+
+PackedBinaryDataWriter::~PackedBinaryDataWriter() {}
+
+void PackedBinaryDataWriter::writeEntry(const DataEntry &entry)
+{
+    dataStream->addDataEntry(entry);
+}
+
+void PackedBinaryDataWriter::writeGame(const GameEntry &gameEntry)
+{
+    dataStream->addGameEntry(gameEntry);
+}
+
+// ==============================================
+
 class NumpyDataWriter::DataBuffer
 {
 public:
@@ -184,20 +467,8 @@ public:
 
     void addEntry(const DataEntry &entry)
     {
-        // Copy policy array of the source entry if needed
-        std::unique_ptr<float[]> policy = nullptr;
-        if (entry.policy) {
-            int numCells = (int)entry.boardsize * (int)entry.boardsize;
-            policy       = std::make_unique<float[]>(numCells);
-            std::copy_n(entry.policy.get(), numCells, policy.get());
-        }
-
-        entryBuffer.push_back({entry.position,
-                               entry.boardsize,
-                               entry.rule,
-                               entry.result,
-                               entry.move,
-                               std::move(policy)});
+        // Copy entry to buffer
+        entryBuffer.push_back(entry);
 
         // Update entry hash
         hash ^= entryHash(entry);

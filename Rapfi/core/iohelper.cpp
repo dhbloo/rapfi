@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "iohelper.h"
 
@@ -162,22 +162,33 @@ std::ostream &operator<<(std::ostream &out, Value value)
         return out << int(value);
 }
 
-std::ostream &operator<<(std::ostream &out, const std::vector<Pos> &moves)
-{
-    for (size_t i = 0; i < moves.size(); i++) {
-        if (i)
-            out << ' ';
-        out << moves[i];
-    }
-    return out;
-}
-
 std::ostream &operator<<(std::ostream &out, Rule rule)
 {
     assert(rule >= FREESTYLE && rule < RULE_NB);
 
     const char *RuleName[] = {"Freestyle", "Standard", "Renju"};
     return out << RuleName[rule];
+}
+
+static void outputMoveSequence(std::ostream &out, const std::vector<Pos> &moves, bool withSpace)
+{
+    for (size_t i = 0; i < moves.size(); i++) {
+        if (withSpace && i)
+            out << ' ';
+        out << moves[i];
+    }
+}
+
+std::ostream &operator<<(std::ostream &out, MoveSeqText movesRef)
+{
+    outputMoveSequence(out, movesRef.moves, false);
+    return out;
+}
+
+std::ostream &operator<<(std::ostream &out, PVText movesRef)
+{
+    outputMoveSequence(out, movesRef.moves, true);
+    return out;
 }
 
 // -------------------------------------------------
@@ -193,7 +204,7 @@ class Compressor::CompressorData
         std::string                                    entryName;
         std::function<void(StreamType &, std::string)> finialize;
 
-        CStream(CStream &&) = default;
+        CStream(CStream &&)            = default;
         CStream &operator=(CStream &&) = default;
         ~CStream()
         {

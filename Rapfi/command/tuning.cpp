@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "../config.h"
 #include "../core/iohelper.h"
@@ -78,6 +78,16 @@ void validateConfig(size_t epochs, const TuningConfig &cfg)
     }
 }
 
+std::unique_ptr<Dataset> createDataset(Command::DatasetType            datasetType,
+                                       const std::vector<std::string> &pathList)
+{
+    switch (datasetType) {
+    case Command::DatasetType::SimpleBinary: return std::make_unique<SimpleBinaryDataset>(pathList);
+    case Command::DatasetType::PackedBinary: return std::make_unique<PackedBinaryDataset>(pathList);
+    default: throw std::invalid_argument("unsupported dataset type");
+    }
+}
+
 }  // namespace
 
 void Command::tuning(int argc, char *argv[])
@@ -87,6 +97,8 @@ void Command::tuning(int argc, char *argv[])
     size_t                   epochs;
     size_t                   modelExportInterval;
     TuningConfig             cfg = {};
+    DatasetType              trainDatasetType;
+    DatasetType              valDatasetType;
     std::vector<std::string> trainDatasetPathList;
     std::vector<std::string> valDatasetPathList;
     std::vector<std::string> extensions;
@@ -102,6 +114,12 @@ void Command::tuning(int argc, char *argv[])
         ("v,validation-dataset",
          "Validation dataset filename/directory(s), plain or compressed",
          cxxopts::value<std::vector<std::string>>())  //
+        ("training-dataset-type",
+         "Input dataset type, one of [bin, binpack]",
+         cxxopts::value<std::string>()->default_value("binpack"))  //
+        ("validation-dataset-type",
+         "Input dataset type, one of [bin, binpack]",
+         cxxopts::value<std::string>()->default_value("binpack"))  //
         ("e,epochs",
          "Number of epochs to train",
          cxxopts::value<size_t>())  //
@@ -187,9 +205,12 @@ void Command::tuning(int argc, char *argv[])
         }
 
         parseTuningRules(cfg, args["rules-to-tune"].as<std::vector<std::string>>());
+        trainDatasetType     = parseDatasetType(args["training-dataset-type"].as<std::string>());
         trainDatasetPathList = args["training-dataset"].as<std::vector<std::string>>();
-        if (args.count("validation-dataset"))
+        if (args.count("validation-dataset")) {
+            valDatasetType = parseDatasetType(args["validation-dataset-type"].as<std::string>());
             valDatasetPathList = args["validation-dataset"].as<std::vector<std::string>>();
+        }
         extensions             = args["dataset-file-extensions"].as<std::vector<std::string>>();
         outdir                 = args["output"].as<std::string>();
         trainName              = args["name"].as<std::string>();
@@ -234,10 +255,10 @@ void Command::tuning(int argc, char *argv[])
 
         // Make path list
         trainDatasetPathList = makeFileListFromPathList(trainDatasetPathList, extensions);
-        trainDataset         = std::make_unique<PackedBinaryDataset>(trainDatasetPathList);
+        trainDataset         = createDataset(trainDatasetType, trainDatasetPathList);
         if (!valDatasetPathList.empty()) {
             valDatasetPathList = makeFileListFromPathList(valDatasetPathList, extensions);
-            valDataset         = std::make_unique<PackedBinaryDataset>(valDatasetPathList);
+            valDataset         = createDataset(valDatasetType, valDatasetPathList);
         }
 
         // Create tuner with dataset and tunerConfig

@@ -46,7 +46,74 @@ public:
                             std::function<bool(const DataEntry &)> filter = nullptr);
 };
 
-/// PackedBinaryDataWriter implements DataWriter for binary format in c-gomoku-cli.
+class PlainTextDataWriter : public DataWriter
+{
+public:
+    PlainTextDataWriter(std::string filename);
+    ~PlainTextDataWriter();
+
+    void writeEntry(const DataEntry &entry);
+
+private:
+    class DataStream;
+    std::unique_ptr<DataStream> dataStream;
+};
+
+/// SimpleBinaryDataWriter implements DataWriter for binary format (.bin) in c-gomoku-cli.
+/// struct Entry {
+///     uint16_t result : 2;     // game outcome: 0=loss, 1=draw, 2=win (side to move pov)
+///     uint16_t ply : 9;        // current number of stones on board
+///     uint16_t boardsize : 5;  // board size in [5-22]
+///     uint16_t rule : 3;       // game rule: 0=freestyle, 1=standard, 4=renju
+///     uint16_t move : 13;      // move output by the engine
+///     uint16_t position[ply];  // move sequence that representing a position
+/// };
+class SimpleBinaryDataWriter : public DataWriter
+{
+public:
+    SimpleBinaryDataWriter(std::string filename, bool compress);
+    ~SimpleBinaryDataWriter();
+
+    void writeEntry(const DataEntry &entry);
+
+private:
+    class DataStream;
+    std::unique_ptr<DataStream> dataStream;
+};
+
+/// PackedBinaryDataWriter implements DataWriter for packed binary (.binpack) in c-gomoku-cli.
+/// It supports plain binary file and LZ4 compressed binary file.
+///
+/// Packed binary format is the new training data storage format designed to take advantage of
+/// position chains differing by a single move, thus saving plenty of disk space even without
+/// compression. It also stores more information compared to the original binary format, such
+/// as eval of each move and possible multipv outputs. Each game entry contains a head and a
+/// following move sequence. The 8 byte head contains information of one game, such as board
+/// size, rule, outcome, total ply, initial opening ply and position. The move sequence contains
+/// each 4 byte (multipv) move output with its eval. For multipv mode, each ply can contain
+/// multiple moves which are indicated by the bitmask, and the first multipv mode is always
+/// played to get the next position.
+///
+/// struct Entry {
+///   uint32_t boardSize : 5;     // board size in [5-22]
+///   uint32_t rule : 3;          // game rule: 0=freestyle, 1=standard, 4=renju
+///   uint32_t result : 4;        // game outcome: 0=loss, 1=draw, 2=win (first player pov)
+///   uint32_t totalPly : 10;     // total number of stones on board after game ended
+///   uint32_t initPly : 10;      // initial number of stones on board when game started
+///   uint32_t gameTag : 14;      // game tag of this game, reserved for future use
+///   uint32_t moveCount : 18;    // the count of move sequence
+///   uint16_t position[initPly]; // move sequence that representing an opening position
+///   struct Move
+///   {
+///       uint16_t isFirst : 1;   // is this move the first in multipv?
+///       uint16_t isLast : 1;    // is this move the last in multipv?
+///       uint16_t isNoEval : 1;  // does this move contain no eval info?
+///       uint16_t isPass : 1;    // is this move a pass move (side not changed after this move)?
+///       uint16_t reserved : 2;  // reserved for future use
+///       uint16_t move : 10;     // move output from engine
+///       int16_t  eval;          // eval output from engine
+///   } moveSequence[moveCount];  // move sequence that representing the full game
+/// };
 class PackedBinaryDataWriter : public DataWriter
 {
 public:
@@ -54,6 +121,7 @@ public:
     ~PackedBinaryDataWriter();
 
     void writeEntry(const DataEntry &entry);
+    void writeGame(const GameEntry &gameEntry);
 
 private:
     class DataStream;

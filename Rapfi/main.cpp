@@ -35,7 +35,7 @@ int main(int argc, char *argv[])
     cxxopts::Options options("rapfi");
     options.add_options()  //
         ("mode",
-         "One of [gomocup, bench, opengen, tuning] running modes",
+         "One of [gomocup, bench, opengen, tuning, selfplay, dataprep, database] running modes",
          cxxopts::value<std::string>()->default_value("gomocup"))  //
         ("config",
          "Path to the specified config file",

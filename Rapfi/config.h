@@ -199,13 +199,27 @@ inline Pattern4Score getP4Score(Rule R, Color C, PatternCode pcode)
 }
 
 /// Converts a evaluation value to winning rate (in [0, 1]) using current ScalingFactor.
+template <bool Strict = true>
 inline double valueToWinRate(Value eval)
 {
-    if (eval >= VALUE_MATE_IN_MAX_PLY)
+    if (eval >= (Strict ? VALUE_MATE_IN_MAX_PLY : VALUE_EVAL_MAX))
         return 1.0;
-    if (eval <= VALUE_MATED_IN_MAX_PLY)
+    if (eval <= (Strict ? VALUE_MATED_IN_MAX_PLY : VALUE_EVAL_MIN))
         return 0.0;
     return 1.0 / (1.0 + std::exp(-double(eval) * InvScalingFactor));
+}
+
+/// Converts a winning rate in [0, 1] to a evaluation value using current ScalingFactor.
+inline Value winRateToValue(double winRate)
+{
+    if (winRate > 0.999995f)
+        return VALUE_EVAL_MAX;
+    else if (winRate < 0.000005f)
+        return VALUE_EVAL_MIN;
+    else {
+        Value v = Value(ScalingFactor * std::log(winRate / (1.0f - winRate)));
+        return std::clamp(v, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+    }
 }
 
 // -------------------------------------------------

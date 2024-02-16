@@ -39,6 +39,36 @@ Rule Command::parseRule(std::string_view ruleStr)
         throw std::invalid_argument("unknown rule " + std::string(ruleStr));
 }
 
+Command::DatasetType Command::parseDatasetType(std::string dsType)
+{
+    if (dsType == "bin")
+        return DatasetType::SimpleBinary;
+    else if (dsType == "binpack")
+        return DatasetType::PackedBinary;
+    else if (dsType == "katago")
+        return DatasetType::KatagoNumpy;
+    else
+        throw std::invalid_argument("unknown dataset type " + dsType);
+}
+
+Command::DataWriterType Command::parseDataWriterType(std::string dwType)
+{
+    if (dwType == "txt")
+        return DataWriterType::PlainText;
+    else if (dwType == "bin")
+        return DataWriterType::SimpleBinary;
+    else if (dwType == "bin_lz4")
+        return DataWriterType::SimpleBinaryLZ4;
+    else if (dwType == "binpack")
+        return DataWriterType::PackedBinary;
+    else if (dwType == "binpack_lz4")
+        return DataWriterType::PackedBinaryLZ4;
+    else if (dwType == "numpy")
+        return DataWriterType::Numpy;
+    else
+        throw std::invalid_argument("unknown data writer type " + dwType);
+}
+
 std::vector<Pos>
 Command::parsePositionString(std::string_view positionString, int boardWidth, int boardHeight)
 {

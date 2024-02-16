@@ -206,7 +206,7 @@ void Command::selfplay(int argc, char *argv[])
             // Open output file and change output stream
             std::string filename = args["output"].as<std::string>();
             compress             = !args.count("no-compress");
-            datasetWriter        = std::make_unique<PackedBinaryDataWriter>(filename, compress);
+            datasetWriter        = std::make_unique<SimpleBinaryDataWriter>(filename, compress);
         }
 
         if (args.count("boardsize-min") || args.count("boardsize-max")) {
@@ -424,7 +424,7 @@ void Command::selfplay(int argc, char *argv[])
             GameEntry gameEntry;
             for (int ply = 0; ply < board.ply(); ply++)
                 gameEntry.moves.push_back(board.getHistoryMove(ply));
-            gameEntry.numOpeningMoves = numOpeningPly;
+            gameEntry.initPly         = numOpeningPly;
             gameEntry.boardsize       = board.size();
             gameEntry.rule            = rule;
 

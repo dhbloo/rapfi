@@ -39,12 +39,13 @@ public:
                        float lossLogits,
                        float drawLogits,
                        bool  applySoftmax = true);
-    bool  hasWinLossRate() const { return winRate >= 0.0f && lossRate >= 0.0f; }
-    bool  hasDrawRate() const { return drawRate >= 0.0f; }
-    float win() const { return winRate; }
-    float loss() const { return lossRate; }
-    float draw() const { return drawRate; }
-    float winLossRate() const { return winRate - lossRate; }
+    bool  hasWinLossRate() const { return winProb >= 0.0f && lossProb >= 0.0f; }
+    bool  hasDrawRate() const { return drawProb >= 0.0f; }
+    float win() const { return winProb; }
+    float loss() const { return lossProb; }
+    float draw() const { return drawProb; }
+    float winLossRate() const { return winProb - lossProb; }
+    float winningRate() const { return (winLossRate() + 1) * 0.5f; }
     Value value() const
     {
         assert(val != VALUE_NONE);
@@ -53,15 +54,15 @@ public:
 
     /// Construct a new value from the given draw winning rate.
     /// @param drawWinRate The winning rate of draw result.
-    /// @param drawRate The draw rate of new value. (default is 0)
+    /// @param newdrawProb The draw probability of new value. (default is 0)
     ///     This value should not be greater than current draw rate.
-    ValueType valueOfDrawWinRate(float drawWinRate, float drawRate = 0.0f);
+    ValueType valueOfDrawWinRate(float drawWinRate, float newdrawProb = 0.0f);
 
 private:
     Value val      = VALUE_NONE;
-    float winRate  = -1.0f;
-    float lossRate = -1.0f;
-    float drawRate = -1.0f;
+    float winProb  = -1.0f;
+    float lossProb = -1.0f;
+    float drawProb = -1.0f;
 };
 
 /// PolicyBuffer is a container for float policy values on board.

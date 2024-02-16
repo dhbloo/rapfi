@@ -28,43 +28,34 @@
 namespace Evaluation {
 
 ValueType::ValueType(float winLogits, float lossLogits, float drawLogits, bool applySoftmax)
-    : winRate(winLogits)
-    , lossRate(lossLogits)
-    , drawRate(drawLogits)
+    : winProb(winLogits)
+    , lossProb(lossLogits)
+    , drawProb(drawLogits)
 {
     if (applySoftmax) {
         float maxValue = std::max(std::max(winLogits, lossLogits), drawLogits);
-        winRate        = std::exp(winLogits - maxValue);
-        lossRate       = std::exp(lossLogits - maxValue);
-        drawRate       = std::exp(drawLogits - maxValue);
-        float invSum   = 1.0f / (winRate + lossRate + drawRate);
-        winRate *= invSum;
-        lossRate *= invSum;
-        drawRate *= invSum;
+        winProb        = std::exp(winLogits - maxValue);
+        lossProb       = std::exp(lossLogits - maxValue);
+        drawProb       = std::exp(drawLogits - maxValue);
+        float invSum   = 1.0f / (winProb + lossProb + drawProb);
+        winProb *= invSum;
+        lossProb *= invSum;
+        drawProb *= invSum;
     }
 
-    constexpr float WLRMateValue = 0.999f;
-    float           wlr          = winLossRate();
-    if (wlr > WLRMateValue)
-        val = VALUE_EVAL_MAX;
-    else if (wlr < -WLRMateValue)
-        val = VALUE_EVAL_MIN;
-    else {
-        val = Value(Config::ScalingFactor * std::log((1 + wlr) / (1 - wlr)));
-        val = std::clamp(val, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
-    }
+    val = Config::winRateToValue(winningRate());
 }
 
-ValueType ValueType::valueOfDrawWinRate(float drawWinRate, float newDrawRate)
+ValueType ValueType::valueOfDrawWinRate(float drawWinRate, float newdrawProb)
 {
     assert(0 <= drawWinRate && drawWinRate <= 1);
-    assert(newDrawRate <= drawRate);
+    assert(newdrawProb <= drawProb);
 
-    float extraDrawRate = drawRate - newDrawRate;
-    float drawWin       = extraDrawRate * drawWinRate;
-    float drawLoss      = extraDrawRate * (1.0f - drawWinRate);
+    float extraDrawRate = drawProb - newdrawProb;
+    float drawWinProb   = extraDrawRate * drawWinRate;
+    float drawLossProb  = extraDrawRate * (1.0f - drawWinRate);
 
-    return ValueType(winRate + drawWin, lossRate + drawLoss, newDrawRate, false);
+    return ValueType(winProb + drawWinProb, lossProb + drawLossProb, newdrawProb, false);
 }
 
 PolicyBuffer::PolicyBuffer(int boardWidth, int boardHeight)
@@ -77,12 +68,18 @@ PolicyBuffer::PolicyBuffer(int boardWidth, int boardHeight)
 
 void PolicyBuffer::setComputeFlagForAllEmptyCell(const Board &board, bool enabled)
 {
-    FOR_EVERY_EMPTY_POS(&board, pos) { setComputeFlag(pos, enabled); }
+    FOR_EVERY_EMPTY_POS(&board, pos)
+    {
+        setComputeFlag(pos, enabled);
+    }
 }
 
 void PolicyBuffer::setComputeFlagForAllCandidateCell(const Board &board, bool enabled)
 {
-    FOR_EVERY_CAND_POS(&board, pos) { setComputeFlag(pos, enabled); }
+    FOR_EVERY_CAND_POS(&board, pos)
+    {
+        setComputeFlag(pos, enabled);
+    }
 }
 
 void PolicyBuffer::applySoftmax()
