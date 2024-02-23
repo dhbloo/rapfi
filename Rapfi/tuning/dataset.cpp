@@ -363,13 +363,12 @@ public:
             // This move has multi-pv info
             int multiPvCount = gameEntry.moveSequence[nextMoveIdx].size();
             if (multiPvCount > 1) {
-                multiPvCount           = std::min(multiPvCount, 256 - DataEntry::MULTIPV_BEGIN);
-                dataEntry->moveDataTag = static_cast<DataEntry::MoveDataTag>(
-                    DataEntry::MULTIPV_BEGIN + multiPvCount - 1);
-                // TODO: setup policy array from multi-pv info
-                dataEntry->multiPvMoves = new MultiPvMove[multiPvCount];
-                for (int i = 0; i < multiPvCount; i++)
-                    dataEntry->multiPvMoves[i] = gameEntry.moveSequence[nextMoveIdx][i];
+                int numExtraPVs = std::min(multiPvCount - 1, 256 - DataEntry::MULTIPV_BEGIN);
+                dataEntry->moveDataTag =
+                    static_cast<DataEntry::MoveDataTag>(DataEntry::MULTIPV_BEGIN + numExtraPVs - 1);
+                dataEntry->multiPvMoves = new PVMove[numExtraPVs];
+                for (int i = 0; i < numExtraPVs; i++)
+                    dataEntry->multiPvMoves[i] = gameEntry.moveSequence[nextMoveIdx][1 + i];
             }
         }
 
@@ -392,7 +391,7 @@ public:
 
 private:
     /// PVList contains all PVs in a move.
-    using PVList = std::vector<MultiPvMove>;
+    using PVList = std::vector<PVMove>;
     /// GameEntry represents a full game in the dataset.
     struct GameEntry
     {

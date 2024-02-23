@@ -58,14 +58,14 @@ struct OpeningGenConfig
 
     // Randomly picked moves are chosen inside a local square with size
     // of [localSizeMin, localSizeMax]
-    int localSizeMin = 4, localSizeMax = 8;
+    int localSizeMin = 4, localSizeMax = 6;
 
     // Find a balanced opening using search time limit of balanceNodes.
     // If it is 0, then the generated openings will not be balanced.
-    uint64_t balance1Nodes = 500000;
+    uint64_t balance1Nodes = 1000000;
     // When BALANCE1 is not able to find a balanced move, use how many
     // extra nodes to find a balanced move pair in BALANCE2.
-    uint64_t balance2Nodes = 1000000;
+    uint64_t balance2Nodes = 2000000;
 
     // Eval in [-balanceWindow, balanceWindow] is considered as balanced
     // When we can not achieve a eval inside balance window using BALANCE1,

@@ -31,7 +31,7 @@ namespace Tuning {
 enum Result : uint8_t { RESULT_LOSS, RESULT_DRAW, RESULT_WIN, RESULT_UNKNOWN };
 
 /// One move in the multi-pv.
-struct MultiPvMove
+struct PVMove
 {
     Pos  move;
     Eval eval;
@@ -51,16 +51,16 @@ struct DataEntry
     Result           result;     // game result: 0=loss, 1=draw, 2=win (side to move pov)
     enum MoveDataTag : uint8_t {
         NO_MOVE_DATA,        // no move data is available
-        POLICY_ARRAY_FLOAT,  // float policy array of size [boardsize^2+1]
-        POLICY_ARRAY_INT16,  // int16 (quantitized) policy array of size [boardsize^2+1]
-        MULTIPV_BEGIN,       // an array of multi-pv moves and evaluations
-        // The number of multi-pv is given as (moveDataTag - MULTIPV_BEGIN + 1).
+        POLICY_ARRAY_FLOAT,  // float policy probability of size [boardsize^2+1]
+        POLICY_ARRAY_INT16,  // int16-quant policy probability of size [boardsize^2+1]
+        MULTIPV_BEGIN,       // an array of EXTRA multi-pv moves and evaluations
+        // The total number of multi-pv is given as (moveDataTag - MULTIPV_BEGIN + 2).
     } moveDataTag = NO_MOVE_DATA;  // type tag of the move data
     union {
-        void        *moveData = nullptr;  // pointer to the optional move data
-        float       *policyF32;           // row-major policy target of size [boardsize^2+1]
-        int16_t     *policyI16;           // row-major policy target of size [boardsize^2+1]
-        MultiPvMove *multiPvMoves;        // list of multi-pv moves output by the engine
+        void    *moveData = nullptr;  // pointer to the optional move data
+        float   *policyF32;           // row-major policy target of size [boardsize^2+1]
+        int16_t *policyI16;           // row-major policy target of size [boardsize^2+1]
+        PVMove  *multiPvMoves;        // list of multi-pv moves output by the engine
     };
 
     DataEntry() = default;
@@ -101,6 +101,7 @@ struct DataEntry
         , moveDataTag {other.moveDataTag}
     {
         switch (moveDataTag) {
+        case MoveDataTag::NO_MOVE_DATA: moveData = nullptr; break;
         case MoveDataTag::POLICY_ARRAY_FLOAT: {
             policyF32 = new float[boardsize * boardsize + 1];
             std::copy(other.policyF32, other.policyF32 + boardsize * boardsize + 1, policyF32);
@@ -111,12 +112,11 @@ struct DataEntry
             std::copy(other.policyI16, other.policyI16 + boardsize * boardsize + 1, policyI16);
             break;
         }
-        case MoveDataTag::MULTIPV_BEGIN: {
-            multiPvMoves = new MultiPvMove[other.numMultiPv()];
-            std::copy(other.multiPvMoves, other.multiPvMoves + other.numMultiPv(), multiPvMoves);
+        default: {
+            multiPvMoves = new PVMove[other.numExtraPVs()];
+            std::copy(other.multiPvMoves, other.multiPvMoves + other.numExtraPVs(), multiPvMoves);
             break;
         }
-        default: break;
         }
     }
     DataEntry(DataEntry &&other) noexcept
@@ -135,13 +135,12 @@ struct DataEntry
     /// Returns the current side to move, considering pass moves.
     Color sideToMove() const
     {
-        return (std::count(position.begin(), position.end(), Pos::PASS) + position.size()) % 2 == 0
-                   ? BLACK
-                   : WHITE;
+        int numPasses = std::count(position.begin(), position.end(), Pos::PASS);
+        return (numPasses + position.size()) % 2 == 0 ? BLACK : WHITE;
     }
 
-    /// The number of multi-pv moves.
-    int numMultiPv() const
+    /// The number of extra multi-pv moves.
+    int numExtraPVs() const
     {
         return moveDataTag >= MULTIPV_BEGIN ? moveDataTag - MULTIPV_BEGIN + 1 : 0;
     }
@@ -160,9 +159,9 @@ struct DataEntry
         }
         case MoveDataTag::POLICY_ARRAY_INT16: {
             if (pos == Pos::PASS)
-                return policyI16[boardsize * boardsize] * (1.0f / 32768);
+                return policyI16[boardsize * boardsize] * (1.0f / 32767);
             else
-                return policyI16[pos.y() * boardsize + pos.x()] * (1.0f / 32768);
+                return policyI16[pos.y() * boardsize + pos.x()] * (1.0f / 32767);
         }
         default: return pos == move ? 1.0f : 0.0f;
         }
@@ -177,30 +176,29 @@ struct GameEntry
 {
     struct MoveData
     {
+        Pos                    move;  // best move output by the engine
+        Eval                   eval;  // evaluation of the position (side to move pov)
+        DataEntry::MoveDataTag tag = DataEntry::NO_MOVE_DATA;  // type tag of the move data
         union {
-            void        *moveData = nullptr;  // pointer to the optional move data
-            float       *policyF32;           // row-major policy target of size [boardsize^2+1]
-            int16_t     *policyI16;           // row-major policy target of size [boardsize^2+1]
-            MultiPvMove *multiPvMoves;        // list of multi-pv moves output by the engine
+            void    *moveData = nullptr;  // pointer to the optional move data
+            float   *policyF32;           // row-major policy target of size [boardsize^2+1]
+            int16_t *policyI16;           // row-major policy target of size [boardsize^2+1]
+            PVMove  *multiPvMoves;        // list of multi-pv moves output by the engine
         };
-        DataEntry::MoveDataTag tag =
-            DataEntry::MoveDataTag::NO_MOVE_DATA;  // type tag of the move data
     };
 
-    std::vector<Pos>      moves;      // move sequence that representing a game
-    std::vector<Eval>     evals;      // evaluation of each position (side to move pov)
-    std::vector<MoveData> moveDatas;  // pointer to the optional move data
-    uint32_t              initPly;    // initial ply of the game
-    uint8_t               boardsize;
-    Rule                  rule;
-    Result                result;  // game result: 0=loss, 1=draw, 2=win (white pov)
+    std::vector<Pos>      initPosition;  // initial position of the game
+    std::vector<MoveData> moveSequence;  // move data sequence that representing a game
+    uint8_t               boardsize;     // size of a square board
+    Rule                  rule;          // rule of the game entry
+    Result                result;        // game result: 0=loss, 1=draw, 2=win (white pov)
 
     GameEntry()                           = default;
     GameEntry(const GameEntry &other)     = delete;
-    GameEntry(GameEntry &&other) noexcept = delete;
+    GameEntry(GameEntry &&other) noexcept = default;
     ~GameEntry()
     {
-        for (auto &moveData : moveDatas) {
+        for (auto &moveData : moveSequence) {
             switch (moveData.tag) {
             case DataEntry::MoveDataTag::NO_MOVE_DATA: assert(moveData.moveData == nullptr); break;
             case DataEntry::MoveDataTag::POLICY_ARRAY_FLOAT: delete[] moveData.policyF32; break;

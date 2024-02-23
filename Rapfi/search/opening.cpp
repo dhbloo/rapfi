@@ -336,7 +336,7 @@ bool OpeningGenerator::next()
     if (config.balance1Nodes && putBalance1Move())
         return true;
 
-    if (config.balance2Nodes && board.ply() >= 2) {
+    if (config.balance2Nodes && board.ply() > 2) {
         board.undo(rule);  // undo the move put by balance1
         board.undo(rule);  // undo one random move
         if (putBalance2Move())

@@ -21,6 +21,7 @@
 #include "core/types.h"
 #include "core/utils.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <memory>

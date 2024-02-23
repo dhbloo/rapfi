@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "../core/iohelper.h"
 #include "../core/utils.h"
@@ -92,25 +92,31 @@ void Command::selfplay(int argc, char *argv[])
     size_t                        hashSizeMb;
     int                           boardSizeMin, boardSizeMax;
     Rule                          rule;
-    double                        meanNodes, varNodes;
+    int                           multipv, multipvDecaySteps;
+    double                        meanNodes, varNodes, nodesDecay;
+    int                           maxDecaySteps;
+    uint64_t                      minNodes;
     int                           matePly;
     int                           drawValue, drawCount, minDrawPly;
     int                           forceDrawPly, forceDrawPlyLeft;
-    double                        samplingFreqRoot, samplingFreqPV;
     Time                          reportInterval;
-    bool                          sampleMateOnly;
+    bool                          noMateMultiPV;
     bool                          generateOpening;
     bool                          silence;
-    bool                          compress;
     std::vector<std::vector<Pos>> openings;
     Opening::OpeningGenConfig     opengenCfg;
-    std::unique_ptr<DataWriter>   datasetWriter;
+    DataWriterType                dataWriterType;
+    std::string                   outputPath;
+    std::unique_ptr<DataWriter>   dataWriter;
 
     cxxopts::Options options("rapfi selfplay");
     options.add_options()  //
         ("o,output",
          "Save data entries of played games to a binary file",
-         cxxopts::value<std::string>())                                    //
+         cxxopts::value<std::string>())  //
+        ("output-type",
+         "Output dataset type, one of [txt, bin, bin_lz4, binpack, binpack_lz4]",
+         cxxopts::value<std::string>()->default_value("binpack_lz4"))      //
         ("n,number", "Number of games to play", cxxopts::value<size_t>())  //
         ("s,boardsize",
          "Board size in [5,22]. Can be overriden by boardsize-min/boardsize-max",
@@ -126,17 +132,32 @@ void Command::selfplay(int argc, char *argv[])
         ("opening",
          "Path to the opening book file. If not specified, auto generated openings are used",
          cxxopts::value<std::string>())  //
-        ("no-compress",
-         "Do not compress for saving binary file")  //
         ("hashsize",
          "Hash size of the transposition table (in MB)",
          cxxopts::value<size_t>()->default_value("128"))  //
+        ("multipv",
+         "The maximum number of multipv to record (must be at least 1)",
+         cxxopts::value<int>()->default_value("1"))  //
+        ("multipv-decay-steps",
+         "The number of steps to decrease multipv by 1 (0 for not enabled)",
+         cxxopts::value<int>()->default_value("0"))  //
+        ("no-multipv-after-mate",
+         "Disable multipv after mate has been found")  //
         ("mean-nodes",
          "Mean of a normal distribution of num search nodes",
          cxxopts::value<double>()->default_value("100000"))  //
         ("var-nodes",
          "Variance of a normal distribution of num search nodes",
          cxxopts::value<double>()->default_value("10000"))  //
+        ("nodes-decay",
+         "The lambda to decay the number of search nodes",
+         cxxopts::value<double>()->default_value("1.0"))  //
+        ("max-nodes-decay-steps",
+         "The maximum number of steps to decay the number of search nodes",
+         cxxopts::value<int>()->default_value("100"))  //
+        ("min-nodes",
+         "Minimal number of nodes for search",
+         cxxopts::value<uint64_t>()->default_value("20000"))  //
         ("mate-ply",
          "Judge win/loss if there is only mate-ply before mate (must be at least 1)",
          cxxopts::value<int>()->default_value("1"))  //
@@ -156,16 +177,8 @@ void Command::selfplay(int argc, char *argv[])
          "Force draw after this ply (0 for not enabled)",
          cxxopts::value<int>()->default_value("0"))  //
         ("force-draw-plyleft",
-         "Force draw when left ply is less than this (0 for not enabled)",
-         cxxopts::value<int>()->default_value("25"))  //
-        ("sampling-freq-root",
-         "Sampling frequency when saving data entry from root position",
-         cxxopts::value<double>()->default_value("1.0"))  //
-        ("sampling-freq-pv",
-         "Sampling frequency when saving data entry from PV position",
-         cxxopts::value<double>()->default_value("0.0"))  //
-        ("sample-mate-only",
-         "Sampling only after mate/mated from root position")  //
+         "Force draw when left ply is less than this",
+         cxxopts::value<int>()->default_value("0"))  //
         ("min-move",
          "Minimal number of moves per opening",
          cxxopts::value<int>()->default_value(std::to_string(opengenCfg.minMoves)))  //
@@ -204,9 +217,8 @@ void Command::selfplay(int argc, char *argv[])
 
         if (args.count("output")) {
             // Open output file and change output stream
-            std::string filename = args["output"].as<std::string>();
-            compress             = !args.count("no-compress");
-            datasetWriter        = std::make_unique<SimpleBinaryDataWriter>(filename, compress);
+            outputPath     = args["output"].as<std::string>();
+            dataWriterType = parseDataWriterType(args["output-type"].as<std::string>());
         }
 
         if (args.count("boardsize-min") || args.count("boardsize-max")) {
@@ -240,23 +252,26 @@ void Command::selfplay(int argc, char *argv[])
             generateOpening = true;
         }
 
-        numGames         = args["number"].as<size_t>();
-        rule             = parseRule(args["rule"].as<std::string>());
-        numThreads       = std::max<size_t>(args["thread"].as<size_t>(), 1);
-        hashSizeMb       = args["hashsize"].as<size_t>();
-        meanNodes        = args["mean-nodes"].as<double>();
-        varNodes         = args["var-nodes"].as<double>();
-        matePly          = args["mate-ply"].as<int>();
-        drawValue        = args["draw-value"].as<int>();
-        drawCount        = args["draw-count"].as<int>();
-        minDrawPly       = args["min-draw-ply"].as<int>();
-        forceDrawPly     = args["force-draw-ply"].as<int>();
-        forceDrawPlyLeft = args["force-draw-plyleft"].as<int>();
-        samplingFreqRoot = args["sampling-freq-root"].as<double>();
-        samplingFreqPV   = args["sampling-freq-pv"].as<double>();
-        sampleMateOnly   = args.count("sample-mate-only");
-        reportInterval   = args["report-interval"].as<Time>();
-        silence          = args.count("no-search-message");
+        numGames          = args["number"].as<size_t>();
+        rule              = parseRule(args["rule"].as<std::string>());
+        numThreads        = std::max<size_t>(args["thread"].as<size_t>(), 1);
+        hashSizeMb        = args["hashsize"].as<size_t>();
+        multipv           = std::max(args["multipv"].as<int>(), 1);
+        multipvDecaySteps = std::max(args["multipv-decay-steps"].as<int>(), 0);
+        noMateMultiPV     = args.count("no-multipv-after-mate");
+        meanNodes         = std::max(args["mean-nodes"].as<double>(), 0.0);
+        varNodes          = std::max(args["var-nodes"].as<double>(), 0.0);
+        nodesDecay        = std::min(args["nodes-decay"].as<double>(), 1.0);
+        maxDecaySteps     = std::max(args["max-nodes-decay-steps"].as<int>(), 0);
+        minNodes          = args["min-nodes"].as<uint64_t>();
+        matePly           = std::max(args["mate-ply"].as<int>(), 1);
+        drawValue         = args["draw-value"].as<int>();
+        drawCount         = args["draw-count"].as<int>();
+        minDrawPly        = args["min-draw-ply"].as<int>();
+        forceDrawPly      = args["force-draw-ply"].as<int>();
+        forceDrawPlyLeft  = args["force-draw-plyleft"].as<int>();
+        reportInterval    = args["report-interval"].as<Time>();
+        silence           = args.count("no-search-message");
 
         if (meanNodes <= 0)
             throw std::invalid_argument("mean-nodes must be greater than 0");
@@ -278,10 +293,41 @@ void Command::selfplay(int argc, char *argv[])
         std::exit(EXIT_FAILURE);
     }
 
+    if (!outputPath.empty()) {
+        // Create data writer
+        switch (dataWriterType) {
+        case DataWriterType::PlainText:
+            dataWriter = std::make_unique<PlainTextDataWriter>(outputPath);
+            break;
+
+        case DataWriterType::SimpleBinary:
+            dataWriter = std::make_unique<SimpleBinaryDataWriter>(outputPath, false);
+            break;
+
+        case DataWriterType::SimpleBinaryLZ4:
+            dataWriter = std::make_unique<SimpleBinaryDataWriter>(outputPath, true);
+            break;
+
+        case DataWriterType::PackedBinary:
+            dataWriter = std::make_unique<PackedBinaryDataWriter>(outputPath, false);
+            break;
+
+        case DataWriterType::PackedBinaryLZ4:
+            dataWriter = std::make_unique<PackedBinaryDataWriter>(outputPath, true);
+            break;
+
+        case DataWriterType::Numpy:
+            ERRORL("Numpy data writer is not supported in selfplay.");
+            std::exit(EXIT_FAILURE);
+            break;
+        }
+    }
+
     // Setup signal handler to close dataset file when receiving signal
     setupSignalHandler([&]() {
-        if (datasetWriter)
-            datasetWriter.reset();
+        MESSAGEL("Gracefully exiting...");
+        dataWriter.reset();
+        std::exit(0);
     });
 
     if (openings.size())
@@ -294,9 +340,9 @@ void Command::selfplay(int argc, char *argv[])
     // Set message mode to none if silence search is enabled
     if (silence)
         Config::MessageMode = MsgMode::NONE;
-    Config::AspirationWindow              = true;
-    Config::NumIterationAfterSingularRoot = 10;
-    Config::NumIterationAfterMate         = 10;
+    else
+        Config::MessageMode = MsgMode::BRIEF;
+    Config::AspirationWindow = true;
 
     // Set num threads and TT size
     Search::Threads.setNumThreads(numThreads);
@@ -313,7 +359,7 @@ void Command::selfplay(int argc, char *argv[])
         board.newGame(rule);
 
         if (!silence)
-            MESSAGEL("Start game " << i << ", boardsize = " << board.size());
+            MESSAGEL("Start game " << i << ", boardsize = " << board.size() << ", rule = " << rule);
 
         if (generateOpening) {
             Opening::OpeningGenerator og(board.size(), rule, opengenCfg, prng);
@@ -354,118 +400,95 @@ void Command::selfplay(int argc, char *argv[])
         // Set search options and init
         Search::SearchOptions options;
         options.rule                = {rule, GameRule::FREEOPEN};
+        options.multiPV             = multipv;
         options.balanceMode         = Search::SearchOptions::BALANCE_NONE;
         options.disableOpeningQuery = true;
-
-        // Clean up search states
-        int numOpeningPly = board.ply();
-        int firstMatePly  = -1;
         Search::Threads.clear(true);
 
+        // Setup game entry data
+        GameEntry gameEntry;
+        for (int i = 0; i < board.ply(); i++)
+            gameEntry.initPosition.push_back(board.getHistoryMove(i));
+        gameEntry.boardsize = board.size();
+        gameEntry.rule      = rule;
+
         // Selfplay loop
-        struct PVSample
-        {
-            int              rootGamePly;
-            std::vector<Pos> pv;
-        };
-        std::vector<PVSample> pvSamples;
-        Value                 searchValue = VALUE_ZERO;
-        int                   drawCnt     = 0;
+        Value searchValue = VALUE_ZERO;
+        int   drawCnt     = 0;
         while (board.movesLeft() > 0) {
-            // Set search limits
-            // Make sure max nodes stays in [0, 10*meanNodes]
-            options.maxNodes =
-                std::clamp<size_t>((size_t)nodesDis(prng), 0, size_t(10 * meanNodes));
-
-            Search::Threads.startThinking(board, options);
-            Search::Threads.waitForIdle();
-
-            // We might have no legal move in Renju mode, which is regarded as loss
-            if (Search::Threads.main()->rootMoves.empty()) {
-                searchValue = mated_in(0);
-                break;
-            }
-
-            // Add sampled PV moves
-            if (samplingFreqPV >= 1.0
-                || std::uniform_real_distribution<> {}(prng) <= samplingFreqPV) {
-                auto bestRootMove = std::find(Search::Threads.main()->rootMoves.begin(),
-                                              Search::Threads.main()->rootMoves.end(),
-                                              Search::Threads.main()->previousPlyBestMove);
-                // If previousPlyBestMove is Pos::NONE, we will not find a rootMove
-                if (bestRootMove != Search::Threads.main()->rootMoves.end())
-                    pvSamples.push_back({board.ply(), bestRootMove->previousPv});
-            }
-
-            searchValue = Search::Threads.main()->rootMoves[0].value;
-            board.move(rule, Search::Threads.main()->bestMove);
-
-            if (firstMatePly < 0 && std::abs(searchValue) >= VALUE_MATE_IN_MAX_PLY)
-                firstMatePly = board.ply();
-
-            // Stop self-play game if win/loss is found, or draw adjudication
-            if (std::abs(searchValue) >= mate_in(matePly))
-                break;
-
+            // Stop self-play game if force draw or board is full
             if ((forceDrawPly && board.ply() >= forceDrawPly)
                 || (forceDrawPlyLeft && board.movesLeft() <= forceDrawPlyLeft))
                 break;
 
+            // Set search limits, make sure max nodes stays in [0, +inf)
+            int    steps      = board.ply() - (int)gameEntry.initPosition.size();
+            double nodesScale = std::pow(nodesDecay, std::min(steps, maxDecaySteps));
+            options.maxNodes =
+                std::max<uint64_t>((uint64_t)std::max(nodesDis(prng) * nodesScale, 0.0), minNodes);
+            if (multipvDecaySteps > 0 && steps > 0 && steps % multipvDecaySteps == 0)
+                options.multiPV = std::max(1, options.multiPV - 1);
+
+            // Start thinking and wait for finish
+            Search::Threads.startThinking(board, options);
+            Search::Threads.waitForIdle();
+            auto mainThread = Search::Threads.main();
+
+            // We might have no legal move in Renju mode, which is regarded as loss
+            if (mainThread->rootMoves.empty()) {
+                searchValue = mated_in(0);
+                break;
+            }
+
+            // Record best move result
+            searchValue  = mainThread->rootMoves[0].value;
+            Pos bestMove = mainThread->bestMove;
+            gameEntry.moveSequence.push_back({bestMove, Eval(searchValue)});
+            if (options.multiPV > 1) {
+                auto &moveData   = gameEntry.moveSequence.back();
+                int   numPVMoves = std::min<int>(options.multiPV, mainThread->rootMoves.size());
+                moveData.tag = DataEntry::MoveDataTag(DataEntry::MULTIPV_BEGIN + numPVMoves - 2);
+                moveData.multiPvMoves = new PVMove[numPVMoves - 1];
+                for (int i = 1; i < numPVMoves; i++) {
+                    auto &rm = mainThread->rootMoves[i];
+                    assert(rm.pv[0] != bestMove);
+                    moveData.multiPvMoves[i - 1] = {
+                        rm.pv[0],
+                        Eval(rm.value != VALUE_NONE ? rm.value : rm.previousValue)};
+                }
+            }
+
+            // Stop self-play game if win/loss is found
+            if (std::abs(searchValue) >= mate_in(matePly))
+                break;
+            if (noMateMultiPV && std::abs(searchValue) >= VALUE_MATE_IN_MAX_PLY)
+                options.multiPV = 1;
+
+            // Stop self-play game if draw adjudication
             if (drawCount && std::abs(searchValue) <= drawValue) {
                 if (++drawCnt >= drawCount && board.ply() >= minDrawPly)
                     break;
             }
             else
                 drawCnt = 0;
+
+            // Make the move
+            board.move(rule, bestMove);
         }
 
-        // Save game result (root samples) and pv samples
-        if (datasetWriter) {
-            GameEntry gameEntry;
-            for (int ply = 0; ply < board.ply(); ply++)
-                gameEntry.moves.push_back(board.getHistoryMove(ply));
-            gameEntry.initPly         = numOpeningPly;
-            gameEntry.boardsize       = board.size();
-            gameEntry.rule            = rule;
-
-            Result result    = searchValue >= VALUE_MATE_IN_MAX_PLY    ? RESULT_WIN
-                               : searchValue <= VALUE_MATED_IN_MAX_PLY ? RESULT_LOSS
-                                                                       : RESULT_DRAW;
-            gameEntry.result = board.sideToMove() == WHITE ? result : Result(RESULT_WIN - result);
-
-            datasetWriter->writeEntriesInGame(gameEntry, [&](const DataEntry &e) {
-                // Exclude non-mate if sampleMateOnly is true
-                if (sampleMateOnly && e.position.size() < firstMatePly)
-                    return false;
-
-                return samplingFreqRoot >= 1.0
-                       || std::uniform_real_distribution<> {}(prng) <= samplingFreqRoot;
-            });
-
-            for (const PVSample &pvSample : pvSamples) {
-                DataEntry dataEntry = {{}, (uint8_t)board.size(), rule};
-                dataEntry.move = Pos {board.size(), board.size()};  // Mark the move as None move
-
-                for (int ply = 0; ply < pvSample.rootGamePly; ply++)
-                    dataEntry.position.push_back(board.getHistoryMove(ply));
-                for (Pos move : pvSample.pv)
-                    dataEntry.position.push_back(move);
-
-                // Set result based on the current side to move
-                dataEntry.result = dataEntry.position.size() % 2 == 0
-                                       ? gameEntry.result
-                                       : Result(RESULT_WIN - gameEntry.result);
-
-                datasetWriter->writeEntry(dataEntry);
-            }
-        }
+        // Save game result (root samples)
+        Result result    = searchValue >= VALUE_MATE_IN_MAX_PLY    ? RESULT_WIN
+                           : searchValue <= VALUE_MATED_IN_MAX_PLY ? RESULT_LOSS
+                                                                   : RESULT_DRAW;
+        gameEntry.result = board.sideToMove() == WHITE ? result : Result(RESULT_WIN - result);
+        dataWriter->writeGame(gameEntry);
 
         // Print out generation progress over time
         i++;
         totalGamePly += board.ply();
         if (now() - lastTime >= reportInterval) {
             MESSAGEL("Played " << i << " of " << numGames
-                               << " games, averagePly = " << totalGamePly / i
+                               << " games, average ply = " << totalGamePly / i
                                << ", game/min = " << i / ((now() - startTime) / 60000.0));
             lastTime = now();
         }

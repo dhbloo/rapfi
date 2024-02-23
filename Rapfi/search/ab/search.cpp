@@ -1256,7 +1256,7 @@ moves_loop:
                 for (Pos *m = (ss + 1)->pv; *m != Pos::NONE; m++)
                     rm.pv.push_back(*m);
 
-                assert(!balance2 || rm.pv.size() > 2);
+                assert(!balance2 || rm.pv.size() >= 2);
 
                 // We record how often the best move has been changed in each iteration.
                 // When the best move changes frequently, we allocate some more time.

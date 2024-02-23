@@ -77,9 +77,10 @@ uint64_t entryHash(const Tuning::DataEntry &entry)
     if (entry.moveData) {
         int numCells = (int)entry.boardsize * (int)entry.boardsize + 1;
         switch (entry.moveDataTag) {
+        case Tuning::DataEntry::NO_MOVE_DATA: break;
         case Tuning::DataEntry::POLICY_ARRAY_FLOAT: hasher(entry.policyF32, numCells); break;
         case Tuning::DataEntry::POLICY_ARRAY_INT16: hasher(entry.policyI16, numCells); break;
-        default: hasher(entry.multiPvMoves, entry.numMultiPv()); break;
+        default: hasher(entry.multiPvMoves, entry.numExtraPVs()); break;
         }
     }
 
@@ -98,34 +99,30 @@ void DataWriter::writeGame(const GameEntry &gameEntry)
 void DataWriter::writeEntriesInGame(const GameEntry                       &gameEntry,
                                     std::function<bool(const DataEntry &)> filter)
 {
-    assert(gameEntry.initPly < gameEntry.moves.size());
+    Color     startSide = gameEntry.initPosition.size() % 2 == 0 ? BLACK : WHITE;
+    DataEntry dataEntry {
+        gameEntry.initPosition,
+        gameEntry.boardsize,
+        gameEntry.rule,
+        startSide == WHITE ? gameEntry.result : Result(RESULT_WIN - gameEntry.result),
+    };
 
-    Color     startSide = gameEntry.initPly % 2 == 0 ? BLACK : WHITE;
-    DataEntry dataEntry {{gameEntry.moves.begin(), gameEntry.moves.begin() + gameEntry.initPly},
-                         gameEntry.boardsize,
-                         gameEntry.rule,
-                         startSide == WHITE ? gameEntry.result
-                                            : Result(RESULT_WIN - gameEntry.result)};
-
-    for (size_t i = gameEntry.initPly; i < gameEntry.moves.size(); i++) {
-        dataEntry.move   = gameEntry.moves[i];
-        dataEntry.eval   = i < gameEntry.evals.size() ? gameEntry.evals[i] : VALUE_NONE;
-        dataEntry.result = Result(RESULT_WIN - dataEntry.result);
-        if (i < gameEntry.moveDatas.size()) {
-            dataEntry.moveDataTag = gameEntry.moveDatas[i].tag;
-            dataEntry.moveData    = gameEntry.moveDatas[i].moveData;
-        }
-        else
-            dataEntry.moveData = nullptr;
+    for (auto &moveData : gameEntry.moveSequence) {
+        dataEntry.move        = moveData.move;
+        dataEntry.eval        = moveData.eval;
+        dataEntry.moveDataTag = moveData.tag;
+        dataEntry.moveData    = moveData.moveData;
 
         if (!filter || filter(dataEntry))
             writeEntry(dataEntry);
 
-        dataEntry.position.push_back(gameEntry.moves[i]);
+        dataEntry.position.push_back(moveData.move);
+        dataEntry.result = Result(RESULT_WIN - dataEntry.result);
     }
 
     // Remember to reset the move data pointer, as we do not own it
-    dataEntry.moveData = nullptr;
+    dataEntry.moveDataTag = DataEntry::NO_MOVE_DATA;
+    dataEntry.moveData    = nullptr;
 }
 
 // ==============================================
@@ -155,16 +152,14 @@ void PlainTextDataWriter::writeEntry(const DataEntry &entry)
 {
     std::ostream &dst = dataStream->getStream();
     dst << int(entry.boardsize) << ',' << entry.rule << ',' << MoveSeqText {entry.position} << ','
-        << int(entry.result) << ',' << entry.move << ',' << entry.eval;
+        << int(entry.result) << ',' << entry.move;
+    if (entry.eval != VALUE_NONE)
+        dst << '(' << entry.eval << ')';
 
-    if (entry.numMultiPv() > 0) {
-        dst << ',';
-        for (int i = 0; i < entry.numMultiPv(); i++) {
-            if (i)
-                dst << '|';
-            auto multiPvMove = entry.multiPvMoves[i];
-            dst << multiPvMove.move << '(' << multiPvMove.eval << ')';
-        }
+    for (int i = 0; i < entry.numExtraPVs(); i++) {
+        dst << '|' << entry.multiPvMoves[i].move;
+        if (entry.multiPvMoves[i].eval != VALUE_NONE)
+            dst << '(' << entry.multiPvMoves[i].eval << ')';
     }
 
     dst << '\n';
@@ -257,30 +252,48 @@ public:
     void addDataEntry(const DataEntry &dataEntry)
     {
         // Setup game entry for the first data entry
-        if (moveSequence.empty() || !checkDataEntryMatched(dataEntry)) {
+        if (gameEntry.moveSequence.empty() || !checkDataEntryMatched(dataEntry)) {
             // Flush previous game entry if any
             flushGameEntry(getStream());
 
-            // Setup new game entry
-            boardSize     = dataEntry.boardsize;
-            rule          = dataEntry.rule;
-            result        = dataEntry.result;
+            // Setup temp state (assume no pass in initial position)
             curResult     = dataEntry.result;
-            curSideToMove = dataEntry.sideToMove();
+            curSideToMove = dataEntry.position.size() % 2 == 0 ? BLACK : WHITE;
             totalPly      = (uint32_t)dataEntry.position.size();
-            initPosition  = {dataEntry.position.begin(), dataEntry.position.end()};
+
+            // Setup new game entry
+            gameEntry.boardsize = dataEntry.boardsize;
+            gameEntry.rule      = dataEntry.rule;
+            gameEntry.result =
+                curSideToMove == WHITE ? dataEntry.result : Result(RESULT_WIN - dataEntry.result);
+            gameEntry.initPosition = {dataEntry.position.begin(), dataEntry.position.end()};
         }
 
-        PVList pvList;
         // Add main pv move and eval
-        pvList.push_back({dataEntry.move, dataEntry.eval});
+        gameEntry.moveSequence.push_back({dataEntry.move, dataEntry.eval, dataEntry.moveDataTag});
+
         // Add extra multi-pv moves and evals
-        if (dataEntry.moveData && dataEntry.moveDataTag > DataEntry::MULTIPV_BEGIN) {
-            uint32_t numMultiPv = dataEntry.moveDataTag - DataEntry::MULTIPV_BEGIN + 1;
-            for (uint32_t i = 1; i < numMultiPv; i++)
-                pvList.push_back(dataEntry.multiPvMoves[i]);
+        auto &moveData = gameEntry.moveSequence.back();
+        switch (moveData.tag) {
+        case DataEntry::NO_MOVE_DATA: break;
+        case DataEntry::POLICY_ARRAY_FLOAT: {
+            int numCells       = (int)dataEntry.boardsize * (int)dataEntry.boardsize + 1;
+            moveData.policyF32 = new float[numCells];
+            std::copy_n(dataEntry.policyF32, numCells, moveData.policyF32);
+            break;
         }
-        moveSequence.push_back(std::move(pvList));
+        case DataEntry::POLICY_ARRAY_INT16: {
+            int numCells       = (int)dataEntry.boardsize * (int)dataEntry.boardsize + 1;
+            moveData.policyI16 = new int16_t[numCells];
+            std::copy_n(dataEntry.policyI16, numCells, moveData.policyI16);
+            break;
+        }
+        default: {
+            moveData.multiPvMoves = new PVMove[dataEntry.numExtraPVs()];
+            std::copy_n(dataEntry.multiPvMoves, dataEntry.numExtraPVs(), moveData.multiPvMoves);
+            break;
+        }
+        }
 
         if (dataEntry.move != Pos::PASS) {
             curResult     = Result(RESULT_WIN - curResult);
@@ -295,26 +308,35 @@ public:
         flushGameEntry(getStream());
 
         // Write game entry
-        boardSize    = gameEntry.boardsize;
-        rule         = gameEntry.rule;
-        result       = gameEntry.result;
-        totalPly     = (uint16_t)gameEntry.moves.size();
-        initPosition = {gameEntry.moves.begin(), gameEntry.moves.begin() + gameEntry.initPly};
+        this->gameEntry.boardsize    = gameEntry.boardsize;
+        this->gameEntry.rule         = gameEntry.rule;
+        this->gameEntry.result       = gameEntry.result;
+        this->gameEntry.initPosition = gameEntry.initPosition;
 
-        for (size_t i = gameEntry.initPly; i < gameEntry.moves.size(); i++) {
-            PVList pvList;
-            // Add main pv move and eval
-            pvList.push_back({gameEntry.moves[i],
-                              i < gameEntry.evals.size() ? gameEntry.evals[i] : Eval(VALUE_NONE)});
-            // Add extra multi-pv moves and evals
-            if (i < gameEntry.moveDatas.size() && gameEntry.moveDatas[i].moveData
-                && gameEntry.moveDatas[i].tag >= DataEntry::MULTIPV_BEGIN) {
-                uint32_t numMultiPv = gameEntry.moveDatas[i].tag - DataEntry::MULTIPV_BEGIN + 1;
-                for (uint32_t j = 1; j < numMultiPv; j++)
-                    pvList.push_back(gameEntry.moveDatas[i].multiPvMoves[j]);
+        for (auto &m : gameEntry.moveSequence) {
+            this->gameEntry.moveSequence.push_back({m.move, m.eval, m.tag});
+            auto &moveData = this->gameEntry.moveSequence.back();
+            switch (moveData.tag) {
+            case DataEntry::NO_MOVE_DATA: break;
+            case DataEntry::POLICY_ARRAY_FLOAT: {
+                int numCells       = (int)gameEntry.boardsize * (int)gameEntry.boardsize + 1;
+                moveData.policyF32 = new float[numCells];
+                std::copy_n(m.policyF32, numCells, moveData.policyF32);
+                break;
             }
-            // Add pv list to move sequence
-            moveSequence.push_back(std::move(pvList));
+            case DataEntry::POLICY_ARRAY_INT16: {
+                int numCells       = (int)gameEntry.boardsize * (int)gameEntry.boardsize + 1;
+                moveData.policyI16 = new int16_t[numCells];
+                std::copy_n(m.policyI16, numCells, moveData.policyI16);
+                break;
+            }
+            default: {
+                int numExtraPVs       = m.tag - DataEntry::MULTIPV_BEGIN + 1;
+                moveData.multiPvMoves = new PVMove[numExtraPVs];
+                std::copy_n(m.multiPvMoves, numExtraPVs, moveData.multiPvMoves);
+                break;
+            }
+            }
         }
 
         // Flush current game entry as it is completed
@@ -326,23 +348,16 @@ private:
     Compressor    compressor;
     std::ostream *ostream;
 
-    // PVList contains all PVs in a move.
-    using PVList = std::vector<MultiPvMove>;
-    // GameEntry represents a full game in the dataset.
-    uint8_t             boardSize;      // board size in [5-22]
-    Rule                rule;           // game rule: 0=freestyle, 1=standard, 4=renju
-    Result              result;         // first player pov
-    Result              curResult;      // current result of the game
-    Color               curSideToMove;  // current side to move
-    uint32_t            totalPly;       // total number of stones on board after game ended
-    std::vector<Pos>    initPosition;   // move sequence that representing an opening position
-    std::vector<PVList> moveSequence;   // move sequence that representing a game
+    GameEntry gameEntry;      // GameEntry represents a full game in the dataset.
+    Result    curResult;      // current result of the game
+    Color     curSideToMove;  // current side to move
+    uint32_t  totalPly;       // total number of stones on board after game ended
 
     bool checkDataEntryMatched(const DataEntry &dataEntry) const
     {
-        if (boardSize != dataEntry.boardsize)
+        if (gameEntry.boardsize != dataEntry.boardsize)
             return false;
-        if (rule != dataEntry.rule)
+        if (gameEntry.rule != dataEntry.rule)
             return false;
         if (curResult != dataEntry.result)
             return false;
@@ -350,16 +365,17 @@ private:
             return false;
         if (dataEntry.position.size() > totalPly)
             return false;
-        if (initPosition.size() + moveSequence.size() < dataEntry.position.size())
+        if (gameEntry.initPosition.size() + gameEntry.moveSequence.size()
+            < dataEntry.position.size())
             return false;
 
         size_t i = 0;
-        for (; i < initPosition.size(); i++) {
-            if (initPosition[i] != dataEntry.position[i])
+        for (; i < gameEntry.initPosition.size(); i++) {
+            if (gameEntry.initPosition[i] != dataEntry.position[i])
                 return false;
         }
-        for (const auto &pvList : moveSequence) {
-            if (pvList[0].move != dataEntry.position[i])
+        for (auto &moveData : gameEntry.moveSequence) {
+            if (moveData.move != dataEntry.position[i])
                 return false;
             i++;
         }
@@ -369,7 +385,7 @@ private:
 
     void flushGameEntry(std::ostream &os)
     {
-        if (moveSequence.empty())
+        if (gameEntry.moveSequence.empty())
             return;
 
         struct EntryHead
@@ -384,16 +400,19 @@ private:
         } ehead;
         uint16_t position[MAX_MOVES];  // move sequence that representing an opening position
 
-        ehead.boardSize = boardSize;
-        ehead.rule      = rule == RENJU ? 4 : (uint16_t)rule;
-        ehead.result    = result;
-        ehead.totalPly  = totalPly;
-        ehead.initPly   = (uint16_t)initPosition.size();
-        ehead.gameTag   = 0;
+        Color startSide = gameEntry.initPosition.size() % 2 == 0 ? BLACK : WHITE;
+        ehead.boardSize = gameEntry.boardsize;
+        ehead.rule      = gameEntry.rule == RENJU ? 4 : (uint16_t)gameEntry.rule;
+        ehead.result =
+            startSide == WHITE ? gameEntry.result : Result(RESULT_WIN - gameEntry.result);
+        ehead.totalPly = totalPly;
+        ehead.initPly  = (uint32_t)gameEntry.initPosition.size();
+        ehead.gameTag  = 0;
         // Move count is summed for all pv lists
         uint32_t moveCount = 0;
-        for (const auto &pvList : moveSequence)
-            moveCount += pvList.size();
+        for (const auto &m : gameEntry.moveSequence)
+            moveCount +=
+                (m.tag >= DataEntry::MULTIPV_BEGIN ? m.tag - DataEntry::MULTIPV_BEGIN + 2 : 1);
         ehead.moveCount = moveCount;
 
         // Write entry header first
@@ -405,7 +424,7 @@ private:
 
         // Write initial position
         for (size_t i = 0; i < ehead.initPly; i++)
-            position[i] = makeMove(initPosition[i]);
+            position[i] = makeMove(gameEntry.initPosition[i]);
         os.write(reinterpret_cast<char *>(position), sizeof(uint16_t) * ehead.initPly);
 
         struct Move
@@ -419,21 +438,34 @@ private:
             int16_t  eval;          // eval output from engine
         } moveData;
         moveData.reserved = 0;
-        for (const auto &pvList : moveSequence) {
-            for (size_t i = 0; i < pvList.size(); i++) {
-                moveData.isFirst  = i == 0;
-                moveData.isLast   = i == pvList.size() - 1;
-                moveData.isNoEval = pvList[i].eval == VALUE_NONE;
-                moveData.isPass   = pvList[i].move == Pos::PASS;
-                moveData.move     = makeMove(pvList[i].move);
-                moveData.eval     = moveData.isNoEval ? 0 : pvList[i].eval;
+        for (const auto &m : gameEntry.moveSequence) {
+            int numExtraPVs =
+                m.tag >= DataEntry::MULTIPV_BEGIN ? m.tag - DataEntry::MULTIPV_BEGIN + 1 : 0;
+
+            // Write main pv
+            moveData.isFirst  = true;
+            moveData.isLast   = numExtraPVs == 0;
+            moveData.isNoEval = m.eval == VALUE_NONE;
+            moveData.isPass   = m.move == Pos::PASS;
+            moveData.move     = makeMove(m.move);
+            moveData.eval     = moveData.isNoEval ? 0 : m.eval;
+            os.write(reinterpret_cast<char *>(&moveData), sizeof(Move));
+
+            // Write extra pvs if any
+            moveData.isFirst = false;
+            for (size_t i = 0; i < numExtraPVs; i++) {
+                moveData.isLast   = i == numExtraPVs - 1;
+                moveData.isNoEval = m.multiPvMoves[i].eval == VALUE_NONE;
+                moveData.isPass   = m.multiPvMoves[i].move == Pos::PASS;
+                moveData.move     = makeMove(m.multiPvMoves[i].move);
+                moveData.eval     = moveData.isNoEval ? 0 : m.multiPvMoves[i].eval;
                 os.write(reinterpret_cast<char *>(&moveData), sizeof(Move));
             }
         }
 
         // Mark as flushed, and reset the game entry
-        initPosition.clear();
-        moveSequence.clear();
+        gameEntry.initPosition.clear();
+        gameEntry.moveSequence.clear();
     }
 };
 
