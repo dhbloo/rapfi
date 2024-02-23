@@ -564,6 +564,10 @@ std::string Board::trace() const
     ss << "Eval[Black]: " << st.valueBlack << '\n';
     ss << "LastP4[Black][A]: " << st.lastPattern4(BLACK, A_FIVE)
        << "  LastP4[White][A]: " << st.lastPattern4(WHITE, A_FIVE) << '\n';
+    ss << "LastP4[Black][B]: " << st.lastPattern4(BLACK, B_FLEX4)
+       << "  LastP4[White][B]: " << st.lastPattern4(WHITE, B_FLEX4) << '\n';
+    ss << "LastP4[Black][C]: " << st.lastPattern4(BLACK, C_BLOCK4_FLEX3)
+       << "  LastP4[White][C]: " << st.lastPattern4(WHITE, C_BLOCK4_FLEX3) << '\n';
     ss << "LastF4[Black]: " << st.lastFlex4AttackMove[BLACK]
        << "  LastF4[White]: " << st.lastFlex4AttackMove[WHITE] << '\n';
 

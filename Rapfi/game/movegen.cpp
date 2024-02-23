@@ -685,10 +685,20 @@ Move *generate<DEFEND_FIVE>(const Board &board, Move *moveList)
     assert(board.p4Count(oppo, A_FIVE) > 0);
 
     // Get last opponent A_FIVE directly from state info.
-    *moveList = board.stateInfo().lastPattern4(oppo, A_FIVE);
-    assert(board.isEmpty(*moveList));
-    assert(board.cell(*moveList).pattern4[oppo] == A_FIVE);
-    return moveList + 1;
+    *moveList     = board.stateInfo().lastPattern4(oppo, A_FIVE);
+    const Cell &c = board.cell(*moveList);
+    if (LIKELY(c.piece == EMPTY && c.pattern4[oppo] == A_FIVE))
+        return moveList + 1;
+
+    // In case of weird history, we find the A_FIVE pos by iterating all move candidates.
+    FOR_EVERY_CAND_POS(&board, pos)
+    {
+        if (board.cell(pos).pattern4[oppo] == A_FIVE) {
+            *moveList = pos;
+            return moveList + 1;
+        }
+    }
+    return moveList;
 }
 
 /// Generates defence moves for opponent B_FLEX4 pattern4.
