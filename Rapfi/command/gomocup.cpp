@@ -485,13 +485,20 @@ void saveDatabase()
     }
 }
 
-void databaseToTxt()
+void databaseToTxt(bool currentBoardSizeAndRule)
 {
     auto txtPath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        std::ofstream txtout(txtPath);
-        ::Database::databaseToCSVFile(*Search::Threads.dbStorage(), txtout);
-        MESSAGEL("Wrote database to txt file " << pathToString(txtPath));
+        std::ofstream                                        txtout(txtPath);
+        std::function<bool(const DBKey &, const DBRecord &)> filter = nullptr;
+        if (currentBoardSizeAndRule)
+            filter = [&](const DBKey &key, const DBRecord &record) -> bool {
+                return key.boardHeight == board->size() && key.boardWidth == board->size()
+                       && key.rule == options.rule.rule;
+            };
+        ::Database::databaseToCSVFile(*Search::Threads.dbStorage(), txtout, filter);
+        MESSAGEL("Wrote " << (currentBoardSizeAndRule ? "(current boardsize and rule)" : "(all)")
+                          << " database to csv-format text file " << pathToString(txtPath));
     }
 }
 
@@ -1282,7 +1289,8 @@ extern "C" bool gomocupLoopOnce()
     else if (cmd == "YXHASHLOAD")          loadHash();
     else if (cmd == "YXSETDATABASE")       setDatabase();
     else if (cmd == "YXSAVEDATABASE")      saveDatabase();
-    else if (cmd == "YXDBTOTXT")           databaseToTxt();
+    else if (cmd == "YXDBTOTXTALL")        databaseToTxt(false);
+    else if (cmd == "YXDBTOTXT")           databaseToTxt(true);
     else if (cmd == "YXLIBTODB")           libToDatabase();
     else if (cmd == "RELOADCONFIG")        reloadConfig();
     else if (cmd == "LOADMODEL")           loadModel();

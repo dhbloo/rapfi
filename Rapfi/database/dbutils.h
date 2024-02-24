@@ -22,15 +22,20 @@
 #include "dbstorage.h"
 #include "dbtypes.h"
 
-#include <ostream>
+#include <functional>
 #include <istream>
+#include <ostream>
 
 class Board;  // forward declaration
 
 namespace Database {
 
 /// Serialize all records in the database to the output stream.
-void databaseToCSVFile(DBStorage &dbStorage, std::ostream &csvStream);
+/// A filter function can be used to select records to be serialized.
+/// Only the records with the filter returning true will be serialized.
+void databaseToCSVFile(DBStorage                                           &dbStorage,
+                       std::ostream                                        &csvStream,
+                       std::function<bool(const DBKey &, const DBRecord &)> filter = nullptr);
 
 /// Merge two dbStorage from dbSrc to dbDst with the overwrite rule.
 /// @return The number of records (over)written.
@@ -43,6 +48,6 @@ size_t splitDatabase(DBStorage &dbSrc, DBStorage &dbDst, const Board &board, Rul
 /// Import a lib file into the database.
 /// @return The number of records (over)written.
 size_t
-importLibToDatabase(DBStorage &dbDst, std::istream& libStream, Rule rule, int boardSize = 15);
+importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule, int boardSize = 15);
 
 }  // namespace Database

@@ -183,7 +183,9 @@ private:
 
 namespace Database {
 
-void databaseToCSVFile(::Database::DBStorage &dbStorage, std::ostream &csvStream)
+void databaseToCSVFile(::Database::DBStorage                               &dbStorage,
+                       std::ostream                                        &csvStream,
+                       std::function<bool(const DBKey &, const DBRecord &)> filter)
 {
     constexpr size_t BatchSize = 2000;
     constexpr char   Sep       = ',';
@@ -201,6 +203,9 @@ void databaseToCSVFile(::Database::DBStorage &dbStorage, std::ostream &csvStream
         cursor = dbStorage.scan(cursor, BatchSize, dbKeyRecords);
 
         for (const auto &[dbKey, dbRecord] : dbKeyRecords) {
+            if (filter && !filter(dbKey, dbRecord))
+                continue;
+
             csvStream << count << Sep << dbKey << Sep;
 
             if (dbRecord.isNull())
