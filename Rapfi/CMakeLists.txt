@@ -48,7 +48,6 @@ set(CORE_SOURCES
     eval/eval.cpp
     eval/evaluator.cpp
     eval/mix6nnue.cpp
-    eval/mix6Qnnue.cpp
     eval/mix7nnue.cpp
     eval/mix8nnue.cpp
     eval/nnuev2.cpp
@@ -106,7 +105,6 @@ set(HEADERS
     eval/eval.h
     eval/evaluator.h
     eval/mix6nnue.h
-    eval/mix6Qnnue.h
     eval/mix7nnue.h
     eval/mix8nnue.h
     eval/nnuev2.h

@@ -758,6 +758,8 @@ void Mix8Evaluator::initEmptyBoard()
 {
     moveCache[BLACK].clear();
     moveCache[WHITE].clear();
+    valueSumBoardHistory[BLACK].clear();
+    valueSumBoardHistory[WHITE].clear();
     accumulator[BLACK]->clear(*weight[BLACK]);
     accumulator[WHITE]->clear(*weight[WHITE]);
 }

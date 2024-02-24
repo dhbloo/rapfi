@@ -24,7 +24,6 @@
 #include "database/dbstorage.h"
 #include "database/yxdbstorage.h"
 #include "eval/evaluator.h"
-#include "eval/mix6Qnnue.h"
 #include "eval/mix6nnue.h"
 #include "eval/mix7nnue.h"
 #include "eval/mix8nnue.h"
@@ -598,20 +597,6 @@ void Config::readEvaluator(const cpptoml::table &t)
                     weightCfg.get_as<int>("align_board_size").value_or(alignBoardSize));
             },
             true));
-    }
-    else if (*evaluatorType == "mix6qnnue") {
-        int alignBoardSize = t.get_as<int>("align_board_size").value_or(0);
-
-        Search::Threads.setupEvaluator(warpEvaluatorMaker([=](int                   boardSize,
-                                                              Rule                  rule,
-                                                              std::filesystem::path weightPath,
-                                                              const cpptoml::table &weightCfg) {
-            return std::make_unique<Evaluation::mix6q::Mix6QEvaluator>(
-                boardSize,
-                rule,
-                weightPath,
-                weightCfg.get_as<int>("align_board_size").value_or(alignBoardSize));
-        }));
     }
     else if (*evaluatorType == "mix7nnue") {
         int alignBoardSize = t.get_as<int>("align_board_size").value_or(0);
