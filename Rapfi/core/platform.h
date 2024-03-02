@@ -19,11 +19,11 @@
 #pragma once
 
 #if defined(USE_BMI2) || defined(USE_AVX512)
-    #include <immintrin.h>
+    #include <immintrin.h>  // BMI2, AVX512
 #endif
 
 #if !defined(NO_PREFETCH) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
-    #include <xmmintrin.h>
+    #include <xmmintrin.h>  // SSE
 #endif
 
 #ifdef USE_ROTR

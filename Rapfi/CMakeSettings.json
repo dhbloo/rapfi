@@ -48,6 +48,34 @@
       ]
     },
     {
+      "name": "x64-Release-SSE",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "ENABLE_LTO",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_SSE",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX2",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
       "name": "x64-Release-AVX512",
       "generator": "Ninja",
       "configurationType": "Release",
@@ -108,6 +136,29 @@
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
       "inheritEnvironments": [ "clang_cl_x64_x64" ]
+    },
+    {
+      "name": "x64-Clang-Release-SSE",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_x64_x64" ],
+      "variables": [
+        {
+          "name": "USE_SSE",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX2",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
     },
     {
       "name": "x64-Clang-Release-AVX512",

@@ -48,9 +48,12 @@ constexpr size_t simdBitsOfInstType(InstructionType instType)
 #if defined(USE_AVX512)
 constexpr size_t          NativeAlignment = 64;
 constexpr InstructionType NativeInstType  = AVX512;
-#elif defined(USE_AVX2) || defined(USE_AVX) || defined(USE_SSE)  // avx2 to sse by simde
+#elif defined(USE_AVX2)
 constexpr size_t          NativeAlignment = 32;
 constexpr InstructionType NativeInstType  = AVX2;
+#elif defined(USE_SSE)
+constexpr size_t          NativeAlignment = 16;
+constexpr InstructionType NativeInstType  = SSE;
 #else
 constexpr size_t          NativeAlignment = 8;
 constexpr InstructionType NativeInstType  = SCALAR;
@@ -91,62 +94,11 @@ constexpr size_t alignDimSize(size_t dimSize)
 
 namespace regop {  // register level operators
 
-    /// Unpack avx2 register [32xI8] to 2x[16xI16].
-    /// @return (lower 128bit [16xI16], higher 128bit [16xI16]).
-    FORCE_INLINE ::std::tuple<simde__m256i, simde__m256i> unpackI8ToI16(simde__m256i a)
-    {
-        auto a0i8  = simde_mm256_castsi256_si128(a);
-        auto a1i8  = simde_mm256_extracti128_si256(a, 1);
-        auto a0i16 = simde_mm256_cvtepi8_epi16(a0i8);
-        auto a1i16 = simde_mm256_cvtepi8_epi16(a1i8);
-        return {a0i16, a1i16};
-    }
-
-    /// Divide 2x[16xI16] by a power of two divisor and pack them into [32xI8].
-    template <unsigned Divisor>
-    FORCE_INLINE simde__m256i divideAndPackI16ToI8(simde__m256i a, simde__m256i b)
-    {
-        static_assert(Divisor > 0, "divisor must not be zero");
-        static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
-        constexpr unsigned Log2Divisor = floorLog2(Divisor);
-
-        if constexpr (Log2Divisor > 0) {
-            a = simde_mm256_srai_epi16(a, Log2Divisor);
-            b = simde_mm256_srai_epi16(b, Log2Divisor);
-        }
-
-        return simde_mm256_permute4x64_epi64(simde_mm256_packs_epi16(a, b),
-                                             SIMDE_MM_SHUFFLE(3, 1, 2, 0));
-    }
-
-    /// Multiply two avx2 register [32xI8] into 2x[16xI16].
-    /// @return ([16xI16] from lower [32xI8], [16xI16] from higher [32xI8]).
-    FORCE_INLINE ::std::tuple<simde__m256i, simde__m256i> mulI8(simde__m256i a, simde__m256i b)
-    {
-        simde__m128i a_m128 = simde_mm256_castsi256_si128(a);
-        simde__m128i b_m128 = simde_mm256_castsi256_si128(b);
-
-        simde__m256i a_m256 = simde_mm256_cvtepi8_epi16(a_m128);
-        simde__m256i b_m256 = simde_mm256_cvtepi8_epi16(b_m128);
-
-        simde__m256i r0 = simde_mm256_mullo_epi16(a_m256, b_m256);
-
-        a_m128 = simde_mm256_extractf128_si256(a, 1);
-        b_m128 = simde_mm256_extractf128_si256(b, 1);
-
-        a_m256 = simde_mm256_cvtepi8_epi16(a_m128);
-        b_m256 = simde_mm256_cvtepi8_epi16(b_m128);
-
-        simde__m256i r1 = simde_mm256_mullo_epi16(a_m256, b_m256);
-
-        return {r0, r1};
-    }
-
-    /// Horizontal sum [8xI32] of 4 groups into one [4xI32].
-    FORCE_INLINE simde__m128i hsumI32x4(simde__m256i sum0,
-                                        simde__m256i sum1,
-                                        simde__m256i sum2,
-                                        simde__m256i sum3)
+    /// Horizontal sum [i32x8] of 4 groups into one [i32x4].
+    FORCE_INLINE simde__m128i m256_hsum_i32x4(simde__m256i sum0,
+                                              simde__m256i sum1,
+                                              simde__m256i sum2,
+                                              simde__m256i sum3)
     {
         sum0 = simde_mm256_hadd_epi32(sum0, sum1);
         sum2 = simde_mm256_hadd_epi32(sum2, sum3);
@@ -160,57 +112,54 @@ namespace regop {  // register level operators
         return sum128;
     }
 
-    /// Warpper around _mm256_dpbusd_epi32().
-    FORCE_INLINE void add_dpbusd_epi32(simde__m256i &acc, simde__m256i a, simde__m256i b)
+    /// Compute dot product of two [i8x4] of 4 groups and accumulate into [i32x4].
+    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
+    template <bool SignedInput>
+    FORCE_INLINE void m256_add_dpbusd_epi32(simde__m256i &acc, simde__m256i a, simde__m256i b)
     {
+        if constexpr (SignedInput) {
+            const simde__m256i highest_bit = simde_mm256_set1_epi8(0x80);
+
+            simde__m256i msb  = simde_mm256_and_si256(a, highest_bit);
+            simde__m256i low7 = simde_mm256_andnot_si256(highest_bit, a);
+
 #if defined(USE_VNNI)
-        // This does exactly the same thing as explained below but in one instruction.
-        acc = _mm256_dpbusd_epi32(acc, a, b);
+            msb  = simde_mm256_dpbusd_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
+            low7 = simde_mm256_dpbusd_epi32(_mm256_setzero_si256(), low7, b);
 #else
-        // Multiply a * b and accumulate neighbouring outputs into int16 values
-        simde__m256i product0 = simde_mm256_maddubs_epi16(a, b);
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = simde_mm256_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = simde_mm256_maddubs_epi16(low7, b);
 
-        // Multiply product0 by 1 (idempotent) and accumulate neighbouring outputs into int32 values
-        product0 = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
-
-        // Add to the main int32 accumulator.
-        acc = simde_mm256_add_epi32(acc, product0);
+            // Horizontally sum i16 pairs to i32
+            const simde__m256i one = simde_mm256_set1_epi16(1);
+            low7                   = simde_mm256_madd_epi16(low7, one);
+            msb                    = simde_mm256_madd_epi16(msb, one);
 #endif
+
+            // Place value of the MSB was negative
+            simde__m256i product0 = simde_mm256_sub_epi32(low7, msb);
+
+            // Add to the main int32 accumulator.
+            acc = simde_mm256_add_epi32(acc, product0);
+        }
+        else {
+#if defined(USE_VNNI)
+            // This does exactly the same thing as explained below but in one instruction.
+            acc = _mm256_dpbusd_epi32(acc, a, b);
+#else
+            // Multiply a * b and accumulate neighbouring outputs into int16 values
+            simde__m256i product0 = simde_mm256_maddubs_epi16(a, b);
+
+            // Multiply product0 by 1 (idempotent) and accumulate neighbouring outputs into int32
+            // values
+            product0 = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
+
+            // Add to the main int32 accumulator.
+            acc = simde_mm256_add_epi32(acc, product0);
+#endif
+        }
     };
-
-    /// Apply int16 leaky relu to a batch of [16xI16] registers.
-    template <int Size, int NegSlopeDivisor>
-    simde__m256i *lrelu16(simde__m256i x[])
-    {
-        static_assert(isPowerOfTwo(NegSlopeDivisor), "divisor must be a power of two");
-        constexpr int Log2Divisor = floorLog2(NegSlopeDivisor);
-        DEF_BATCH256(int16_t, Size, RegWidth, NumBatches);
-
-        for (int i = 0; i < NumBatches; i++) {
-            auto negValue = simde_mm256_srai_epi16(x[i], Log2Divisor);
-            x[i]          = simde_mm256_max_epi16(x[i], negValue);
-        }
-
-        return x + NumBatches;
-    }
-
-    /// Apply int16 prelu to a batch of [16xI16] registers.
-    template <int Size, int WeightScale>
-    simde__m256i *prelu16(simde__m256i x[], const int16_t weight[Size])
-    {
-        DEF_BATCH256(int16_t, Size, RegWidth, NumBatches);
-        static_assert(isPowerOfTwo(WeightScale), "weight scale must be a power of two");
-        constexpr int Log2WeightScale = floorLog2(WeightScale);
-
-        for (int i = 0; i < NumBatches; i++) {
-            auto slope    = simde_mm256_loadu_si256(weight + i * RegWidth);
-            auto negValue = simde_mm256_mullo_epi16(x[i], slope);
-            negValue      = simde_mm256_srai_epi16(negValue, Log2WeightScale);
-            x[i]          = simde_mm256_max_epi16(x[i], negValue);
-        }
-
-        return x + NumBatches;
-    }
 
 }  // namespace regop
 
@@ -924,31 +873,6 @@ template <int Size,
           typename T,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType>
-T *add(T *output, const T *input, const T a)
-{
-    static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(output));
-    assert(isPtrAligned<Alignment>(input));
-
-    typedef detail::VecBatch<Size, T, Inst>          B;
-    typedef detail::VecLoadStore<T, Alignment, Inst> LS;
-    typedef detail::VecOp<T, Inst>                   Op;
-
-    auto A = Op::set1(a);
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto data = LS::load(input + i * B::RegWidth);
-        data      = Op::add(data, A);
-        LS::store(output + i * B::RegWidth, data);
-    }
-
-    return output + B::NumBatch * B::RegWidth;
-}
-
-template <int Size,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
 T *add(T *output, const T *input0, const T *input1)
 {
     static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
@@ -971,88 +895,12 @@ T *add(T *output, const T *input0, const T *input1)
     return output + B::NumBatch * B::RegWidth;
 }
 
-template <int Size,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
-T *min(T *output, const T *input0, const T *input1)
-{
-    static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(output));
-    assert(isPtrAligned<Alignment>(input0));
-    assert(isPtrAligned<Alignment>(input1));
-
-    typedef detail::VecBatch<Size, T, Inst>          B;
-    typedef detail::VecLoadStore<T, Alignment, Inst> LS;
-    typedef detail::VecOp<T, Inst>                   Op;
-
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto data0 = LS::load(input0 + i * B::RegWidth);
-        auto data1 = LS::load(input1 + i * B::RegWidth);
-        data0      = Op::min(data0, data1);
-        LS::store(output + i * B::RegWidth, data0);
-    }
-
-    return output + B::NumBatch * B::RegWidth;
-}
-
-template <int Size,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
-T *max(T *output, const T *input0, const T *input1)
-{
-    static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(output));
-    assert(isPtrAligned<Alignment>(input0));
-    assert(isPtrAligned<Alignment>(input1));
-
-    typedef detail::VecBatch<Size, T, Inst>          B;
-    typedef detail::VecLoadStore<T, Alignment, Inst> LS;
-    typedef detail::VecOp<T, Inst>                   Op;
-
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto data0 = LS::load(input0 + i * B::RegWidth);
-        auto data1 = LS::load(input1 + i * B::RegWidth);
-        data0      = Op::max(data0, data1);
-        LS::store(output + i * B::RegWidth, data0);
-    }
-
-    return output + B::NumBatch * B::RegWidth;
-}
-
-template <int Size,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
-T *relu(T *output, const T *input)
-{
-    static_assert(std::is_integral_v<T> || std::is_same_v<T, float>);
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(output));
-    assert(isPtrAligned<Alignment>(input));
-
-    typedef detail::VecBatch<Size, T, Inst>          B;
-    typedef detail::VecLoadStore<T, Alignment, Inst> LS;
-    typedef detail::VecOp<T, Inst>                   Op;
-
-    auto zero = Op::setzero();
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto data0 = LS::load(input + i * B::RegWidth);
-        data0      = Op::max(data0, zero);
-        LS::store(output + i * B::RegWidth, data0);
-    }
-
-    return output + B::NumBatch * B::RegWidth;
-}
-
 template <int             OutSize,
           int             InSize,
           int             WeightScale,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
+          bool            SignedInput = false,
+          int             Alignment   = NativeAlignment,
+          InstructionType Inst        = NativeInstType>
 int32_t *linear(int32_t      *output,
                 const int8_t *input,
                 const int8_t  weight[OutSize][InSize],
@@ -1095,15 +943,19 @@ int32_t *linear(int32_t      *output,
 
             // This function processes a 32x1 chunk of int8 and produces a 8x1 chunk of int32.
             // For definition see below.
-            regop::add_dpbusd_epi32(sum0, in, I8LS::load(weight[0] + offset0 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum1, in, I8LS::load(weight[0] + offset1 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum2, in, I8LS::load(weight[0] + offset2 + j * B::RegWidth));
-            regop::add_dpbusd_epi32(sum3, in, I8LS::load(weight[0] + offset3 + j * B::RegWidth));
+            const auto w0 = I8LS::load(weight[0] + offset0 + j * B::RegWidth);
+            const auto w1 = I8LS::load(weight[0] + offset1 + j * B::RegWidth);
+            const auto w2 = I8LS::load(weight[0] + offset2 + j * B::RegWidth);
+            const auto w3 = I8LS::load(weight[0] + offset3 + j * B::RegWidth);
+            regop::m256_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
+            regop::m256_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
+            regop::m256_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
+            regop::m256_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
         }
 
         // This function adds horizontally 8 values from each sum together, producing 4 int32
         // values. For the definition see below.
-        auto outval = regop::hsumI32x4(sum0, sum1, sum2, sum3);
+        auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
         outval      = simde_mm_add_epi32(outval, simde_mm_loadu_si128(bias + i * 4));
         // Here we account for the weights scaling.
         outval = simde_mm_srai_epi32(outval, Log2WeightScale);
