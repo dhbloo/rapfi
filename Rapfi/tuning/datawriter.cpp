@@ -312,6 +312,7 @@ public:
         this->gameEntry.rule         = gameEntry.rule;
         this->gameEntry.result       = gameEntry.result;
         this->gameEntry.initPosition = gameEntry.initPosition;
+        totalPly                     = (uint32_t)gameEntry.initPosition.size();
 
         for (auto &m : gameEntry.moveSequence) {
             this->gameEntry.moveSequence.push_back({m.move, m.eval, m.tag});
@@ -337,6 +338,9 @@ public:
                 break;
             }
             }
+
+            if (m.move != Pos::PASS)
+                totalPly++;
         }
 
         // Flush current game entry as it is completed
