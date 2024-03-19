@@ -230,7 +230,7 @@ void Command::selfplay(int argc, char *argv[])
         else {
             boardSizeMin = boardSizeMax = args["boardsize"].as<int>();
         }
-        if (boardSizeMin < 5 || boardSizeMax > 20)
+        if (boardSizeMin < 5 || boardSizeMax > 22)
             throw std::invalid_argument("board size must in range [5,22]");
 
         if (args.count("opening")) {
