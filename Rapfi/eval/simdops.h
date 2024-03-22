@@ -94,6 +94,58 @@ constexpr size_t alignDimSize(size_t dimSize)
 
 namespace regop {  // register level operators
 
+    /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
+    FORCE_INLINE simde__m128i m128_hsum_i32x4(simde__m128i sum0,
+                                              simde__m128i sum1,
+                                              simde__m128i sum2,
+                                              simde__m128i sum3)
+    {
+        sum0 = simde_mm_hadd_epi32(sum0, sum1);
+        sum2 = simde_mm_hadd_epi32(sum2, sum3);
+        sum0 = simde_mm_hadd_epi32(sum0, sum2);
+        return sum0;
+    }
+
+    /// Compute dot product of two [i8x4] of 4 groups and accumulate into [i32x4].
+    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
+    template <bool SignedInput>
+    FORCE_INLINE void m128_add_dpbusd_epi32(simde__m128i &acc, simde__m128i a, simde__m128i b)
+    {
+        if constexpr (SignedInput) {
+            const simde__m128i highest_bit = simde_mm_set1_epi8(0x80);
+
+            simde__m128i msb  = simde_mm_and_si128(a, highest_bit);
+            simde__m128i low7 = simde_mm_andnot_si128(highest_bit, a);
+
+#if defined(USE_VNNI)
+            msb  = simde_mm_dpbusd_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
+            low7 = simde_mm_dpbusd_epi32(_mm_setzero_si128(), low7, b);
+#else
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = simde_mm_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = simde_mm_maddubs_epi16(low7, b);
+
+            // Horizontally sum i16 pairs to i32
+            const simde__m128i one = simde_mm_set1_epi16(1);
+            low7                   = simde_mm_madd_epi16(low7, one);
+            msb                    = simde_mm_madd_epi16(msb, one);
+#endif
+
+            // Place value of the MSB was negative
+            simde__m128i product0 = simde_mm_sub_epi32(low7, msb);
+            acc                   = simde_mm_add_epi32(acc, product0);
+        }
+        else {
+#if defined(USE_VNNI)
+            acc = _mm_dpbusd_epi32(acc, a, b);
+#else
+            simde__m128i product0  = simde_mm_maddubs_epi16(a, b);
+            product0               = simde_mm_madd_epi16(product0, simde_mm_set1_epi16(1));
+            acc                    = simde_mm_add_epi32(acc, product0);
+#endif
+        }
+    }
+
     /// Horizontal sum [i32x8] of 4 groups into one [i32x4].
     FORCE_INLINE simde__m128i m256_hsum_i32x4(simde__m256i sum0,
                                               simde__m256i sum1,
@@ -112,7 +164,7 @@ namespace regop {  // register level operators
         return sum128;
     }
 
-    /// Compute dot product of two [i8x4] of 4 groups and accumulate into [i32x4].
+    /// Compute dot product of two [i8x4] of 8 groups and accumulate into [i32x8].
     /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
     template <bool SignedInput>
     FORCE_INLINE void m256_add_dpbusd_epi32(simde__m256i &acc, simde__m256i a, simde__m256i b)
@@ -139,43 +191,81 @@ namespace regop {  // register level operators
 
             // Place value of the MSB was negative
             simde__m256i product0 = simde_mm256_sub_epi32(low7, msb);
-
-            // Add to the main int32 accumulator.
-            acc = simde_mm256_add_epi32(acc, product0);
+            acc                   = simde_mm256_add_epi32(acc, product0);
         }
         else {
 #if defined(USE_VNNI)
-            // This does exactly the same thing as explained below but in one instruction.
             acc = _mm256_dpbusd_epi32(acc, a, b);
 #else
-            // Multiply a * b and accumulate neighbouring outputs into int16 values
-            simde__m256i product0 = simde_mm256_maddubs_epi16(a, b);
-
-            // Multiply product0 by 1 (idempotent) and accumulate neighbouring outputs into int32
-            // values
-            product0 = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
-
-            // Add to the main int32 accumulator.
-            acc = simde_mm256_add_epi32(acc, product0);
+            simde__m256i product0  = simde_mm256_maddubs_epi16(a, b);
+            product0               = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
+            acc                    = simde_mm256_add_epi32(acc, product0);
 #endif
         }
     };
+
+#ifdef USE_AVX512
+    /// Compute dot product of two [i8x4] of 16 groups and accumulate into [i32x16].
+    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
+    template <bool SignedInput>
+    FORCE_INLINE void m512_add_dpbusd_epi32(__m512i &acc, __m512i a, __m512i b)
+    {
+        if constexpr (SignedInput) {
+            const __m512i highest_bit = _mm512_set1_epi8(0x80);
+
+            __m512i msb  = _mm512_and_si256(a, highest_bit);
+            __m512i low7 = _mm512_andnot_si256(highest_bit, a);
+
+    #if defined(USE_VNNI)
+            msb  = _mm512_dpbusd_epi32(_mm512_setzero_si512(), msb, b);  // 0 or 128
+            low7 = _mm512_dpbusd_epi32(_mm512_setzero_si512(), low7, b);
+    #else
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = _mm512_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = _mm512_maddubs_epi16(low7, b);
+
+            // Horizontally sum i16 pairs to i32
+            const __m512i one = _mm512_set1_epi16(1);
+            low7              = _mm512_madd_epi16(low7, one);
+            msb               = _mm512_madd_epi16(msb, one);
+    #endif
+
+            // Place value of the MSB was negative
+            __m512i product0 = _mm512_sub_epi32(low7, msb);
+            acc              = _mm512_add_epi32(acc, product0);
+        }
+        else {
+    #if defined(USE_VNNI)
+            acc = _mm512_dpbusd_epi32(acc, a, b);
+    #else
+            __m512i product0  = _mm512_maddubs_epi16(a, b);
+            product0          = _mm512_madd_epi16(product0, _mm512_set1_epi16(1));
+            acc               = _mm512_add_epi32(acc, product0);
+    #endif
+        }
+    };
+#endif
 
 }  // namespace regop
 
 namespace detail {
 
+    template <typename...>
+    inline constexpr bool always_false_v = false;
+
     // ------------------------------------------------------------------------
     // Vec regwidth & batch num definition
 
-    template <size_t Size, typename T, InstructionType I>
+    template <size_t Size, typename T, InstructionType I, bool AllowExtra = false>
     struct VecBatch
     {
-        static constexpr size_t SimdBits = simdBitsOfInstType(I);
-        static constexpr size_t RegWidth = SimdBits ? (SimdBits / 8) / sizeof(T) : 1;
-        static constexpr size_t NumBatch = Size / RegWidth;
+        static constexpr size_t SimdBits    = simdBitsOfInstType(I);
+        static constexpr size_t RegWidth    = SimdBits ? (SimdBits / 8) / sizeof(T) : 1;
+        static constexpr size_t NumBatch    = Size / RegWidth;
+        static constexpr size_t NumExtra    = Size % RegWidth;
+        static constexpr size_t BatchedSize = NumBatch * RegWidth;
 
-        static_assert(Size % RegWidth == 0, "data does not fill a register");
+        static_assert(AllowExtra || NumExtra == 0, "data does not fill a register");
     };
 
     // ------------------------------------------------------------------------
@@ -309,6 +399,13 @@ namespace detail {
     };
 #endif
 
+    template <typename T, int Alignment>
+    struct VecLoadStore<T, Alignment, SCALAR>
+    {
+        static FORCE_INLINE T    load(const T *addr) { return *addr; }
+        static FORCE_INLINE void store(T *addr, T data) { *addr = data; }
+    };
+
     // ------------------------------------------------------------------------
     // Vec type conversion template
 
@@ -332,31 +429,37 @@ namespace detail {
                     return simde_mm_cvtepi8_epi32(a);
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm_cvtepi8_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
             }
-            if constexpr (std::is_same_v<FT, int16_t>) {
+            else if constexpr (std::is_same_v<FT, int16_t>) {
                 if constexpr (std::is_same_v<TT, int32_t>)
                     return simde_mm_cvtepi16_epi32(a);
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm_cvtepi16_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
             }
-            if constexpr (std::is_same_v<FT, int32_t>) {
+            else if constexpr (std::is_same_v<FT, int32_t>) {
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm_cvtepi32_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int32_t");
             }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
         }
 
         static FORCE_INLINE auto convert(TR a)
         {
-            if constexpr (sizeof(TT) / sizeof(FT) == 2) {
+            if constexpr (sizeof(TT) / sizeof(FT) == 2)
                 return std::tuple(convert1(a), convert1(simde_mm_srli_si128(a, 8)));
-            }
-            if constexpr (sizeof(TT) / sizeof(FT) == 4) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 4)
                 return std::tuple(convert1(a),
                                   convert1(simde_mm_srli_si128(a, 4)),
                                   convert1(simde_mm_srli_si128(a, 8)),
                                   convert1(simde_mm_srli_si128(a, 12)));
-            }
-            if constexpr (sizeof(TT) / sizeof(FT) == 8) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 8)
                 return std::tuple(convert1(a),
                                   convert1(simde_mm_srli_si128(a, 2)),
                                   convert1(simde_mm_srli_si128(a, 4)),
@@ -365,7 +468,8 @@ namespace detail {
                                   convert1(simde_mm_srli_si128(a, 10)),
                                   convert1(simde_mm_srli_si128(a, 12)),
                                   convert1(simde_mm_srli_si128(a, 14)));
-            }
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported convert type");
         }
     };
 
@@ -380,30 +484,37 @@ namespace detail {
             if constexpr (std::is_same_v<FT, int8_t>) {
                 if constexpr (std::is_same_v<TT, int16_t>)
                     return simde_mm256_cvtepi8_epi16(a);
-                if constexpr (std::is_same_v<TT, int32_t>)
+                else if constexpr (std::is_same_v<TT, int32_t>)
                     return simde_mm256_cvtepi8_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm256_cvtepi8_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
             }
-            if constexpr (std::is_same_v<FT, int16_t>) {
+            else if constexpr (std::is_same_v<FT, int16_t>) {
                 if constexpr (std::is_same_v<TT, int32_t>)
                     return simde_mm256_cvtepi16_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm256_cvtepi16_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
             }
-            if constexpr (std::is_same_v<FT, int32_t>) {
+            else if constexpr (std::is_same_v<FT, int32_t>) {
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm256_cvtepi32_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int32_t");
             }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
         }
 
         static FORCE_INLINE auto convert(TR a)
         {
-            if constexpr (sizeof(TT) / sizeof(FT) == 2) {
+            if constexpr (sizeof(TT) / sizeof(FT) == 2)
                 return std::tuple(convert1(simde_mm256_castsi256_si128(a)),
                                   convert1(simde_mm256_extracti128_si256(a, 1)));
-            }
-            if constexpr (sizeof(TT) / sizeof(FT) == 4) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 4) {
                 auto l128 = simde_mm256_castsi256_si128(a);
                 auto h128 = simde_mm256_extracti128_si256(a, 1);
                 return std::tuple(convert1(l128),
@@ -411,7 +522,7 @@ namespace detail {
                                   convert1(h128),
                                   convert1(simde_mm_srli_si128(h128, 8)));
             }
-            if constexpr (sizeof(TT) / sizeof(FT) == 8) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 8) {
                 auto l128 = simde_mm256_castsi256_si128(a);
                 auto h128 = simde_mm256_extracti128_si256(a, 1);
                 return std::tuple(convert1(l128),
@@ -423,6 +534,8 @@ namespace detail {
                                   convert1(simde_mm_srli_si128(h128, 8)),
                                   convert1(simde_mm_srli_si128(h128, 12)));
             }
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported convert type");
         }
     };
 
@@ -442,32 +555,36 @@ namespace detail {
                     return _mm512_cvtepi8_epi32(a);
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return _mm512_cvtepi8_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
             }
-            if constexpr (std::is_same_v<FT, int16_t>) {
+            else if constexpr (std::is_same_v<FT, int16_t>) {
                 if constexpr (std::is_same_v<TT, int32_t>)
                     return _mm512_cvtepi16_epi32(a);
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return _mm512_cvtepi16_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
             }
-            if constexpr (std::is_same_v<FT, int32_t>) {
+            else if constexpr (std::is_same_v<FT, int32_t>) {
                 if constexpr (std::is_same_v<TT, int64_t>)
                     return _mm512_cvtepi32_epi64(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int32_t");
             }
         }
 
         static FORCE_INLINE auto convert(TR a)
         {
-            if constexpr (sizeof(TT) / sizeof(FT) == 2) {
+            if constexpr (sizeof(TT) / sizeof(FT) == 2)
                 return std::tuple(convert1(_mm512_castsi512_si256(a)),
                                   convert1(_mm512_extracti64x4_epi64(a, 1)));
-            }
-            if constexpr (sizeof(TT) / sizeof(FT) == 4) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 4)
                 return std::tuple(convert1(_mm512_castsi512_si128(a)),
                                   convert1(_mm512_extracti32x4_epi32(a, 1)),
                                   convert1(_mm512_extracti32x4_epi32(a, 2)),
                                   convert1(_mm512_extracti32x4_epi32(a, 3)));
-            }
-            if constexpr (sizeof(TT) / sizeof(FT) == 8) {
+            else if constexpr (sizeof(TT) / sizeof(FT) == 8) {
                 auto a128 = _mm512_castsi512_si128(a);
                 auto b128 = _mm512_extracti32x4_epi32(a, 1);
                 auto c128 = _mm512_extracti32x4_epi32(a, 2);
@@ -481,6 +598,8 @@ namespace detail {
                                   convert1(d128),
                                   convert1(_mm_srli_si128(d128, 8)));
             }
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported convert type");
         }
     };
 #endif
@@ -511,6 +630,82 @@ namespace detail {
         typedef __m512  TR;
 
         static FORCE_INLINE TR convert1(FR a) { return _mm512_cvtepi32_ps(a); }
+    };
+#endif
+
+    template <typename FT, typename TT>
+    struct VecCvt<FT, TT, SCALAR>
+    {
+        static FORCE_INLINE TT convert1(FT a) { return static_cast<TT>(a); }
+    };
+
+    // ------------------------------------------------------------------------
+    // Vec type packing (narrowing-conversion) template
+
+    /// Convert vector register from FT type to TT type.
+    template <typename FT, typename TT, InstructionType I, typename Enabled = void>
+    struct VecPack
+    {};
+
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, SSE, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef simde__m128i R;
+
+        static FORCE_INLINE R packs(R a, R b)
+        {
+            if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
+                return simde_mm_packs_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+                return simde_mm_packus_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
+                return simde_mm_packs_epi32(a, b);
+            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+                return simde_mm_packus_epi32(a, b);
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+    };
+
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, AVX2, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef simde__m256i R;
+
+        static FORCE_INLINE R packs(R a, R b)
+        {
+            if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
+                return simde_mm256_packs_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+                return simde_mm256_packus_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
+                return simde_mm256_packs_epi32(a, b);
+            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+                return simde_mm256_packus_epi32(a, b);
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+    };
+
+#ifdef USE_AVX512
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, AVX512, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef __m512i R;
+
+        static FORCE_INLINE R packs(R a, R b)
+        {
+            if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
+                return _mm512_packs_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+                return _mm512_packus_epi16(a, b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
+                return _mm512_packs_epi32(a, b);
+            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+                return _mm512_packus_epi32(a, b);
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
     };
 #endif
 
@@ -561,6 +756,7 @@ namespace detail {
         static FORCE_INLINE R subs(R a, R b) { return simde_mm_subs_epi8(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi8(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return simde_mm_avg_epu8(a, b); }
     };
 
     template <>
@@ -574,6 +770,7 @@ namespace detail {
         static FORCE_INLINE R subs(R a, R b) { return simde_mm256_subs_epi8(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm256_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi8(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return simde_mm256_avg_epu8(a, b); }
     };
 
 #ifdef USE_AVX512
@@ -588,6 +785,7 @@ namespace detail {
         static FORCE_INLINE R subs(R a, R b) { return _mm512_subs_epi8(a, b); }
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi8(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return _mm512_avg_epu8(a, b); }
     };
 #endif
 
@@ -605,6 +803,10 @@ namespace detail {
         static FORCE_INLINE R mulhrs(R a, R b) { return simde_mm_mulhrs_epi16(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi16(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi16(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return simde_mm_avg_epu16(a, b); }
+        static FORCE_INLINE R srai(R a, int i) { return simde_mm_srai_epi16(a, i); }
+        static FORCE_INLINE R srli(R a, int i) { return simde_mm_srli_epi16(a, i); }
+        static FORCE_INLINE R slli(R a, int i) { return simde_mm_slli_epi16(a, i); }
     };
 
     template <>
@@ -621,6 +823,10 @@ namespace detail {
         static FORCE_INLINE R       mulhrs(R a, R b) { return simde_mm256_mulhrs_epi16(a, b); }
         static FORCE_INLINE R       min(R a, R b) { return simde_mm256_min_epi16(a, b); }
         static FORCE_INLINE R       max(R a, R b) { return simde_mm256_max_epi16(a, b); }
+        static FORCE_INLINE R       avg(R a, R b) { return simde_mm256_avg_epu16(a, b); }
+        static FORCE_INLINE R       srai(R a, int i) { return simde_mm256_srai_epi16(a, i); }
+        static FORCE_INLINE R       srli(R a, int i) { return simde_mm256_srli_epi16(a, i); }
+        static FORCE_INLINE R       slli(R a, int i) { return simde_mm256_slli_epi16(a, i); }
         static FORCE_INLINE int32_t reduceadd(R a)
         {
             a          = simde_mm256_madd_epi16(a, set1(1));
@@ -650,6 +856,10 @@ namespace detail {
         static FORCE_INLINE R mulhrs(R a, R b) { return _mm512_mulhrs_epi16(a, b); }
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi16(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi16(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return _mm512_avg_epu16(a, b); }
+        static FORCE_INLINE R srai(R a, int i) { return _mm512_srai_epi16(a, i); }
+        static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi16(a, i); }
+        static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi16(a, i); }
     };
 #endif
 
@@ -662,6 +872,9 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return simde_mm_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi32(a, b); }
+        static FORCE_INLINE R srai(R a, int i) { return simde_mm_srai_epi32(a, i); }
+        static FORCE_INLINE R srli(R a, int i) { return simde_mm_srli_epi32(a, i); }
+        static FORCE_INLINE R slli(R a, int i) { return simde_mm_slli_epi32(a, i); }
         static FORCE_INLINE T reduceadd(R a)
         {
             auto hi64  = simde_mm_shuffle_epi32(a, SIMDE_MM_SHUFFLE(1, 0, 3, 2));
@@ -681,6 +894,9 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return simde_mm256_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm256_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi32(a, b); }
+        static FORCE_INLINE R srai(R a, int i) { return simde_mm256_srai_epi32(a, i); }
+        static FORCE_INLINE R srli(R a, int i) { return simde_mm256_srli_epi32(a, i); }
+        static FORCE_INLINE R slli(R a, int i) { return simde_mm256_slli_epi32(a, i); }
         static FORCE_INLINE T reduceadd(R a)
         {
             auto lo    = simde_mm256_castsi256_si128(a);
@@ -704,6 +920,9 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return _mm512_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi32(a, b); }
+        static FORCE_INLINE R srai(R a, int i) { return _mm512_srai_epi32(a, i); }
+        static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi32(a, i); }
+        static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi32(a, i); }
         static FORCE_INLINE T reduceadd(R a) { return _mm512_reduce_add_epi32(a); }
     };
 #endif
@@ -750,7 +969,14 @@ namespace detail {
         static FORCE_INLINE R div(R a, R b) { return simde_mm_div_ps(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_ps(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_ps(a, b); }
-        static FORCE_INLINE R fmadd(R a, R b, R c) { return simde_mm_fmadd_ps(a, b, c); }
+        static FORCE_INLINE R fmadd(R a, R b, R c)
+        {
+#ifdef USE_AVX2
+            return simde_mm_fmadd_ps(a, b, c);
+#else
+            return simde_mm_add_ps(simde_mm_mul_ps(a, b), c);
+#endif
+        }
         static FORCE_INLINE T reduceadd(R a)
         {
             R shuf = simde_mm_movehdup_ps(a);  // broadcast elements 3,1 to 2,0
@@ -819,9 +1045,394 @@ namespace detail {
         static FORCE_INLINE R div(R a, R b) { return a / b; }
         static FORCE_INLINE R min(R a, R b) { return std::min(a, b); }
         static FORCE_INLINE R max(R a, R b) { return std::max(a, b); }
+        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
+        static FORCE_INLINE R srai(R a, int i)
+        {
+            return static_cast<T>(static_cast<std::make_signed_t<T>>(a) >> i);
+        }
+        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
+        static FORCE_INLINE R srli(R a, int i)
+        {
+            return static_cast<T>(static_cast<std::make_unsigned_t<T>>(a) >> i);
+        }
+        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
+        static FORCE_INLINE R slli(R a, int i)
+        {
+            return a << i;
+        }
         static FORCE_INLINE R fmadd(R a, R b, R c) { return a * b + c; }
         static FORCE_INLINE T reduceadd(R a) { return a; }
     };
+
+    // ------------------------------------------------------------------------
+    // Affine transform operation (y = Ax + b) template
+    template <int OutSize, int InSize, int Alignment, InstructionType I, typename Enabled = void>
+    struct Affine
+    {};
+
+    template <int OutSize, int InSize, int Alignment>
+    struct Affine<OutSize,
+                  InSize,
+                  Alignment,
+                  SSE,
+                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    {
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int8_t, Alignment, SSE>  I8LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LS;
+            typedef detail::VecOp<int32_t, SSE>                   I32Op;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                // Prepare weight offsets. One offset for one row of weights.
+                // This is a simple index into a 2d array.
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                // Accumulation starts from 0, we add the bias only at the end.
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                // Each innermost loop processes a 16x4 chunk of weights, so 64 weights at a time!
+                typedef detail::VecBatch<InSize, int8_t, SSE> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    // We unroll by 4 so that we can reuse this value, reducing the number of
+                    // memory operations required.
+                    auto in = I8LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int8_t, SSE>::max(in, I32Op::setzero());
+
+                    // This function processes a 16x1 chunk of int8 and produces a 4x1 chunk of
+                    // int32. For definition see below.
+                    const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
+                    regop::m128_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
+                    regop::m128_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
+                    regop::m128_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
+                    regop::m128_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
+                }
+
+                // This function adds horizontally 4 values from each sum together, producing 4
+                // int32 values. For the definition see below.
+                auto outval = regop::m128_hsum_i32x4(sum0, sum1, sum2, sum3);
+                if constexpr (Bias)
+                    outval = I32Op::add(outval, I32LS::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32Op::max(outval, I32Op::setzero());
+                I32LS::store(output + i * 4, outval);
+            }
+        }
+
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int16_t, Alignment, SSE> I16LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LS;
+            typedef detail::VecOp<int32_t, SSE>                   I32Op;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                // Prepare weight offsets. One offset for one row of weights.
+                // This is a simple index into a 2d array.
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                // Accumulation starts from 0, we add the bias only at the end.
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                // Each innermost loop processes a 8x4 chunk of weights, so 32 weights at a time!
+                typedef detail::VecBatch<InSize, int16_t, SSE> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    // We unroll by 4 so that we can reuse this value, reducing the number of
+                    // memory operations required.
+                    auto in = I16LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int16_t, SSE>::max(in, I32Op::setzero());
+
+                    // This function processes a 8x1 chunk of int16 and produces a 4x1 chunk of
+                    // int32. For definition see below.
+                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
+                    sum0          = I32Op::add(sum0, simde_mm_madd_epi16(in, w0));
+                    sum1          = I32Op::add(sum1, simde_mm_madd_epi16(in, w1));
+                    sum2          = I32Op::add(sum2, simde_mm_madd_epi16(in, w2));
+                    sum3          = I32Op::add(sum3, simde_mm_madd_epi16(in, w3));
+                }
+
+                // This function adds horizontally 4 values from each sum together, producing 4
+                // int32 values. For the definition see below.
+                auto outval = regop::m128_hsum_i32x4(sum0, sum1, sum2, sum3);
+                if constexpr (Bias)
+                    outval = I32Op::add(outval, I32LS::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32Op::max(outval, I32Op::setzero());
+                I32LS::store(output + i * 4, outval);
+            }
+        }
+    };
+
+    template <int OutSize, int InSize, int Alignment>
+    struct Affine<OutSize,
+                  InSize,
+                  Alignment,
+                  AVX2,
+                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    {
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int8_t, Alignment, AVX2> I8LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LSHalf;
+            typedef detail::VecOp<int32_t, AVX2>                  I32Op;
+            typedef detail::VecOp<int32_t, SSE>                   I32OpHalf;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                // Prepare weight offsets. One offset for one row of weights.
+                // This is a simple index into a 2d array.
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                // Accumulation starts from 0, we add the bias only at the end.
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                // Each innermost loop processes a 32x4 chunk of weights, so 128 weights at a time!
+                typedef detail::VecBatch<InSize, int8_t, AVX2> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    // We unroll by 4 so that we can reuse this value, reducing the number of
+                    // memory operations required.
+                    auto in = I8LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int8_t, AVX2>::max(in, I32Op::setzero());
+
+                    // This function processes a 32x1 chunk of int8 and produces a 8x1 chunk of
+                    // int32. For definition see below.
+                    const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
+                    regop::m256_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
+                    regop::m256_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
+                    regop::m256_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
+                    regop::m256_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
+                }
+
+                // This function adds horizontally 8 values from each sum together, producing 4
+                // int32 values. For the definition see below.
+                auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
+                if constexpr (Bias)
+                    outval = I32OpHalf::add(outval, I32LSHalf::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32OpHalf::max(outval, I32OpHalf::setzero());
+                I32LSHalf::store(output + i * 4, outval);
+            }
+        }
+
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int16_t, Alignment, AVX2> I16LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE>  I32LSHalf;
+            typedef detail::VecOp<int32_t, AVX2>                   I32Op;
+            typedef detail::VecOp<int32_t, SSE>                    I32OpHalf;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                // Prepare weight offsets. One offset for one row of weights.
+                // This is a simple index into a 2d array.
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                // Accumulation starts from 0, we add the bias only at the end.
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                // Each innermost loop processes a 16x4 chunk of weights, so 64 weights at a time!
+                typedef detail::VecBatch<InSize, int16_t, AVX2> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    // We unroll by 4 so that we can reuse this value, reducing the number of
+                    // memory operations required.
+                    auto in = I16LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int16_t, AVX2>::max(in, I32Op::setzero());
+
+                    // This function processes a 16x1 chunk of int16 and produces a 8x1 chunk of
+                    // int32. For definition see below.
+                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
+                    sum0          = I32Op::add(sum0, simde_mm256_madd_epi16(in, w0));
+                    sum1          = I32Op::add(sum1, simde_mm256_madd_epi16(in, w1));
+                    sum2          = I32Op::add(sum2, simde_mm256_madd_epi16(in, w2));
+                    sum3          = I32Op::add(sum3, simde_mm256_madd_epi16(in, w3));
+                }
+
+                // This function adds horizontally 8 values from each sum together, producing 4
+                // int32 values. For the definition see below.
+                auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
+                if constexpr (Bias)
+                    outval = I32OpHalf::add(outval, I32LSHalf::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32OpHalf::max(outval, I32OpHalf::setzero());
+                I32LSHalf::store(output + i * 4, outval);
+            }
+        }
+    };
+
+#ifdef USE_AVX512
+    template <int OutSize, int InSize, int Alignment>
+    struct Affine<OutSize,
+                  InSize,
+                  Alignment,
+                  AVX512,
+                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    {
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int8_t, Alignment, AVX512> I8LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE>   I32LSQuarter;
+            typedef detail::VecOp<int32_t, AVX512>                  I32Op;
+            typedef detail::VecOp<int32_t, AVX2>                    I32OpHalf;
+            typedef detail::VecOp<int32_t, SSE>                     I32OpQuarter;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                typedef detail::VecBatch<InSize, int8_t, AVX2> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    auto in = I8LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int8_t, AVX512>::max(in, I32Op::setzero());
+
+                    const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
+                    sum0          = I32Op::add(sum0, _mm512_madd_epi16(in, w0));
+                    sum1          = I32Op::add(sum1, _mm512_madd_epi16(in, w1));
+                    sum2          = I32Op::add(sum2, _mm512_madd_epi16(in, w2));
+                    sum3          = I32Op::add(sum3, _mm512_madd_epi16(in, w3));
+                }
+
+                auto sum0lo = _mm512_castsi512_si256(sum0);
+                auto sum1lo = _mm512_castsi512_si256(sum1);
+                auto sum2lo = _mm512_castsi512_si256(sum2);
+                auto sum3lo = _mm512_castsi512_si256(sum3);
+                auto sum0hi = _mm512_extracti64x4_epi64(sum0, 1);
+                auto sum1hi = _mm512_extracti64x4_epi64(sum1, 1);
+                auto sum2hi = _mm512_extracti64x4_epi64(sum2, 1);
+                auto sum3hi = _mm512_extracti64x4_epi64(sum3, 1);
+                auto outval = regop::m256_hsum_i32x4(I32OpHalf::add(sum0lo, sum0hi),
+                                                     I32OpHalf::add(sum1lo, sum1hi),
+                                                     I32OpHalf::add(sum2lo, sum2hi),
+                                                     I32OpHalf::add(sum3lo, sum3hi));
+                if constexpr (Bias)
+                    outval = I32OpQuarter::add(outval, I32LSQuarter::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32OpQuarter::max(outval, I32OpQuarter::setzero());
+                I32LSQuarter::store(output + i * 4, outval);
+            }
+        }
+
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int16_t, Alignment, AVX512> I16LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, SSE>    I32LSQuarter;
+            typedef detail::VecOp<int32_t, AVX512>                   I32Op;
+            typedef detail::VecOp<int32_t, AVX2>                     I32OpHalf;
+            typedef detail::VecOp<int32_t, SSE>                      I32OpQuarter;
+
+            constexpr int OutNumBatches = OutSize / 4;
+            for (int i = 0; i < OutNumBatches; i++) {
+                const int offset0 = (i * 4 + 0) * InSize;
+                const int offset1 = (i * 4 + 1) * InSize;
+                const int offset2 = (i * 4 + 2) * InSize;
+                const int offset3 = (i * 4 + 3) * InSize;
+
+                auto sum0 = I32Op::setzero();
+                auto sum1 = I32Op::setzero();
+                auto sum2 = I32Op::setzero();
+                auto sum3 = I32Op::setzero();
+
+                typedef detail::VecBatch<InSize, int16_t, AVX2> B;
+                for (int j = 0; j < B::NumBatch; j++) {
+                    auto in = I16LS::load(input + j * B::RegWidth);
+                    if constexpr (PreReLU)
+                        in = detail::VecOp<int16_t, AVX512>::max(in, I32Op::setzero());
+
+                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
+                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
+                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
+                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
+                    regop::m512_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
+                    regop::m512_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
+                    regop::m512_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
+                    regop::m512_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
+                }
+
+                auto sum0lo = _mm512_castsi512_si256(sum0);
+                auto sum1lo = _mm512_castsi512_si256(sum1);
+                auto sum2lo = _mm512_castsi512_si256(sum2);
+                auto sum3lo = _mm512_castsi512_si256(sum3);
+                auto sum0hi = _mm512_extracti64x4_epi64(sum0, 1);
+                auto sum1hi = _mm512_extracti64x4_epi64(sum1, 1);
+                auto sum2hi = _mm512_extracti64x4_epi64(sum2, 1);
+                auto sum3hi = _mm512_extracti64x4_epi64(sum3, 1);
+                auto outval = regop::m256_hsum_i32x4(I32OpHalf::add(sum0lo, sum0hi),
+                                                     I32OpHalf::add(sum1lo, sum1hi),
+                                                     I32OpHalf::add(sum2lo, sum2hi),
+                                                     I32OpHalf::add(sum3lo, sum3hi));
+                if constexpr (Bias)
+                    outval = I32OpQuarter::add(outval, I32LSQuarter::load(bias + i * 4));
+                if constexpr (PostReLU)
+                    outval = I32OpQuarter::max(outval, I32OpQuarter::setzero());
+                I32LSQuarter::store(output + i * 4, outval);
+            }
+        }
+    };
+#endif
 
 }  // namespace detail
 
@@ -895,104 +1506,147 @@ T *add(T *output, const T *input0, const T *input1)
     return output + B::NumBatch * B::RegWidth;
 }
 
+/// Apply int8/int16 linear layer with int32 accumulation.
 template <int             OutSize,
           int             InSize,
-          int             WeightScale,
           bool            SignedInput = false,
+          bool            Bias        = true,
+          bool            PreReLU     = false,
+          bool            PostReLU    = false,
           int             Alignment   = NativeAlignment,
-          InstructionType Inst        = NativeInstType>
-int32_t *linear(int32_t      *output,
-                const int8_t *input,
-                const int8_t  weight[OutSize][InSize],
-                const int32_t bias[OutSize])
+          InstructionType Inst        = NativeInstType,
+          typename AccType            = int32_t,
+          typename InputType          = int8_t>
+AccType *linear(AccType         *output,
+                const InputType *input,
+                const InputType  weight[OutSize * InSize],
+                const AccType    bias[OutSize])
 {
-    static_assert(Inst == AVX2, "Only avx2 is supported now!");
+    static_assert(std::is_same_v<AccType, int32_t>, "Only int32_t accumulator is supported");
+    static_assert(std::is_same_v<InputType, int8_t> || std::is_same_v<InputType, int16_t>,
+                  "Only int8_t or int16_t input is supported");
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
     assert(isPtrAligned<Alignment>(weight));
-    assert(isPtrAligned<Alignment>(bias));
+    if constexpr (Bias)
+        assert(isPtrAligned<Alignment>(bias));
 
-    typedef detail::VecBatch<InSize, int8_t, Inst> B;
-    static_assert(OutSize % 4 == 0, "OutSize must be divisble by 4");
-    static_assert(isPowerOfTwo(WeightScale), "weight scale must be a power of two");
-    constexpr int OutNumBatches   = OutSize / 4;
-    constexpr int Log2WeightScale = floorLog2(WeightScale);
-
-    for (int i = 0; i < OutNumBatches; i++) {
-        // Prepare weight offsets. One offset for one row of weights.
-        // This is a simple index into a 2d array.
-        const int offset0 = (i * 4 + 0) * InSize;
-        const int offset1 = (i * 4 + 1) * InSize;
-        const int offset2 = (i * 4 + 2) * InSize;
-        const int offset3 = (i * 4 + 3) * InSize;
-
-        // Accumulation starts from 0, we add the bias only at the end.
-        auto sum0 = simde_mm256_setzero_si256();
-        auto sum1 = simde_mm256_setzero_si256();
-        auto sum2 = simde_mm256_setzero_si256();
-        auto sum3 = simde_mm256_setzero_si256();
-
-        // Each innermost loop processes a 32x4 chunk of weights, so 128 weights at a time!
-        for (int j = 0; j < B::NumBatch; j++) {
-            typedef detail::VecLoadStore<int8_t, Alignment, AVX2> I8LS;
-
-            // We unroll by 4 so that we can reuse this value, reducing the number of
-            // memory operations required.
-            const auto in = I8LS::load(input + j * B::RegWidth);
-
-            // This function processes a 32x1 chunk of int8 and produces a 8x1 chunk of int32.
-            // For definition see below.
-            const auto w0 = I8LS::load(weight[0] + offset0 + j * B::RegWidth);
-            const auto w1 = I8LS::load(weight[0] + offset1 + j * B::RegWidth);
-            const auto w2 = I8LS::load(weight[0] + offset2 + j * B::RegWidth);
-            const auto w3 = I8LS::load(weight[0] + offset3 + j * B::RegWidth);
-            regop::m256_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
-            regop::m256_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
-            regop::m256_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
-            regop::m256_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
-        }
-
-        // This function adds horizontally 8 values from each sum together, producing 4 int32
-        // values. For the definition see below.
-        auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
-        outval      = simde_mm_add_epi32(outval, simde_mm_loadu_si128(bias + i * 4));
-        // Here we account for the weights scaling.
-        outval = simde_mm_srai_epi32(outval, Log2WeightScale);
-        simde_mm_storeu_si128(output + i * 4, outval);
-    }
+    typedef detail::Affine<OutSize, InSize, Alignment, Inst> Affine;
+    Affine::template forward<SignedInput, Bias, PreReLU, PostReLU>(output, input, weight, bias);
 
     return output + OutSize;
 }
 
-template <int Size, int Alignment = NativeAlignment, InstructionType Inst = NativeInstType>
-int8_t *crelu32(int8_t output[Size], const int32_t input[Size])
+/// Divide an int32 array by a 2-exp divisor, then apply clipped relu to the int32
+/// array and store the saturated int8 results.
+template <int             Size,
+          int             Divisor,
+          bool            NoReLU    = false,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
+int8_t *crelu(int8_t output[Size], const int32_t input[Size])
 {
-    static_assert(Inst == AVX2, "Only avx2 is supported now!");
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
     assert(isPtrAligned<Alignment>(input));
+    static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
+    constexpr int Log2Divisor = floorLog2(Divisor);
 
-    typedef detail::VecBatch<Size, int32_t, Inst> InB;
-    typedef detail::VecBatch<Size, int8_t, Inst>  OutB;
+    typedef detail::VecBatch<Size, int32_t, Inst>          InB;
+    typedef detail::VecBatch<Size, int8_t, Inst>           OutB;
+    typedef detail::VecLoadStore<int32_t, Alignment, Inst> I32LS;
+    typedef detail::VecLoadStore<int8_t, Alignment, Inst>  I8LS;
+    typedef detail::VecPack<int32_t, int16_t, Inst>        I32Pack;
+    typedef detail::VecPack<int16_t, int8_t, Inst>         I16Pack;
+    typedef detail::VecOp<int16_t, Inst>                   I16Op;
+    typedef detail::VecOp<int8_t, Inst>                    I8Op;
 
-    const auto zero    = simde_mm256_setzero_si256();
-    const auto control = simde_mm256_set_epi32(7, 3, 6, 2, 5, 1, 4, 0);
+    const auto zero = I8Op::setzero();
 
     for (int i = 0; i < OutB::NumBatch; i++) {
-        typedef detail::VecLoadStore<int32_t, Alignment, Inst> I32LS;
         auto in0  = I32LS::load(input + (i * 4 + 0) * InB::RegWidth);
         auto in1  = I32LS::load(input + (i * 4 + 1) * InB::RegWidth);
         auto in2  = I32LS::load(input + (i * 4 + 2) * InB::RegWidth);
         auto in3  = I32LS::load(input + (i * 4 + 3) * InB::RegWidth);
-        auto in01 = simde_mm256_packs_epi32(in0, in1);
-        auto in23 = simde_mm256_packs_epi32(in2, in3);
+        auto in01 = I32Pack::packs(in0, in1);
+        auto in23 = I32Pack::packs(in2, in3);
+        if constexpr (Log2Divisor > 0) {
+            in01 = I16Op::srai(in01, Log2Divisor);
+            in23 = I16Op::srai(in23, Log2Divisor);
+        }
+        auto result = I16Pack::packs(in01, in23);
+        if constexpr (!NoReLU)
+            result = I8Op::max(result, zero);
 
-        auto result = simde_mm256_permutevar8x32_epi32(
-            simde_mm256_max_epi8(simde_mm256_packs_epi16(in01, in23), zero),
-            control);
+        // Permute values in different lanes if required.
+        if constexpr (Inst == AVX2) {
+            const auto control = simde_mm256_set_epi32(7, 3, 6, 2, 5, 1, 4, 0);
+            result             = simde_mm256_permutevar8x32_epi32(result, control);
+        }
+#ifdef USE_AVX512
+        else if constexpr (Inst == AVX512) {
+            const auto control =
+                _mm512_set_epi32(15, 11, 7, 3, 14, 10, 6, 2, 13, 9, 5, 1, 12, 8, 4, 0);
+            result = _mm512_permutexvar_epi32(control, result);
+        }
+#endif
 
-        detail::VecLoadStore<int8_t, Alignment, Inst>::store(output + i * OutB::RegWidth, result);
+        I8LS::store(output + i * OutB::RegWidth, result);
+    }
+
+    return output + Size;
+}
+
+/// Divide an int32 array by a 2-exp divisor, then apply clipped relu to the int32
+/// array and store the saturated int16 results.
+template <int             Size,
+          int             Divisor,
+          bool            NoReLU    = false,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType>
+int16_t *crelu(int16_t output[Size], const int32_t input[Size])
+{
+    static_assert(isAlignSizeOK(Alignment));
+    assert(isPtrAligned<Alignment>(output));
+    assert(isPtrAligned<Alignment>(input));
+    static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
+    constexpr int Log2Divisor = floorLog2(Divisor);
+
+    typedef detail::VecBatch<Size, int32_t, Inst>          InB;
+    typedef detail::VecBatch<Size, int16_t, Inst>          OutB;
+    typedef detail::VecLoadStore<int32_t, Alignment, Inst> I32LS;
+    typedef detail::VecLoadStore<int16_t, Alignment, Inst> I16LS;
+    typedef detail::VecPack<int32_t, int16_t, Inst>        I32Pack;
+    typedef detail::VecOp<int32_t, Inst>                   I32Op;
+    typedef detail::VecOp<int16_t, Inst>                   I16Op;
+
+    const auto zero = I16Op::setzero();
+
+    for (int i = 0; i < OutB::NumBatch; i++) {
+        auto in0 = I32LS::load(input + (i * 2 + 0) * InB::RegWidth);
+        auto in1 = I32LS::load(input + (i * 2 + 1) * InB::RegWidth);
+        if constexpr (Log2Divisor > 0) {
+            in0 = I32Op::srai(in0, Log2Divisor);
+            in1 = I32Op::srai(in1, Log2Divisor);
+        }
+        auto result = I32Pack::packs(in0, in1);
+        if constexpr (!NoReLU)
+            result = I16Op::max(result, zero);
+
+        // Permute values in different lanes if required.
+        if constexpr (Inst == AVX2) {
+            const auto control = SIMDE_MM_SHUFFLE(3, 1, 2, 0);
+            result             = simde_mm256_permute4x64_epi64(result, control);
+        }
+#ifdef USE_AVX512
+        else if constexpr (Inst == AVX512) {
+            const auto control = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+            result             = _mm512_permutexvar_epi64(control, result);
+        }
+#endif
+
+        I16LS::store(output + i * OutB::RegWidth, result);
     }
 
     return output + Size;
@@ -1081,161 +1735,5 @@ void preluLayer(T (&out)[Size], const T (&in)[Size], const T (&weight)[Size])
         LS::store(&out[i * B::RegWidth], result0);
     }
 }
-
-namespace debug {
-    template <typename T, int N>
-    void assertInRange(const simde__m256i *x, int min, int max)
-    {
-#ifndef NDEBUG
-        for (int i = 0; i < N; i++) {
-            if constexpr (std::is_same_v<T, int8_t>) {
-                int8_t v[32] = {
-                    (int8_t)simde_mm256_extract_epi8(x[i], 0),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 1),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 2),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 3),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 4),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 5),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 6),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 7),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 8),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 9),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 10),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 11),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 12),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 13),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 14),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 15),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 16),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 17),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 18),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 19),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 20),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 21),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 22),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 23),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 24),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 25),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 26),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 27),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 28),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 29),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 30),
-                    (int8_t)simde_mm256_extract_epi8(x[i], 31),
-                };
-
-                for (int j = 0; j < 32; j++) {
-                    assert(min <= v[j] && v[j] <= max);
-                }
-            }
-            else if constexpr (std::is_same_v<T, uint8_t>) {
-                uint8_t v[32] = {
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 0),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 1),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 2),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 3),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 4),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 5),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 6),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 7),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 8),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 9),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 10),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 11),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 12),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 13),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 14),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 15),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 16),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 17),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 18),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 19),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 20),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 21),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 22),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 23),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 24),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 25),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 26),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 27),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 28),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 29),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 30),
-                    (uint8_t)simde_mm256_extract_epi8(x[i], 31),
-                };
-
-                for (int j = 0; j < 32; j++) {
-                    assert(min <= v[j] && v[j] <= max);
-                }
-            }
-            else if constexpr (std::is_same_v<T, int16_t>) {
-                int16_t v[16] = {
-                    (int16_t)simde_mm256_extract_epi16(x[i], 0),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 1),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 2),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 3),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 4),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 5),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 6),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 7),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 8),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 9),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 10),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 11),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 12),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 13),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 14),
-                    (int16_t)simde_mm256_extract_epi16(x[i], 15),
-                };
-
-                for (int j = 0; j < 16; j++) {
-                    assert(min <= v[j] && v[j] <= max);
-                }
-            }
-            else if constexpr (std::is_same_v<T, uint16_t>) {
-                uint16_t v[16] = {
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 0),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 1),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 2),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 3),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 4),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 5),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 6),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 7),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 8),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 9),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 10),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 11),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 12),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 13),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 14),
-                    (uint16_t)simde_mm256_extract_epi16(x[i], 15),
-                };
-
-                for (int j = 0; j < 16; j++) {
-                    assert(min <= v[j] && v[j] <= max);
-                }
-            }
-            else {
-                assert(false && "unsupported type T");
-            }
-        }
-#endif
-    }
-
-    template <typename T, int N>
-    void assertInRange(const simde__m256i (&x)[N], int min, int max)
-    {
-        assertInRange<T, N>(static_cast<const simde__m256i *>(x), min, max);
-    }
-
-    template <typename T>
-    void assertInRange(simde__m256i x, int min, int max)
-    {
-        simde__m256i t[1] = {x};
-        assertInRange<T>(t, min, max);
-    }
-
-}  // namespace debug
 
 }  // namespace Evaluation::simd

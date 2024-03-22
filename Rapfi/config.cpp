@@ -27,6 +27,7 @@
 #include "eval/mix6nnue.h"
 #include "eval/mix7nnue.h"
 #include "eval/mix8nnue.h"
+#include "eval/mix9nnue.h"
 #include "eval/nnuev2.h"
 #include "game/pattern.h"
 #include "search/hashtable.h"
@@ -628,6 +629,22 @@ void Config::readEvaluator(const cpptoml::table &t)
                     getBlackAndWhiteWeightPath(weightPath, weightCfg);
 
                 return std::make_unique<Evaluation::mix8::Mix8Evaluator>(boardSize,
+                                                                         rule,
+                                                                         blackWeightPath,
+                                                                         whiteWeightPath);
+            },
+            true));
+    }
+    else if (*evaluatorType == "mix9nnue") {
+        Search::Threads.setupEvaluator(warpEvaluatorMaker(
+            [=](int                   boardSize,
+                Rule                  rule,
+                std::filesystem::path weightPath,
+                const cpptoml::table &weightCfg) {
+                auto [blackWeightPath, whiteWeightPath] =
+                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
+
+                return std::make_unique<Evaluation::mix9::Mix9Evaluator>(boardSize,
                                                                          rule,
                                                                          blackWeightPath,
                                                                          whiteWeightPath);
