@@ -413,13 +413,15 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
 
                 for (int b = 0; b < ConvB::NumBatch; b++) {
                     auto convW = I16LS::load(convWeightBase + b * ConvB::RegWidth);
-                    auto deltaConvF =
-                        I16Op::sub(I16Op::mulhrs(convW, I16Op::max(newFeats[b], I16Op::setzero())),
-                                   I16Op::mulhrs(convW, I16Op::max(oldFeats[b], I16Op::setzero())));
+                    // auto deltaConvF =
+                    //     I16Op::sub(I16Op::mulhrs(convW, I16Op::max(newFeats[b],
+                    //     I16Op::setzero())),
+                    //                I16Op::mulhrs(convW, I16Op::max(oldFeats[b],
+                    //                I16Op::setzero())));
 
-                    // auto deltaConvF = I16Op::sub(I16Op::max(newFeats[b], I16Op::setzero()),
-                    //                              I16Op::max(oldFeats[b], I16Op::setzero()));
-                    // deltaConvF      = I16Op::mulhrs(convW, deltaConvF);
+                    auto deltaConvF = I16Op::sub(I16Op::max(newFeats[b], I16Op::setzero()),
+                                                 I16Op::max(oldFeats[b], I16Op::setzero()));
+                    deltaConvF      = I16Op::mulhrs(convW, deltaConvF);
 
                     auto convPtr  = convBase + b * ConvB::RegWidth;
                     auto oldConvF = I16LS::load(convPtr);
