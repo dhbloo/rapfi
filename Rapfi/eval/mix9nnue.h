@@ -44,7 +44,7 @@ constexpr int      NumHeadBucket   = 1;
 struct alignas(Alignment) Mix9Weight
 {
     // 1  mapping layer
-    int16_t mapping[ShapeNum][FeatureDim];
+    int16_t mapping[2][ShapeNum][FeatureDim];
 
     // 2  Depthwise conv
     int16_t feature_dwconv_weight[9][FeatDWConvDim];

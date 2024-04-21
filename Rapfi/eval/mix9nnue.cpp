@@ -211,11 +211,13 @@ void Mix9Accumulator::clear(const Mix9Weight &w)
                 for (int dir = 0; dir < 4; dir++)
                     simd::add<FeatureDim>(mapSum[innerIdx].data(),
                                           mapSum[innerIdx].data(),
-                                          w.mapping[indexTable[innerIdx][dir]]);
+                                          w.mapping[dir / 2][indexTable[innerIdx][dir]]);
 
                 // Init mapConv from mapSum
                 for (int b = 0; b < ConvB::NumBatch; b++) {
                     auto feature = I16LS::load(mapSum[innerIdx].data() + b * FeatB::RegWidth);
+                    feature      = I16Op::max(feature, I16Op::setzero());
+                    feature      = I16Op::slli(feature, 2);  // mul 4
                     // Apply feature depthwise conv
                     for (int dy = 0; dy <= 2; dy++) {
                         int yi = y + dy;
@@ -224,12 +226,11 @@ void Mix9Accumulator::clear(const Mix9Weight &w)
                             int outerIdx = xi + yi * outerBoardSize;
 
                             auto *convWeightBase = w.feature_dwconv_weight[8 - dy * 3 - dx];
-                            auto  convW = I16LS::load(convWeightBase + b * ConvB::RegWidth);
-                            auto  deltaFeat =
-                                I16Op::mulhrs(convW, I16Op::max(feature, I16Op::setzero()));
-                            auto convPtr  = mapConv[outerIdx].data() + b * FeatB::RegWidth;
-                            auto convFeat = I16LS::load(convPtr);
-                            convFeat      = I16Op::add(convFeat, deltaFeat);
+                            auto  convW     = I16LS::load(convWeightBase + b * ConvB::RegWidth);
+                            auto  deltaFeat = I16Op::mulhi(convW, feature);
+                            auto  convPtr   = mapConv[outerIdx].data() + b * FeatB::RegWidth;
+                            auto  convFeat  = I16LS::load(convPtr);
+                            convFeat        = I16Op::add(convFeat, deltaFeat);
                             I16LS::store(convPtr, convFeat);
                         }
                     }
@@ -332,6 +333,7 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
     {
         int8_t   x;
         int8_t   y;
+        int16_t  mappingIdx;
         int16_t  oldMapIdx;
         int16_t  newMapIdx;
         uint32_t oldShape;
@@ -356,6 +358,7 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
             OnePointChange &c          = changeTable[changeCount++];
             c.x                        = xi;
             c.y                        = yi;
+            c.mappingIdx               = dir / 2;  // 0,1 -> 0; 2,3 -> 1
             c.oldMapIdx                = versionInnerIndexTable[innerVersionIdxBase + innerIdx];
             c.newMapIdx                = newMapIdx;
             c.oldShape                 = indexTable[c.oldMapIdx][dir];
@@ -382,23 +385,33 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
     for (int i = 0; i < changeCount; i++) {
         const OnePointChange &c = changeTable[i];
         if (i + 1 < changeCount) {
-            multiPrefetch<FeatureDim * sizeof(int16_t)>(w.mapping[changeTable[i + 1].oldShape]);
-            multiPrefetch<FeatureDim * sizeof(int16_t)>(w.mapping[changeTable[i + 1].newShape]);
+            multiPrefetch<FeatureDim * sizeof(int16_t)>(
+                w.mapping[c.mappingIdx][changeTable[i + 1].oldShape]);
+            multiPrefetch<FeatureDim * sizeof(int16_t)>(
+                w.mapping[c.mappingIdx][changeTable[i + 1].newShape]);
         }
 
         // Update mapSum
         I16Op::R oldFeats[FeatB::NumBatch];
         I16Op::R newFeats[FeatB::NumBatch];
         for (int b = 0; b < FeatB::NumBatch; b++) {
-            auto newMapFeat = I16LS::load(w.mapping[c.newShape] + b * FeatB::RegWidth);
-            auto oldMapFeat = I16LS::load(w.mapping[c.oldShape] + b * FeatB::RegWidth);
-            oldFeats[b]     = I16LS::load(mapSum[c.oldMapIdx].data() + b * FeatB::RegWidth);
-            newFeats[b]     = I16Op::sub(oldFeats[b], oldMapFeat);
-            newFeats[b]     = I16Op::add(newFeats[b], newMapFeat);
+            auto newMapFeat =
+                I16LS::load(w.mapping[c.mappingIdx][c.newShape] + b * FeatB::RegWidth);
+            auto oldMapFeat =
+                I16LS::load(w.mapping[c.mappingIdx][c.oldShape] + b * FeatB::RegWidth);
+            oldFeats[b] = I16LS::load(mapSum[c.oldMapIdx].data() + b * FeatB::RegWidth);
+            newFeats[b] = I16Op::sub(oldFeats[b], oldMapFeat);
+            newFeats[b] = I16Op::add(newFeats[b], newMapFeat);
             I16LS::store(mapSum[c.newMapIdx].data() + b * FeatB::RegWidth, newFeats[b]);
         }
 
         // Update mapConv
+        for (int b = 0; b < ConvB::NumBatch; b++) {
+            oldFeats[b] = I16Op::max(oldFeats[b], I16Op::setzero());
+            newFeats[b] = I16Op::max(newFeats[b], I16Op::setzero());
+            oldFeats[b] = I16Op::slli(oldFeats[b], 2);  // mul 4
+            newFeats[b] = I16Op::slli(newFeats[b], 2);  // mul 4
+        }
         for (int dy = 0, outerIdxBase = c.y * outerBoardSize + c.x; dy <= 2;
              dy++, outerIdxBase += outerBoardSize) {
             for (int dx = 0; dx <= 2; dx++) {
@@ -412,14 +425,12 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
                     "Feature dim must be not less then (2 * feature depth-wise conv dim)!");
 
                 for (int b = 0; b < ConvB::NumBatch; b++) {
-                    auto convW = I16LS::load(convWeightBase + b * ConvB::RegWidth);
-                    auto deltaConvF =
-                        I16Op::sub(I16Op::mulhrs(convW, I16Op::max(newFeats[b], I16Op::setzero())),
-                                   I16Op::mulhrs(convW, I16Op::max(oldFeats[b], I16Op::setzero())));
+                    auto convW      = I16LS::load(convWeightBase + b * ConvB::RegWidth);
+                    auto deltaConvF = I16Op::sub(I16Op::mulhi(convW, newFeats[b]),
+                                                 I16Op::mulhi(convW, oldFeats[b]));
 
-                    // auto deltaConvF = I16Op::sub(I16Op::max(newFeats[b], I16Op::setzero()),
-                    //                              I16Op::max(oldFeats[b], I16Op::setzero()));
-                    // deltaConvF      = I16Op::mulhrs(convW, deltaConvF);
+                    // auto deltaConvF = I16Op::sub(newFeats[b], oldFeats[b]);
+                    // deltaConvF      = I16Op::mulhi(convW, deltaConvF);
 
                     auto convPtr  = convBase + b * ConvB::RegWidth;
                     auto oldConvF = I16LS::load(convPtr);
