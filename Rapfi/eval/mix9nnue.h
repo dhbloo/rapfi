@@ -70,8 +70,7 @@ struct alignas(Alignment) Mix9Weight
         int32_t value_quad_bias[ValueDim];
 
         // 5  Value MLP (layer 1,2,3)
-        int8_t  value_l1_weight_global[ValueDim * FeatureDim];
-        int8_t  value_l1_weight_group[ValueDim * (ValueDim * 4)];
+        int8_t  value_l1_weight[ValueDim * (FeatureDim + ValueDim * 4)];
         int32_t value_l1_bias[ValueDim];
         int8_t  value_l2_weight[ValueDim * ValueDim];
         int32_t value_l2_bias[ValueDim];
