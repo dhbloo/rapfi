@@ -31,7 +31,7 @@ jobs:
 
       - name: Pre-upload to fishtest
         if: ${{ !contains(github.event.head_commit.message, 'Revert') }}
-        run: curl http://test.stockfishxq.com/api/pre_upload -F file=@build/rapfi-linux-avx2 -F file_type=engine -F "password=${{secrets.NOTHING}}"
+        run: curl http://test.pikafish.org/api/pre_upload -F file=@build/rapfi-linux-avx2 -F file_type=engine -F "password=${{secrets.NOTHING}}"
 
       - name: Print variables table
         if: ${{ !contains(github.event.head_commit.message, 'Revert') }}
