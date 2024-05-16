@@ -92,162 +92,6 @@ constexpr size_t alignDimSize(size_t dimSize)
 #define DEF_BATCH256(T, Size, RegWidth, NumBatches) DEF_BATCH(256, T, Size, RegWidth, NumBatches)
 #define DEF_BATCH512(T, Size, RegWidth, NumBatches) DEF_BATCH(512, T, Size, RegWidth, NumBatches)
 
-namespace regop {  // register level operators
-
-    /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
-    FORCE_INLINE simde__m128i m128_hsum_i32x4(simde__m128i sum0,
-                                              simde__m128i sum1,
-                                              simde__m128i sum2,
-                                              simde__m128i sum3)
-    {
-        sum0 = simde_mm_hadd_epi32(sum0, sum1);
-        sum2 = simde_mm_hadd_epi32(sum2, sum3);
-        sum0 = simde_mm_hadd_epi32(sum0, sum2);
-        return sum0;
-    }
-
-    /// Compute dot product of two [i8x4] of 4 groups and accumulate into [i32x4].
-    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
-    template <bool SignedInput>
-    FORCE_INLINE void m128_add_dpbusd_epi32(simde__m128i &acc, simde__m128i a, simde__m128i b)
-    {
-        if constexpr (SignedInput) {
-            const simde__m128i highest_bit = simde_mm_set1_epi8(0x80);
-
-            simde__m128i msb  = simde_mm_and_si128(a, highest_bit);
-            simde__m128i low7 = simde_mm_andnot_si128(highest_bit, a);
-
-#if defined(USE_VNNI)
-            msb  = simde_mm_dpbusd_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
-            low7 = simde_mm_dpbusd_epi32(_mm_setzero_si128(), low7, b);
-#else
-            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
-            msb  = simde_mm_maddubs_epi16(msb, b);  // 0 or 128
-            low7 = simde_mm_maddubs_epi16(low7, b);
-
-            // Horizontally sum i16 pairs to i32
-            const simde__m128i one = simde_mm_set1_epi16(1);
-            low7                   = simde_mm_madd_epi16(low7, one);
-            msb                    = simde_mm_madd_epi16(msb, one);
-#endif
-
-            // Place value of the MSB was negative
-            simde__m128i product0 = simde_mm_sub_epi32(low7, msb);
-            acc                   = simde_mm_add_epi32(acc, product0);
-        }
-        else {
-#if defined(USE_VNNI)
-            acc = _mm_dpbusd_epi32(acc, a, b);
-#else
-            simde__m128i product0  = simde_mm_maddubs_epi16(a, b);
-            product0               = simde_mm_madd_epi16(product0, simde_mm_set1_epi16(1));
-            acc                    = simde_mm_add_epi32(acc, product0);
-#endif
-        }
-    }
-
-    /// Horizontal sum [i32x8] of 4 groups into one [i32x4].
-    FORCE_INLINE simde__m128i m256_hsum_i32x4(simde__m256i sum0,
-                                              simde__m256i sum1,
-                                              simde__m256i sum2,
-                                              simde__m256i sum3)
-    {
-        sum0 = simde_mm256_hadd_epi32(sum0, sum1);
-        sum2 = simde_mm256_hadd_epi32(sum2, sum3);
-
-        sum0 = simde_mm256_hadd_epi32(sum0, sum2);
-
-        simde__m128i sum128lo = simde_mm256_castsi256_si128(sum0);
-        simde__m128i sum128hi = simde_mm256_extracti128_si256(sum0, 1);
-        simde__m128i sum128   = simde_mm_add_epi32(sum128lo, sum128hi);
-
-        return sum128;
-    }
-
-    /// Compute dot product of two [i8x4] of 8 groups and accumulate into [i32x8].
-    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
-    template <bool SignedInput>
-    FORCE_INLINE void m256_add_dpbusd_epi32(simde__m256i &acc, simde__m256i a, simde__m256i b)
-    {
-        if constexpr (SignedInput) {
-            const simde__m256i highest_bit = simde_mm256_set1_epi8(0x80);
-
-            simde__m256i msb  = simde_mm256_and_si256(a, highest_bit);
-            simde__m256i low7 = simde_mm256_andnot_si256(highest_bit, a);
-
-#if defined(USE_VNNI)
-            msb  = simde_mm256_dpbusd_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
-            low7 = simde_mm256_dpbusd_epi32(_mm256_setzero_si256(), low7, b);
-#else
-            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
-            msb  = simde_mm256_maddubs_epi16(msb, b);  // 0 or 128
-            low7 = simde_mm256_maddubs_epi16(low7, b);
-
-            // Horizontally sum i16 pairs to i32
-            const simde__m256i one = simde_mm256_set1_epi16(1);
-            low7                   = simde_mm256_madd_epi16(low7, one);
-            msb                    = simde_mm256_madd_epi16(msb, one);
-#endif
-
-            // Place value of the MSB was negative
-            simde__m256i product0 = simde_mm256_sub_epi32(low7, msb);
-            acc                   = simde_mm256_add_epi32(acc, product0);
-        }
-        else {
-#if defined(USE_VNNI)
-            acc = _mm256_dpbusd_epi32(acc, a, b);
-#else
-            simde__m256i product0  = simde_mm256_maddubs_epi16(a, b);
-            product0               = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
-            acc                    = simde_mm256_add_epi32(acc, product0);
-#endif
-        }
-    };
-
-#ifdef USE_AVX512
-    /// Compute dot product of two [i8x4] of 16 groups and accumulate into [i32x16].
-    /// If SignedInput is false, a must be non-negative (unsigned 7-bits).
-    template <bool SignedInput>
-    FORCE_INLINE void m512_add_dpbusd_epi32(__m512i &acc, __m512i a, __m512i b)
-    {
-        if constexpr (SignedInput) {
-            const __m512i highest_bit = _mm512_set1_epi8(0x80);
-
-            __m512i msb  = _mm512_and_si256(a, highest_bit);
-            __m512i low7 = _mm512_andnot_si256(highest_bit, a);
-
-    #if defined(USE_VNNI)
-            msb  = _mm512_dpbusd_epi32(_mm512_setzero_si512(), msb, b);  // 0 or 128
-            low7 = _mm512_dpbusd_epi32(_mm512_setzero_si512(), low7, b);
-    #else
-            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
-            msb  = _mm512_maddubs_epi16(msb, b);  // 0 or 128
-            low7 = _mm512_maddubs_epi16(low7, b);
-
-            // Horizontally sum i16 pairs to i32
-            const __m512i one = _mm512_set1_epi16(1);
-            low7              = _mm512_madd_epi16(low7, one);
-            msb               = _mm512_madd_epi16(msb, one);
-    #endif
-
-            // Place value of the MSB was negative
-            __m512i product0 = _mm512_sub_epi32(low7, msb);
-            acc              = _mm512_add_epi32(acc, product0);
-        }
-        else {
-    #if defined(USE_VNNI)
-            acc = _mm512_dpbusd_epi32(acc, a, b);
-    #else
-            __m512i product0  = _mm512_maddubs_epi16(a, b);
-            product0          = _mm512_madd_epi16(product0, _mm512_set1_epi16(1));
-            acc               = _mm512_add_epi32(acc, product0);
-    #endif
-        }
-    };
-#endif
-
-}  // namespace regop
-
 namespace detail {
 
     template <typename...>
@@ -665,6 +509,8 @@ namespace detail {
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
         }
+
+        static FORCE_INLINE R packs_permuted(R a, R b) { return packs(a, b); }
     };
 
     template <typename FT, typename TT>
@@ -684,6 +530,13 @@ namespace detail {
                 return simde_mm256_packus_epi32(a, b);
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+
+        static FORCE_INLINE R packs_permuted(R a, R b)
+        {
+            R r = packs(a, b);
+            r   = simde_mm256_permute4x64_epi64(r, SIMDE_MM_SHUFFLE(3, 1, 2, 0));
+            return r;
         }
     };
 
@@ -705,6 +558,13 @@ namespace detail {
                 return _mm512_packus_epi32(a, b);
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+
+        static FORCE_INLINE R packs_permuted(R a, R b)
+        {
+            R r = packs(a, b);
+            r   = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7), r);
+            return r;
         }
     };
 #endif
@@ -757,6 +617,46 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi8(a, b); }
         static FORCE_INLINE R avg(R a, R b) { return simde_mm_avg_epu8(a, b); }
+        static FORCE_INLINE R dot2_u7i8(R a, R b) { return simde_mm_maddubs_epi16(a, b); }
+
+        /// Compute 4-element dot product of [u7x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
+        {
+#if defined(USE_VNNI)
+            acc = _mm_dpbusd_epi32(acc, a, b);
+#else
+            R product0 = simde_mm_maddubs_epi16(a, b);
+            product0   = simde_mm_madd_epi16(product0, simde_mm_set1_epi16(1));
+            acc        = simde_mm_add_epi32(acc, product0);
+#endif
+        }
+
+        /// Compute 4-element dot product of [i8x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b)
+        {
+            const R highest_bit = simde_mm_set1_epi8(0x80);
+
+            R msb  = simde_mm_and_si128(a, highest_bit);
+            R low7 = simde_mm_andnot_si128(highest_bit, a);
+
+#if defined(USE_VNNI)
+            msb  = _mm_dpbusd_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
+            low7 = _mm_dpbusd_epi32(_mm_setzero_si128(), low7, b);
+#else
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = simde_mm_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = simde_mm_maddubs_epi16(low7, b);
+
+            // Horizontally sum i16 pairs to i32
+            const R one = simde_mm_set1_epi16(1);
+            low7        = simde_mm_madd_epi16(low7, one);
+            msb         = simde_mm_madd_epi16(msb, one);
+#endif
+
+            // Place value of the MSB was negative
+            R product0 = simde_mm_sub_epi32(low7, msb);
+            acc        = simde_mm_add_epi32(acc, product0);
+        }
     };
 
     template <>
@@ -771,6 +671,46 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return simde_mm256_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi8(a, b); }
         static FORCE_INLINE R avg(R a, R b) { return simde_mm256_avg_epu8(a, b); }
+        static FORCE_INLINE R dot2_u7i8(R a, R b) { return simde_mm256_maddubs_epi16(a, b); }
+
+        /// Compute 4-element dot product of [u7x32] and [i8x32] then accumulate into [i32x8].
+        static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
+        {
+#if defined(USE_VNNI)
+            acc = _mm256_dpbusd_epi32(acc, a, b);
+#else
+            R product0  = simde_mm256_maddubs_epi16(a, b);
+            product0    = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
+            acc         = simde_mm256_add_epi32(acc, product0);
+#endif
+        }
+
+        /// Compute 4-element dot product of [i8x32] and [i8x32] then accumulate into [i32x8].
+        static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b)
+        {
+            const R highest_bit = simde_mm256_set1_epi8(0x80);
+
+            R msb  = simde_mm256_and_si256(a, highest_bit);
+            R low7 = simde_mm256_andnot_si256(highest_bit, a);
+
+#if defined(USE_VNNI)
+            msb  = _mm256_dpbusd_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
+            low7 = _mm256_dpbusd_epi32(_mm256_setzero_si256(), low7, b);
+#else
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = simde_mm256_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = simde_mm256_maddubs_epi16(low7, b);
+
+            // Horizontally sum i16 pairs to i32
+            const R one = simde_mm256_set1_epi16(1);
+            low7        = simde_mm256_madd_epi16(low7, one);
+            msb         = simde_mm256_madd_epi16(msb, one);
+#endif
+
+            // Place value of the MSB was negative
+            R product0 = simde_mm256_sub_epi32(low7, msb);
+            acc        = simde_mm256_add_epi32(acc, product0);
+        }
     };
 
 #ifdef USE_AVX512
@@ -786,6 +726,46 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi8(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi8(a, b); }
         static FORCE_INLINE R avg(R a, R b) { return _mm512_avg_epu8(a, b); }
+        static FORCE_INLINE R dot2_u7i8(R a, R b) { return _mm512_maddubs_epi16(a, b); }
+
+        /// Compute 4-element dot product of [u7x64] and [i8x64] then accumulate into [i32x16].
+        static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
+        {
+    #if defined(USE_VNNI)
+            acc = _mm512_dpbusd_epi32(acc, a, b);
+    #else
+            R product0 = _mm512_maddubs_epi16(a, b);
+            product0   = _mm512_madd_epi16(product0, _mm512_set1_epi16(1));
+            acc        = _mm512_add_epi32(acc, product0);
+    #endif
+        }
+
+        /// Compute 4-element dot product of [i8x64] and [i8x64] then accumulate into [i32x16].
+        static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b)
+        {
+            const R highest_bit = _mm512_set1_epi8(0x80);
+
+            R msb  = _mm512_and_si256(a, highest_bit);
+            R low7 = _mm512_andnot_si256(highest_bit, a);
+
+    #if defined(USE_VNNI)
+            msb  = _mm512_dpbusd_epi32(_mm512_setzero_si512(), msb, b);  // 0 or 128
+            low7 = _mm512_dpbusd_epi32(_mm512_setzero_si512(), low7, b);
+    #else
+            // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
+            msb  = _mm512_maddubs_epi16(msb, b);  // 0 or 128
+            low7 = _mm512_maddubs_epi16(low7, b);
+
+            // Horizontally sum i16 pairs to i32
+            const R one = _mm512_set1_epi16(1);
+            low7        = _mm512_madd_epi16(low7, one);
+            msb         = _mm512_madd_epi16(msb, one);
+    #endif
+
+            // Place value of the MSB was negative
+            R product0 = _mm512_sub_epi32(low7, msb);
+            acc        = _mm512_add_epi32(acc, product0);
+        }
     };
 #endif
 
@@ -807,6 +787,7 @@ namespace detail {
         static FORCE_INLINE R srai(R a, int i) { return simde_mm_srai_epi16(a, i); }
         static FORCE_INLINE R srli(R a, int i) { return simde_mm_srli_epi16(a, i); }
         static FORCE_INLINE R slli(R a, int i) { return simde_mm_slli_epi16(a, i); }
+        static FORCE_INLINE R dot2(R a, R b) { return simde_mm_madd_epi16(a, b); }
     };
 
     template <>
@@ -827,6 +808,7 @@ namespace detail {
         static FORCE_INLINE R       srai(R a, int i) { return simde_mm256_srai_epi16(a, i); }
         static FORCE_INLINE R       srli(R a, int i) { return simde_mm256_srli_epi16(a, i); }
         static FORCE_INLINE R       slli(R a, int i) { return simde_mm256_slli_epi16(a, i); }
+        static FORCE_INLINE R       dot2(R a, R b) { return simde_mm256_madd_epi16(a, b); }
         static FORCE_INLINE int32_t reduceadd(R a)
         {
             a          = simde_mm256_madd_epi16(a, set1(1));
@@ -860,6 +842,7 @@ namespace detail {
         static FORCE_INLINE R srai(R a, int i) { return _mm512_srai_epi16(a, i); }
         static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi16(a, i); }
         static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi16(a, i); }
+        static FORCE_INLINE R dot2(R a, R b) { return _mm512_madd_epi16(a, b); }
     };
 #endif
 
@@ -882,6 +865,15 @@ namespace detail {
             auto hi32  = simde_mm_shuffle_epi32(sum64, SIMDE_MM_SHUFFLE(2, 3, 0, 1));
             auto sum32 = simde_mm_add_epi32(sum64, hi32);
             return simde_mm_cvtsi128_si32(sum32);  // movd
+        }
+
+        /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
+        static FORCE_INLINE R hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            sum0 = simde_mm_hadd_epi32(sum0, sum1);
+            sum2 = simde_mm_hadd_epi32(sum2, sum3);
+            sum0 = simde_mm_hadd_epi32(sum0, sum2);
+            return sum0;
         }
     };
 
@@ -908,6 +900,21 @@ namespace detail {
             auto sum32 = simde_mm_add_epi32(sum64, hi32);
             return simde_mm_cvtsi128_si32(sum32);  // movd
         }
+
+        /// Horizontal sum [i32x8] of 4 groups into one [i32x4].
+        static FORCE_INLINE simde__m128i hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            sum0 = simde_mm256_hadd_epi32(sum0, sum1);
+            sum2 = simde_mm256_hadd_epi32(sum2, sum3);
+
+            sum0 = simde_mm256_hadd_epi32(sum0, sum2);
+
+            simde__m128i sum128lo = simde_mm256_castsi256_si128(sum0);
+            simde__m128i sum128hi = simde_mm256_extracti128_si256(sum0, 1);
+            simde__m128i sum128   = simde_mm_add_epi32(sum128lo, sum128hi);
+
+            return sum128;
+        }
     };
 
 #ifdef USE_AVX512
@@ -924,6 +931,25 @@ namespace detail {
         static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi32(a, i); }
         static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi32(a, i); }
         static FORCE_INLINE T reduceadd(R a) { return _mm512_reduce_add_epi32(a); }
+
+        /// Horizontal sum [i32x16] of 4 groups into one [i32x4].
+        static FORCE_INLINE simde__m128i hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            auto sum0lo = _mm512_castsi512_si256(sum0);
+            auto sum1lo = _mm512_castsi512_si256(sum1);
+            auto sum2lo = _mm512_castsi512_si256(sum2);
+            auto sum3lo = _mm512_castsi512_si256(sum3);
+            auto sum0hi = _mm512_extracti64x4_epi64(sum0, 1);
+            auto sum1hi = _mm512_extracti64x4_epi64(sum1, 1);
+            auto sum2hi = _mm512_extracti64x4_epi64(sum2, 1);
+            auto sum3hi = _mm512_extracti64x4_epi64(sum3, 1);
+
+            typedef VecOp<int32_t, AVX2> I32OpHalf;
+            return I32OpHalf::hsum4(I32OpHalf::add(sum0lo, sum0hi),
+                                    I32OpHalf::add(sum1lo, sum1hi),
+                                    I32OpHalf::add(sum2lo, sum2hi),
+                                    I32OpHalf::add(sum3lo, sum3hi));
+        }
     };
 #endif
 
@@ -1070,139 +1096,24 @@ namespace detail {
     struct Affine
     {};
 
-    template <int OutSize, int InSize, int Alignment>
+    template <int OutSize, int InSize, int Alignment, InstructionType I>
     struct Affine<OutSize,
                   InSize,
                   Alignment,
-                  SSE,
+                  I,
                   std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
     {
         template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
         static void
         forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
         {
-            typedef detail::VecLoadStore<int8_t, Alignment, SSE>  I8LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LS;
-            typedef detail::VecOp<int32_t, SSE>                   I32Op;
+            constexpr InstructionType I128 = SSE;
 
-            constexpr int OutNumBatches = OutSize / 4;
-            for (int i = 0; i < OutNumBatches; i++) {
-                // Prepare weight offsets. One offset for one row of weights.
-                // This is a simple index into a 2d array.
-                const int offset0 = (i * 4 + 0) * InSize;
-                const int offset1 = (i * 4 + 1) * InSize;
-                const int offset2 = (i * 4 + 2) * InSize;
-                const int offset3 = (i * 4 + 3) * InSize;
-
-                // Accumulation starts from 0, we add the bias only at the end.
-                auto sum0 = I32Op::setzero();
-                auto sum1 = I32Op::setzero();
-                auto sum2 = I32Op::setzero();
-                auto sum3 = I32Op::setzero();
-
-                // Each innermost loop processes a 16x4 chunk of weights, so 64 weights at a time!
-                typedef detail::VecBatch<InSize, int8_t, SSE> B;
-                for (int j = 0; j < B::NumBatch; j++) {
-                    // We unroll by 4 so that we can reuse this value, reducing the number of
-                    // memory operations required.
-                    auto in = I8LS::load(input + j * B::RegWidth);
-                    if constexpr (PreReLU)
-                        in = detail::VecOp<int8_t, SSE>::max(in, I32Op::setzero());
-
-                    // This function processes a 16x1 chunk of int8 and produces a 4x1 chunk of
-                    // int32. For definition see below.
-                    const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
-                    const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
-                    const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
-                    const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
-                    regop::m128_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
-                    regop::m128_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
-                    regop::m128_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
-                    regop::m128_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
-                }
-
-                // This function adds horizontally 4 values from each sum together, producing 4
-                // int32 values. For the definition see below.
-                auto outval = regop::m128_hsum_i32x4(sum0, sum1, sum2, sum3);
-                if constexpr (Bias)
-                    outval = I32Op::add(outval, I32LS::load(bias + i * 4));
-                if constexpr (PostReLU)
-                    outval = I32Op::max(outval, I32Op::setzero());
-                I32LS::store(output + i * 4, outval);
-            }
-        }
-
-        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
-        static void
-        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
-        {
-            typedef detail::VecLoadStore<int16_t, Alignment, SSE> I16LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LS;
-            typedef detail::VecOp<int32_t, SSE>                   I32Op;
-
-            constexpr int OutNumBatches = OutSize / 4;
-            for (int i = 0; i < OutNumBatches; i++) {
-                // Prepare weight offsets. One offset for one row of weights.
-                // This is a simple index into a 2d array.
-                const int offset0 = (i * 4 + 0) * InSize;
-                const int offset1 = (i * 4 + 1) * InSize;
-                const int offset2 = (i * 4 + 2) * InSize;
-                const int offset3 = (i * 4 + 3) * InSize;
-
-                // Accumulation starts from 0, we add the bias only at the end.
-                auto sum0 = I32Op::setzero();
-                auto sum1 = I32Op::setzero();
-                auto sum2 = I32Op::setzero();
-                auto sum3 = I32Op::setzero();
-
-                // Each innermost loop processes a 8x4 chunk of weights, so 32 weights at a time!
-                typedef detail::VecBatch<InSize, int16_t, SSE> B;
-                for (int j = 0; j < B::NumBatch; j++) {
-                    // We unroll by 4 so that we can reuse this value, reducing the number of
-                    // memory operations required.
-                    auto in = I16LS::load(input + j * B::RegWidth);
-                    if constexpr (PreReLU)
-                        in = detail::VecOp<int16_t, SSE>::max(in, I32Op::setzero());
-
-                    // This function processes a 8x1 chunk of int16 and produces a 4x1 chunk of
-                    // int32. For definition see below.
-                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
-                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
-                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
-                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
-                    sum0          = I32Op::add(sum0, simde_mm_madd_epi16(in, w0));
-                    sum1          = I32Op::add(sum1, simde_mm_madd_epi16(in, w1));
-                    sum2          = I32Op::add(sum2, simde_mm_madd_epi16(in, w2));
-                    sum3          = I32Op::add(sum3, simde_mm_madd_epi16(in, w3));
-                }
-
-                // This function adds horizontally 4 values from each sum together, producing 4
-                // int32 values. For the definition see below.
-                auto outval = regop::m128_hsum_i32x4(sum0, sum1, sum2, sum3);
-                if constexpr (Bias)
-                    outval = I32Op::add(outval, I32LS::load(bias + i * 4));
-                if constexpr (PostReLU)
-                    outval = I32Op::max(outval, I32Op::setzero());
-                I32LS::store(output + i * 4, outval);
-            }
-        }
-    };
-
-    template <int OutSize, int InSize, int Alignment>
-    struct Affine<OutSize,
-                  InSize,
-                  Alignment,
-                  AVX2,
-                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
-    {
-        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
-        static void
-        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
-        {
-            typedef detail::VecLoadStore<int8_t, Alignment, AVX2> I8LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE> I32LSHalf;
-            typedef detail::VecOp<int32_t, AVX2>                  I32Op;
-            typedef detail::VecOp<int32_t, SSE>                   I32OpHalf;
+            typedef detail::VecLoadStore<int8_t, Alignment, I>     I8LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, I128> I32LS128;
+            typedef detail::VecOp<int8_t, I>                       I8Op;
+            typedef detail::VecOp<int32_t, I>                      I32Op;
+            typedef detail::VecOp<int32_t, I128>                   I32Op128;
 
             constexpr int OutNumBatches = OutSize / 4;
             for (int i = 0; i < OutNumBatches; i++) {
@@ -1226,28 +1137,34 @@ namespace detail {
                     // memory operations required.
                     auto in = I8LS::load(input + j * B::RegWidth);
                     if constexpr (PreReLU)
-                        in = detail::VecOp<int8_t, AVX2>::max(in, I32Op::setzero());
+                        in = I8Op::max(in, I32Op::setzero());
 
-                    // This function processes a 32x1 chunk of int8 and produces a 8x1 chunk of
-                    // int32. For definition see below.
+                    // Processes a 4Lx1 chunk of int8 and produces a Lx1 chunk of int32.
                     const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
                     const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
                     const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
                     const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
-                    regop::m256_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
-                    regop::m256_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
-                    regop::m256_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
-                    regop::m256_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
+                    if constexpr (SignedInput) {
+                        I8Op::dot4_i8i8_accum(sum0, in, w0);
+                        I8Op::dot4_i8i8_accum(sum1, in, w1);
+                        I8Op::dot4_i8i8_accum(sum2, in, w2);
+                        I8Op::dot4_i8i8_accum(sum3, in, w3);
+                    }
+                    else {
+                        I8Op::dot4_u7i8_accum(sum0, in, w0);
+                        I8Op::dot4_u7i8_accum(sum1, in, w1);
+                        I8Op::dot4_u7i8_accum(sum2, in, w2);
+                        I8Op::dot4_u7i8_accum(sum3, in, w3);
+                    }
                 }
 
-                // This function adds horizontally 8 values from each sum together, producing 4
-                // int32 values. For the definition see below.
-                auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
+                // Adds horizontally L values from each sum together, producing 4 int32 values.
+                auto outval = I32Op::hsum4(sum0, sum1, sum2, sum3);
                 if constexpr (Bias)
-                    outval = I32OpHalf::add(outval, I32LSHalf::load(bias + i * 4));
+                    outval = I32Op128::add(outval, I32LS128::load(bias + i * 4));
                 if constexpr (PostReLU)
-                    outval = I32OpHalf::max(outval, I32OpHalf::setzero());
-                I32LSHalf::store(output + i * 4, outval);
+                    outval = I32Op128::max(outval, I32Op128::setzero());
+                I32LS128::store(output + i * 4, outval);
             }
         }
 
@@ -1255,10 +1172,13 @@ namespace detail {
         static void
         forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
         {
-            typedef detail::VecLoadStore<int16_t, Alignment, AVX2> I16LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE>  I32LSHalf;
-            typedef detail::VecOp<int32_t, AVX2>                   I32Op;
-            typedef detail::VecOp<int32_t, SSE>                    I32OpHalf;
+            constexpr InstructionType I128 = SSE;
+
+            typedef detail::VecLoadStore<int16_t, Alignment, I>    I16LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, I128> I32LS128;
+            typedef detail::VecOp<int16_t, I>                      I16Op;
+            typedef detail::VecOp<int32_t, I>                      I32Op;
+            typedef detail::VecOp<int32_t, I128>                   I32Op128;
 
             constexpr int OutNumBatches = OutSize / 4;
             for (int i = 0; i < OutNumBatches; i++) {
@@ -1282,157 +1202,29 @@ namespace detail {
                     // memory operations required.
                     auto in = I16LS::load(input + j * B::RegWidth);
                     if constexpr (PreReLU)
-                        in = detail::VecOp<int16_t, AVX2>::max(in, I32Op::setzero());
+                        in = I16Op::max(in, I32Op::setzero());
 
-                    // This function processes a 16x1 chunk of int16 and produces a 8x1 chunk of
-                    // int32. For definition see below.
+                    // Processes a 2Lx1 chunk of int16 and produces a Lx1 chunk of int32.
                     const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
                     const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
                     const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
                     const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
-                    sum0          = I32Op::add(sum0, simde_mm256_madd_epi16(in, w0));
-                    sum1          = I32Op::add(sum1, simde_mm256_madd_epi16(in, w1));
-                    sum2          = I32Op::add(sum2, simde_mm256_madd_epi16(in, w2));
-                    sum3          = I32Op::add(sum3, simde_mm256_madd_epi16(in, w3));
+                    sum0          = I32Op::add(sum0, I16Op::dot2(in, w0));
+                    sum1          = I32Op::add(sum1, I16Op::dot2(in, w1));
+                    sum2          = I32Op::add(sum2, I16Op::dot2(in, w2));
+                    sum3          = I32Op::add(sum3, I16Op::dot2(in, w3));
                 }
 
-                // This function adds horizontally 8 values from each sum together, producing 4
-                // int32 values. For the definition see below.
-                auto outval = regop::m256_hsum_i32x4(sum0, sum1, sum2, sum3);
+                // Adds horizontally L values from each sum together, producing 4 int32 values.
+                auto outval = I32Op::hsum4(sum0, sum1, sum2, sum3);
                 if constexpr (Bias)
-                    outval = I32OpHalf::add(outval, I32LSHalf::load(bias + i * 4));
+                    outval = I32Op128::add(outval, I32LS128::load(bias + i * 4));
                 if constexpr (PostReLU)
-                    outval = I32OpHalf::max(outval, I32OpHalf::setzero());
-                I32LSHalf::store(output + i * 4, outval);
+                    outval = I32Op128::max(outval, I32Op128::setzero());
+                I32LS128::store(output + i * 4, outval);
             }
         }
     };
-
-#ifdef USE_AVX512
-    template <int OutSize, int InSize, int Alignment>
-    struct Affine<OutSize,
-                  InSize,
-                  Alignment,
-                  AVX512,
-                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
-    {
-        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
-        static void
-        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
-        {
-            typedef detail::VecLoadStore<int8_t, Alignment, AVX512> I8LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE>   I32LSQuarter;
-            typedef detail::VecOp<int32_t, AVX512>                  I32Op;
-            typedef detail::VecOp<int32_t, AVX2>                    I32OpHalf;
-            typedef detail::VecOp<int32_t, SSE>                     I32OpQuarter;
-
-            constexpr int OutNumBatches = OutSize / 4;
-            for (int i = 0; i < OutNumBatches; i++) {
-                const int offset0 = (i * 4 + 0) * InSize;
-                const int offset1 = (i * 4 + 1) * InSize;
-                const int offset2 = (i * 4 + 2) * InSize;
-                const int offset3 = (i * 4 + 3) * InSize;
-
-                auto sum0 = I32Op::setzero();
-                auto sum1 = I32Op::setzero();
-                auto sum2 = I32Op::setzero();
-                auto sum3 = I32Op::setzero();
-
-                typedef detail::VecBatch<InSize, int8_t, AVX2> B;
-                for (int j = 0; j < B::NumBatch; j++) {
-                    auto in = I8LS::load(input + j * B::RegWidth);
-                    if constexpr (PreReLU)
-                        in = detail::VecOp<int8_t, AVX512>::max(in, I32Op::setzero());
-
-                    const auto w0 = I8LS::load(weight + offset0 + j * B::RegWidth);
-                    const auto w1 = I8LS::load(weight + offset1 + j * B::RegWidth);
-                    const auto w2 = I8LS::load(weight + offset2 + j * B::RegWidth);
-                    const auto w3 = I8LS::load(weight + offset3 + j * B::RegWidth);
-                    sum0          = I32Op::add(sum0, _mm512_madd_epi16(in, w0));
-                    sum1          = I32Op::add(sum1, _mm512_madd_epi16(in, w1));
-                    sum2          = I32Op::add(sum2, _mm512_madd_epi16(in, w2));
-                    sum3          = I32Op::add(sum3, _mm512_madd_epi16(in, w3));
-                }
-
-                auto sum0lo = _mm512_castsi512_si256(sum0);
-                auto sum1lo = _mm512_castsi512_si256(sum1);
-                auto sum2lo = _mm512_castsi512_si256(sum2);
-                auto sum3lo = _mm512_castsi512_si256(sum3);
-                auto sum0hi = _mm512_extracti64x4_epi64(sum0, 1);
-                auto sum1hi = _mm512_extracti64x4_epi64(sum1, 1);
-                auto sum2hi = _mm512_extracti64x4_epi64(sum2, 1);
-                auto sum3hi = _mm512_extracti64x4_epi64(sum3, 1);
-                auto outval = regop::m256_hsum_i32x4(I32OpHalf::add(sum0lo, sum0hi),
-                                                     I32OpHalf::add(sum1lo, sum1hi),
-                                                     I32OpHalf::add(sum2lo, sum2hi),
-                                                     I32OpHalf::add(sum3lo, sum3hi));
-                if constexpr (Bias)
-                    outval = I32OpQuarter::add(outval, I32LSQuarter::load(bias + i * 4));
-                if constexpr (PostReLU)
-                    outval = I32OpQuarter::max(outval, I32OpQuarter::setzero());
-                I32LSQuarter::store(output + i * 4, outval);
-            }
-        }
-
-        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
-        static void
-        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
-        {
-            typedef detail::VecLoadStore<int16_t, Alignment, AVX512> I16LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, SSE>    I32LSQuarter;
-            typedef detail::VecOp<int32_t, AVX512>                   I32Op;
-            typedef detail::VecOp<int32_t, AVX2>                     I32OpHalf;
-            typedef detail::VecOp<int32_t, SSE>                      I32OpQuarter;
-
-            constexpr int OutNumBatches = OutSize / 4;
-            for (int i = 0; i < OutNumBatches; i++) {
-                const int offset0 = (i * 4 + 0) * InSize;
-                const int offset1 = (i * 4 + 1) * InSize;
-                const int offset2 = (i * 4 + 2) * InSize;
-                const int offset3 = (i * 4 + 3) * InSize;
-
-                auto sum0 = I32Op::setzero();
-                auto sum1 = I32Op::setzero();
-                auto sum2 = I32Op::setzero();
-                auto sum3 = I32Op::setzero();
-
-                typedef detail::VecBatch<InSize, int16_t, AVX2> B;
-                for (int j = 0; j < B::NumBatch; j++) {
-                    auto in = I16LS::load(input + j * B::RegWidth);
-                    if constexpr (PreReLU)
-                        in = detail::VecOp<int16_t, AVX512>::max(in, I32Op::setzero());
-
-                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
-                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
-                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
-                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
-                    regop::m512_add_dpbusd_epi32<SignedInput>(sum0, in, w0);
-                    regop::m512_add_dpbusd_epi32<SignedInput>(sum1, in, w1);
-                    regop::m512_add_dpbusd_epi32<SignedInput>(sum2, in, w2);
-                    regop::m512_add_dpbusd_epi32<SignedInput>(sum3, in, w3);
-                }
-
-                auto sum0lo = _mm512_castsi512_si256(sum0);
-                auto sum1lo = _mm512_castsi512_si256(sum1);
-                auto sum2lo = _mm512_castsi512_si256(sum2);
-                auto sum3lo = _mm512_castsi512_si256(sum3);
-                auto sum0hi = _mm512_extracti64x4_epi64(sum0, 1);
-                auto sum1hi = _mm512_extracti64x4_epi64(sum1, 1);
-                auto sum2hi = _mm512_extracti64x4_epi64(sum2, 1);
-                auto sum3hi = _mm512_extracti64x4_epi64(sum3, 1);
-                auto outval = regop::m256_hsum_i32x4(I32OpHalf::add(sum0lo, sum0hi),
-                                                     I32OpHalf::add(sum1lo, sum1hi),
-                                                     I32OpHalf::add(sum2lo, sum2hi),
-                                                     I32OpHalf::add(sum3lo, sum3hi));
-                if constexpr (Bias)
-                    outval = I32OpQuarter::add(outval, I32LSQuarter::load(bias + i * 4));
-                if constexpr (PostReLU)
-                    outval = I32OpQuarter::max(outval, I32OpQuarter::setzero());
-                I32LSQuarter::store(output + i * 4, outval);
-            }
-        }
-    };
-#endif
 
 }  // namespace detail
 

@@ -53,7 +53,7 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
 
 static Evaluation::WeightRegistry<Mix9Weight> Mix9WeightRegistry;
 
-struct Mix8BinaryWeightLoader : WeightLoader<Mix9Weight>
+struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
 {
     std::unique_ptr<Mix9Weight> load(std::istream &in)
     {
@@ -79,6 +79,56 @@ using I8Op    = simd::detail::VecOp<int8_t, simd::NativeInstType>;
 using I16Op   = simd::detail::VecOp<int16_t, simd::NativeInstType>;
 using I32Op   = simd::detail::VecOp<int32_t, simd::NativeInstType>;
 using F32Op   = simd::detail::VecOp<float, simd::NativeInstType>;
+
+template <int                   OutSize,
+          int                   InSize,
+          int                   Alignment = mix9::Alignment,
+          simd::InstructionType Inst      = simd::NativeInstType>
+inline void
+starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<OutSize, InSize> &w)
+{
+    typedef simd::detail::VecPack<int16_t, int8_t, Inst> I16Pack;
+
+    alignas(Alignment) int32_t up1i32[OutSize * 4];
+    alignas(Alignment) int8_t  up1[OutSize * 4];
+    simd::linear<OutSize * 4, InSize>(up1i32,
+                                      input,
+                                      w.value_corner_up1_weight,
+                                      w.value_corner_up1_bias);
+    simd::crelu<OutSize * 4, 128>(up1, up1i32);
+
+    alignas(Alignment) int32_t up2i32[OutSize * 4];
+    alignas(Alignment) int8_t  up2[OutSize * 4];
+    simd::linear<OutSize * 4, InSize>(up2i32,
+                                      input,
+                                      w.value_corner_up2_weight,
+                                      w.value_corner_up2_bias);
+    simd::crelu<OutSize * 4, 128, true>(up2, up2i32);
+
+    alignas(Alignment) int8_t          dotsum[OutSize * 2];
+    typedef Batch<OutSize * 2, int8_t> B;
+    for (int i = 0; i < B::NumBatch; i++) {
+        auto in10 = I8LS::load(up1 + (2 * i + 0) * B::RegWidth);  // unsigned
+        auto in11 = I8LS::load(up1 + (2 * i + 1) * B::RegWidth);  // unsigned
+        auto in20 = I8LS::load(up2 + (2 * i + 0) * B::RegWidth);  // signed
+        auto in21 = I8LS::load(up2 + (2 * i + 1) * B::RegWidth);  // signed
+
+        auto dotsum0i16 = I8Op::dot2_u7i8(in10, in20);
+        auto dotsum1i16 = I8Op::dot2_u7i8(in11, in21);
+        dotsum0i16      = I16Op::srai(dotsum0i16, floorLog2(128));
+        dotsum1i16      = I16Op::srai(dotsum1i16, floorLog2(128));
+        auto dotsumi8   = I16Pack::packs_permuted(dotsum0i16, dotsum1i16);
+
+        I8LS::store(dotsum + i * B::RegWidth, dotsumi8);
+    }
+
+    alignas(Alignment) int32_t outputi32[OutSize * 4];
+    simd::linear<OutSize, OutSize * 2, true>(outputi32,
+                                             dotsum,
+                                             w.value_corner_down_weight,
+                                             w.value_corner_down_bias);
+    simd::crelu<OutSize, 128>(output, outputi32);
+}
 
 }  // namespace
 
@@ -519,53 +569,19 @@ std::tuple<float, float, float> Mix9Accumulator::evaluateValue(const Mix9Weight 
             simd::crelu<FeatureDim, 32, true>(group0[i][j], valueSum.group[i][j].data());
 
     // group linear layer
-    alignas(Alignment) int32_t group1i32[ValueDim];
-    alignas(Alignment) int8_t  group1[ValueSumType::NGroup][ValueSumType::NGroup][ValueDim];
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[0][0],
-                                       bucket.value_corner_weight,
-                                       bucket.value_corner_bias);
-    simd::crelu<ValueDim, 128>(group1[0][0], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[0][2],
-                                       bucket.value_corner_weight,
-                                       bucket.value_corner_bias);
-    simd::crelu<ValueDim, 128>(group1[0][2], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[2][0],
-                                       bucket.value_corner_weight,
-                                       bucket.value_corner_bias);
-    simd::crelu<ValueDim, 128>(group1[2][0], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[2][2],
-                                       bucket.value_corner_weight,
-                                       bucket.value_corner_bias);
-    simd::crelu<ValueDim, 128>(group1[2][2], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[0][1],
-                                       bucket.value_edge_weight,
-                                       bucket.value_edge_bias);
-    simd::crelu<ValueDim, 128>(group1[0][1], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[1][0],
-                                       bucket.value_edge_weight,
-                                       bucket.value_edge_bias);
-    simd::crelu<ValueDim, 128>(group1[1][0], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[1][2],
-                                       bucket.value_edge_weight,
-                                       bucket.value_edge_bias);
-    simd::crelu<ValueDim, 128>(group1[1][2], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[2][1],
-                                       bucket.value_edge_weight,
-                                       bucket.value_edge_bias);
-    simd::crelu<ValueDim, 128>(group1[2][1], group1i32);
-    simd::linear<ValueDim, FeatureDim>(group1i32,
-                                       group0[1][1],
-                                       bucket.value_center_weight,
-                                       bucket.value_center_bias);
-    simd::crelu<ValueDim, 128>(group1[1][1], group1i32);
+    alignas(Alignment) int8_t group1[ValueSumType::NGroup][ValueSumType::NGroup][ValueDim];
+
+    starBlock<ValueDim, FeatureDim>(group1[0][0], group0[0][0], bucket.value_corner);
+    starBlock<ValueDim, FeatureDim>(group1[0][2], group0[0][2], bucket.value_corner);
+    starBlock<ValueDim, FeatureDim>(group1[2][0], group0[2][0], bucket.value_corner);
+    starBlock<ValueDim, FeatureDim>(group1[2][2], group0[2][2], bucket.value_corner);
+
+    starBlock<ValueDim, FeatureDim>(group1[0][1], group0[0][1], bucket.value_edge);
+    starBlock<ValueDim, FeatureDim>(group1[1][0], group0[1][0], bucket.value_edge);
+    starBlock<ValueDim, FeatureDim>(group1[1][2], group0[1][2], bucket.value_edge);
+    starBlock<ValueDim, FeatureDim>(group1[2][1], group0[2][1], bucket.value_edge);
+
+    starBlock<ValueDim, FeatureDim>(group1[1][1], group0[1][1], bucket.value_center);
 
     // average pooling
     alignas(Alignment) int8_t group2[2][2][ValueDim];
@@ -593,27 +609,18 @@ std::tuple<float, float, float> Mix9Accumulator::evaluateValue(const Mix9Weight 
     }
 
     // quadrant linear layer
-    alignas(Alignment) int32_t group2i32[ValueDim];
-    simd::linear<ValueDim, ValueDim>(group2i32,
-                                     group2[0][0],
-                                     bucket.value_quad_weight,
-                                     bucket.value_quad_bias);
-    simd::crelu<ValueDim, 128>(layer0 + FeatureDim + 0 * ValueDim, group2i32);
-    simd::linear<ValueDim, ValueDim>(group2i32,
-                                     group2[0][1],
-                                     bucket.value_quad_weight,
-                                     bucket.value_quad_bias);
-    simd::crelu<ValueDim, 128>(layer0 + FeatureDim + 1 * ValueDim, group2i32);
-    simd::linear<ValueDim, ValueDim>(group2i32,
-                                     group2[1][0],
-                                     bucket.value_quad_weight,
-                                     bucket.value_quad_bias);
-    simd::crelu<ValueDim, 128>(layer0 + FeatureDim + 2 * ValueDim, group2i32);
-    simd::linear<ValueDim, ValueDim>(group2i32,
-                                     group2[1][1],
-                                     bucket.value_quad_weight,
-                                     bucket.value_quad_bias);
-    simd::crelu<ValueDim, 128>(layer0 + FeatureDim + 3 * ValueDim, group2i32);
+    starBlock<ValueDim, ValueDim>(layer0 + FeatureDim + 0 * ValueDim,
+                                  group2[0][0],
+                                  bucket.value_quad);
+    starBlock<ValueDim, ValueDim>(layer0 + FeatureDim + 1 * ValueDim,
+                                  group2[0][1],
+                                  bucket.value_quad);
+    starBlock<ValueDim, ValueDim>(layer0 + FeatureDim + 2 * ValueDim,
+                                  group2[1][0],
+                                  bucket.value_quad);
+    starBlock<ValueDim, ValueDim>(layer0 + FeatureDim + 3 * ValueDim,
+                                  group2[1][1],
+                                  bucket.value_quad);
 
     // linear 1
     alignas(Alignment) int32_t layer1i32[ValueDim];
@@ -720,7 +727,7 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
     : Evaluator(boardSize, rule)
     , weight {nullptr, nullptr}
 {
-    CompressedWrapper<StandardHeaderParserWarpper<Mix8BinaryWeightLoader>> loader(
+    CompressedWrapper<StandardHeaderParserWarpper<Mix9BinaryWeightLoader>> loader(
         Compressor::Type::LZ4_DEFAULT);
 
     if (boardSize > 22)

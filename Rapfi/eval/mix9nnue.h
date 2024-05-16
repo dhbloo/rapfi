@@ -41,6 +41,17 @@ constexpr int      FeatDWConvDim   = 32;
 constexpr int      PolicyPWConvDim = 16;
 constexpr int      NumHeadBucket   = 1;
 
+template <int OutSize, int InSize>
+struct StarBlockWeight
+{
+    int8_t  value_corner_up1_weight[(OutSize * 4) * InSize];
+    int32_t value_corner_up1_bias[(OutSize * 4)];
+    int8_t  value_corner_up2_weight[(OutSize * 4) * InSize];
+    int32_t value_corner_up2_bias[(OutSize * 4)];
+    int8_t  value_corner_down_weight[OutSize * (OutSize * 2)];
+    int32_t value_corner_down_bias[OutSize];
+};
+
 struct alignas(Alignment) Mix9Weight
 {
     // 1  mapping layer
@@ -60,14 +71,10 @@ struct alignas(Alignment) Mix9Weight
         int32_t policy_pwconv_layer_l2_bias[(PolicyPWConvDim * PolicyDim + PolicyPWConvDim)];
 
         // 4  Value Group MLP (layer 1,2)
-        int8_t  value_corner_weight[ValueDim * FeatureDim];
-        int32_t value_corner_bias[ValueDim];
-        int8_t  value_edge_weight[ValueDim * FeatureDim];
-        int32_t value_edge_bias[ValueDim];
-        int8_t  value_center_weight[ValueDim * FeatureDim];
-        int32_t value_center_bias[ValueDim];
-        int8_t  value_quad_weight[ValueDim * ValueDim];
-        int32_t value_quad_bias[ValueDim];
+        StarBlockWeight<ValueDim, FeatureDim> value_corner;
+        StarBlockWeight<ValueDim, FeatureDim> value_edge;
+        StarBlockWeight<ValueDim, FeatureDim> value_center;
+        StarBlockWeight<ValueDim, ValueDim>   value_quad;
 
         // 5  Value MLP (layer 1,2,3)
         int8_t  value_l1_weight[ValueDim * (FeatureDim + ValueDim * 4)];
