@@ -44,11 +44,11 @@ constexpr int      NumHeadBucket   = 1;
 template <int OutSize, int InSize>
 struct StarBlockWeight
 {
-    int8_t  value_corner_up1_weight[(OutSize * 4) * InSize];
-    int32_t value_corner_up1_bias[(OutSize * 4)];
-    int8_t  value_corner_up2_weight[(OutSize * 4) * InSize];
-    int32_t value_corner_up2_bias[(OutSize * 4)];
-    int8_t  value_corner_down_weight[OutSize * (OutSize * 2)];
+    int8_t  value_corner_up1_weight[(OutSize * 2) * InSize];
+    int32_t value_corner_up1_bias[(OutSize * 2)];
+    int8_t  value_corner_up2_weight[(OutSize * 2) * InSize];
+    int32_t value_corner_up2_bias[(OutSize * 2)];
+    int8_t  value_corner_down_weight[OutSize * OutSize];
     int32_t value_corner_down_bias[OutSize];
 };
 

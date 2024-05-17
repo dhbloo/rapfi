@@ -89,24 +89,22 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
 {
     typedef simd::detail::VecPack<int16_t, int8_t, Inst> I16Pack;
 
-    alignas(Alignment) int32_t up1i32[OutSize * 4];
-    alignas(Alignment) int8_t  up1[OutSize * 4];
-    simd::linear<OutSize * 4, InSize>(up1i32,
+    alignas(Alignment) int32_t upi32[OutSize * 2];
+    alignas(Alignment) int8_t  up1[OutSize * 2], up2[OutSize * 2];
+    simd::linear<OutSize * 2, InSize>(upi32,
                                       input,
                                       w.value_corner_up1_weight,
                                       w.value_corner_up1_bias);
-    simd::crelu<OutSize * 4, 128>(up1, up1i32);
+    simd::crelu<OutSize * 2, 128>(up1, upi32);
 
-    alignas(Alignment) int32_t up2i32[OutSize * 4];
-    alignas(Alignment) int8_t  up2[OutSize * 4];
-    simd::linear<OutSize * 4, InSize>(up2i32,
+    simd::linear<OutSize * 2, InSize>(upi32,
                                       input,
                                       w.value_corner_up2_weight,
                                       w.value_corner_up2_bias);
-    simd::crelu<OutSize * 4, 128, true>(up2, up2i32);
+    simd::crelu<OutSize * 2, 128, true>(up2, upi32);
 
-    alignas(Alignment) int8_t          dotsum[OutSize * 2];
-    typedef Batch<OutSize * 2, int8_t> B;
+    alignas(Alignment) int8_t      dotsum[OutSize];
+    typedef Batch<OutSize, int8_t> B;
     for (int i = 0; i < B::NumBatch; i++) {
         auto in10 = I8LS::load(up1 + (2 * i + 0) * B::RegWidth);  // unsigned
         auto in11 = I8LS::load(up1 + (2 * i + 1) * B::RegWidth);  // unsigned
@@ -122,11 +120,11 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
         I8LS::store(dotsum + i * B::RegWidth, dotsumi8);
     }
 
-    alignas(Alignment) int32_t outputi32[OutSize * 4];
-    simd::linear<OutSize, OutSize * 2, true>(outputi32,
-                                             dotsum,
-                                             w.value_corner_down_weight,
-                                             w.value_corner_down_bias);
+    alignas(Alignment) int32_t outputi32[OutSize];
+    simd::linear<OutSize, OutSize, true>(outputi32,
+                                         dotsum,
+                                         w.value_corner_down_weight,
+                                         w.value_corner_down_bias);
     simd::crelu<OutSize, 128>(output, outputi32);
 }
 
