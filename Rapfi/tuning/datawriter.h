@@ -155,10 +155,8 @@ private:
 ///         Channel 0: color of side to move (black = -1.0, white = 1.0)
 /// 5. globalTargetsNC, [N, C], float
 ///     Global output targets.
-///         Channel 0: win probability of current side to move
-///         Channel 1: loss probability of current side to move
-///         Channel 2: draw probability
-/// 6. policyTargetsNCHW, [N, C, H*W], int16
+///         Channel 0-3: win-loss-draw probability from current side to move.
+/// 6. policyTargetsNCMove, [N, C, num_moves], int16
 ///         Channel 0: policy target this turn
 /// 7. sparseInputDim, [C], uint32, C = C0 + C1
 ///     Dimension of each spatial sparse inputs, including u8 and u16.
@@ -169,12 +167,18 @@ public:
     /// @param dirpath The directory of output npz files
     /// @param maxNumEntriesPerFile The maximum number of entries per file
     /// @param flushCallback Optional callback, called with name of file wrote when flush
+    /// @param writeSparseInputs Whether to write sparse pattern inputs
     NumpyDataWriter(std::string                      dirpath,
                     size_t                           maxNumEntriesPerFile,
-                    std::function<void(std::string)> flushCallback = nullptr);
+                    std::function<void(std::string)> flushCallback     = nullptr,
+                    bool                             writeSparseInputs = true);
     ~NumpyDataWriter();
 
     void writeEntry(const DataEntry &entry);
+    void writeEntryWithSoftValueTarget(const DataEntry &entry,
+                                       float            winprob,
+                                       float            loseprob,
+                                       float            drawprob);
 
 private:
     class DataBuffer;
@@ -182,6 +186,7 @@ private:
     std::string                      dirpath;
     size_t                           maxNumEntriesPerFile;
     std::function<void(std::string)> flushCallback;
+    bool                             writeSparseInputs;
 };
 
 }  // namespace Tuning

@@ -21,6 +21,7 @@
 #include "../config.h"
 #include "../core/hash.h"
 #include "../core/iohelper.h"
+#include "../core/utils.h"
 #include "../game/board.h"
 
 #include <cassert>
@@ -31,9 +32,20 @@
 #include <future>
 #include <iomanip>
 #include <npy.hpp>
+#include <optional>
 #include <sstream>
 
 namespace {
+
+/// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
+/// constructed with two index x and y using uint16_t move = (x << 5) | y.
+uint16_t encodeU16Move(Pos move)
+{
+    if (move == Pos::NONE || move == Pos::PASS)
+        return UINT16_MAX;  // should not happen, but we just set it to uint16_t(-1)
+    else
+        return (move.x() << 5) | move.y();
+}
 
 /// Packs a bit array into byte array (in big-endian).
 /// @param bits The source of bits array
@@ -209,17 +221,13 @@ void SimpleBinaryDataWriter::writeEntry(const DataEntry &entry)
     } ehead;
     uint16_t position[MAX_MOVES];  // move sequence that representing a position
 
-    /// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
-    /// constructed with two index x and y using uint16_t move = (x << 5) | y.
-    const auto makeMove = [](Pos move) -> uint16_t { return (move.x() << 5) | move.y(); };
-
     ehead.result    = entry.result;
     ehead.ply       = (uint16_t)entry.position.size();
     ehead.boardsize = entry.boardsize;
     ehead.rule      = entry.rule == RENJU ? 4 : (uint16_t)entry.rule;
-    ehead.move      = makeMove(entry.move);
+    ehead.move      = encodeU16Move(entry.move);
     for (size_t i = 0; i < ehead.ply; i++) {
-        position[i] = makeMove(entry.position[i]);
+        position[i] = encodeU16Move(entry.position[i]);
     }
 
     std::ostream &dst = dataStream->getStream();
@@ -418,13 +426,9 @@ private:
         // Write entry header first
         os.write(reinterpret_cast<char *>(&ehead), sizeof(EntryHead));
 
-        /// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
-        /// constructed with two index x and y using uint16_t move = (x << 5) | y.
-        const auto makeMove = [](Pos move) -> uint16_t { return (move.x() << 5) | move.y(); };
-
         // Write initial position
         for (size_t i = 0; i < ehead.initPly; i++)
-            position[i] = makeMove(gameEntry.initPosition[i]);
+            position[i] = encodeU16Move(gameEntry.initPosition[i]);
         os.write(reinterpret_cast<char *>(position), sizeof(uint16_t) * ehead.initPly);
 
         struct Move
@@ -447,7 +451,7 @@ private:
             moveData.isLast   = numExtraPVs == 0;
             moveData.isNoEval = m.eval == VALUE_NONE;
             moveData.isPass   = m.move == Pos::PASS;
-            moveData.move     = makeMove(m.move);
+            moveData.move     = encodeU16Move(m.move);
             moveData.eval     = moveData.isNoEval ? 0 : m.eval;
             os.write(reinterpret_cast<char *>(&moveData), sizeof(Move));
 
@@ -457,7 +461,7 @@ private:
                 moveData.isLast   = i == numExtraPVs - 1;
                 moveData.isNoEval = m.multiPvMoves[i].eval == VALUE_NONE;
                 moveData.isPass   = m.multiPvMoves[i].move == Pos::PASS;
-                moveData.move     = makeMove(m.multiPvMoves[i].move);
+                moveData.move     = encodeU16Move(m.multiPvMoves[i].move);
                 moveData.eval     = moveData.isNoEval ? 0 : m.multiPvMoves[i].eval;
                 os.write(reinterpret_cast<char *>(&moveData), sizeof(Move));
             }
@@ -497,16 +501,19 @@ class NumpyDataWriter::DataBuffer
 public:
     size_t bufferedSize() const { return entryBuffer.size(); }
 
-    void addEntry(const DataEntry &entry)
+    void addEntry(const DataEntry &entry, std::optional<std::array<float, 3>> softValueTarget)
     {
         // Copy entry to buffer
         entryBuffer.push_back(entry);
+        softValueBuffer.push_back(softValueTarget);
 
         // Update entry hash
         hash ^= entryHash(entry);
     }
 
-    void asyncSaveToDir(std::string dirpath, std::function<void(std::string)> finishedCallback)
+    void asyncSaveToDir(std::string                      dirpath,
+                        std::function<void(std::string)> finishedCallback,
+                        bool                             writeSparseInputs)
     {
         // Get file name from entry hash
         std::ostringstream ss;
@@ -518,17 +525,26 @@ public:
             throw std::runtime_error("can not open output file: " + filename);
 
         // Add processing to async job list
-        results.push_back(
-            std::async(std::launch::async,
-                       [os               = std::move(file),
-                        localEntryBuffer = std::move(entryBuffer),  // clears current entry buffer
-                        finishedCallback = std::move(finishedCallback),
-                        filename         = filename]() mutable {
-                           flushToStream(os, std::move(localEntryBuffer));
+        results.push_back(std::async(
+            std::launch::async,
+            [os                   = std::move(file),
+             localEntryBuffer     = std::move(entryBuffer),      // clears current entry buffer
+             localSoftValueBuffer = std::move(softValueBuffer),  // clears current entry buffer
+             finishedCallback     = std::move(finishedCallback),
+             filename             = filename,
+             writeSparseInputs    = writeSparseInputs]() mutable {
+                if (writeSparseInputs)
+                    flushToStream<true>(os,
+                                        std::move(localEntryBuffer),
+                                        std::move(localSoftValueBuffer));
+                else
+                    flushToStream<false>(os,
+                                         std::move(localEntryBuffer),
+                                         std::move(localSoftValueBuffer));
 
-                           if (finishedCallback)
-                               finishedCallback(filename);
-                       }));
+                if (finishedCallback)
+                    finishedCallback(filename);
+            }));
 
         // Cleanup previous finished jobs
         cleanupFinishedResult();
@@ -536,11 +552,15 @@ public:
     }
 
 private:
-    uint64_t                       hash = 0;
-    std::vector<DataEntry>         entryBuffer;
-    std::vector<std::future<void>> results;
+    uint64_t                                         hash = 0;
+    std::vector<DataEntry>                           entryBuffer;
+    std::vector<std::optional<std::array<float, 3>>> softValueBuffer;
+    std::vector<std::future<void>>                   results;
 
-    static void flushToStream(std::ostream &os, std::vector<DataEntry> localEntryBuffer)
+    template <bool WriteSparseInputs>
+    static void flushToStream(std::ostream                                    &os,
+                              std::vector<DataEntry>                           localEntryBuffer,
+                              std::vector<std::optional<std::array<float, 3>>> localSoftValueBuffer)
     {
         // Find max board size
         int maxBoardSize = std::max_element(localEntryBuffer.begin(),
@@ -549,47 +569,36 @@ private:
                                                 return e1.boardsize < e2.boardsize;
                                             })
                                ->boardsize;
-        unsigned long maxNumCells = maxBoardSize * maxBoardSize;
-        unsigned long numBytes    = (maxNumCells + 7) / 8;
-        unsigned long numEntries  = localEntryBuffer.size();
+        unsigned long numCells   = maxBoardSize * maxBoardSize;
+        unsigned long numPolicy  = numCells + 1;
+        unsigned long numBytes   = (numCells + 7) / 8;
+        unsigned long numEntries = localEntryBuffer.size();
 
         std::vector<unsigned long> binaryInputNCHWPackedShape {numEntries, 3, numBytes};
-        std::vector<unsigned long> sparseInputNCHWU8Shape {numEntries, 10, maxNumCells};
-        std::vector<unsigned long> sparseInputNCHWU16Shape {numEntries, 2, maxNumCells};
+        std::vector<unsigned long> sparseInputNCHWU8Shape {WriteSparseInputs ? numEntries : 0,
+                                                           10,
+                                                           numCells};
+        std::vector<unsigned long> sparseInputNCHWU16Shape {WriteSparseInputs ? numEntries : 0,
+                                                            2,
+                                                            numCells};
         std::vector<unsigned long> globalInputNCShape {numEntries, 1};
         std::vector<unsigned long> globalTargetsNCShape {numEntries, 3};
-        std::vector<unsigned long> policyTargetsNCHWShape {numEntries, 1, maxNumCells};
+        std::vector<unsigned long> policyTargetsNCMoveShape {numEntries, 1, numPolicy};
 
         std::vector<uint8_t>  binaryInputNCHWPacked(lengthOfShape(binaryInputNCHWPackedShape));
         std::vector<uint8_t>  sparseInputNCHWU8(lengthOfShape(sparseInputNCHWU8Shape));
         std::vector<uint16_t> sparseInputNCHWU16(lengthOfShape(sparseInputNCHWU16Shape));
         std::vector<float>    globalInputNC(lengthOfShape(globalInputNCShape));
         std::vector<float>    globalTargetsNC(lengthOfShape(globalTargetsNCShape));
-        std::vector<uint16_t> policyTargetsNCHW(
-            lengthOfShape(policyTargetsNCHWShape));  // Quantitize policy target to int16
+        std::vector<uint16_t> policyTargetsNCMove(
+            lengthOfShape(policyTargetsNCMoveShape));  // Quantitize policy target to int16
 
-        const std::vector<uint32_t> sparseInputDim {
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN_NB,
-            PATTERN4_NB,
-            PATTERN4_NB,
-            PCODE_NB,
-            PCODE_NB,
-        };
-        std::vector<unsigned long> sparseInputDimShape {(unsigned long)sparseInputDim.size()};
-
-        size_t binaryInputNCHWStride    = lengthOfShape(binaryInputNCHWPackedShape, 1);
-        size_t sparseInputNCHWU8Stride  = lengthOfShape(sparseInputNCHWU8Shape, 1);
-        size_t sparseInputNCHWU16Stride = lengthOfShape(sparseInputNCHWU16Shape, 1);
-        size_t globalInputNCStride      = lengthOfShape(globalInputNCShape, 1);
-        size_t globalTargetsNCtride     = lengthOfShape(globalTargetsNCShape, 1);
-        size_t policyTargetsNCHWStride  = lengthOfShape(policyTargetsNCHWShape, 1);
+        size_t binaryInputNCHWStride     = lengthOfShape(binaryInputNCHWPackedShape, 1);
+        size_t sparseInputNCHWU8Stride   = lengthOfShape(sparseInputNCHWU8Shape, 1);
+        size_t sparseInputNCHWU16Stride  = lengthOfShape(sparseInputNCHWU16Shape, 1);
+        size_t globalInputNCStride       = lengthOfShape(globalInputNCShape, 1);
+        size_t globalTargetsNCtride      = lengthOfShape(globalTargetsNCShape, 1);
+        size_t policyTargetsNCMoveStride = lengthOfShape(policyTargetsNCMoveShape, 1);
 
         std::atomic<uint64_t> hash = 0;
         std::for_each(
@@ -607,69 +616,81 @@ private:
                     board.move(e.rule, pos);
 
                 // Update inboard, self, oppo plane
-                std::vector<uint8_t> inBoardPlane(maxNumCells, 0);
-                std::vector<uint8_t> selfPlane(maxNumCells, 0);
-                std::vector<uint8_t> oppoPlane(maxNumCells, 0);
+                std::vector<uint8_t> inBoardPlane(numCells, 0);
+                std::vector<uint8_t> selfPlane(numCells, 0);
+                std::vector<uint8_t> oppoPlane(numCells, 0);
                 Color                self = board.sideToMove(), oppo = ~self;
                 FOR_EVERY_POSITION(&board, pos)
                 {
-                    int         posIndex   = pos.y() * board.size() + pos.x();
-                    const Cell &c          = board.cell(pos);
-                    inBoardPlane[posIndex] = true;
-                    selfPlane[posIndex]    = c.piece == self;
-                    oppoPlane[posIndex]    = c.piece == oppo;
-                    oppoPlane[posIndex]    = c.piece == oppo;
+                    int         posIdx   = pos.y() * board.size() + pos.x();
+                    const Cell &c        = board.cell(pos);
+                    inBoardPlane[posIdx] = true;
+                    selfPlane[posIdx]    = c.piece == self;
+                    oppoPlane[posIdx]    = c.piece == oppo;
+                    oppoPlane[posIdx]    = c.piece == oppo;
 
-                    // Write sparseInputNCHWU8 and sparseInputNCHWU16
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 0 * maxNumCells + posIndex] =
-                        c.pattern(self, 0);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 1 * maxNumCells + posIndex] =
-                        c.pattern(self, 1);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 2 * maxNumCells + posIndex] =
-                        c.pattern(self, 2);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 3 * maxNumCells + posIndex] =
-                        c.pattern(self, 3);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 4 * maxNumCells + posIndex] =
-                        c.pattern(oppo, 0);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 5 * maxNumCells + posIndex] =
-                        c.pattern(oppo, 1);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 6 * maxNumCells + posIndex] =
-                        c.pattern(oppo, 2);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 7 * maxNumCells + posIndex] =
-                        c.pattern(oppo, 3);
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 8 * maxNumCells + posIndex] =
-                        c.pattern4[self];
-                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 9 * maxNumCells + posIndex] =
-                        c.pattern4[oppo];
-                    sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 0 * maxNumCells + posIndex] =
-                        self == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
-                    sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 1 * maxNumCells + posIndex] =
-                        oppo == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
+                    if constexpr (WriteSparseInputs) {
+                        // Write sparseInputNCHWU8 and sparseInputNCHWU16
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 0 * numCells + posIdx] =
+                            c.pattern(self, 0);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 1 * numCells + posIdx] =
+                            c.pattern(self, 1);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 2 * numCells + posIdx] =
+                            c.pattern(self, 2);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 3 * numCells + posIdx] =
+                            c.pattern(self, 3);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 4 * numCells + posIdx] =
+                            c.pattern(oppo, 0);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 5 * numCells + posIdx] =
+                            c.pattern(oppo, 1);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 6 * numCells + posIdx] =
+                            c.pattern(oppo, 2);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 7 * numCells + posIdx] =
+                            c.pattern(oppo, 3);
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 8 * numCells + posIdx] =
+                            c.pattern4[self];
+                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 9 * numCells + posIdx] =
+                            c.pattern4[oppo];
+                        sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 0 * numCells + posIdx] =
+                            self == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
+                        sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 1 * numCells + posIdx] =
+                            oppo == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
+                    }
 
-                    // Write policyTargetsNCHW
-                    uint16_t cellPolicy = uint16_t(e.policyTarget(pos) * 65535);
-                    policyTargetsNCHW[i * policyTargetsNCHWStride + 0 * maxNumCells + posIndex] =
-                        cellPolicy;
+                    // Write policyTargetsNCMove
+                    policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + posIdx] =
+                        std::clamp<int>(e.policyTarget(pos) * UINT16_MAX, 0, UINT16_MAX);
                 }
+
+                // Write policyTargetsNCMove for the PASS move
+                policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + numCells] =
+                    std::clamp<int>(e.policyTarget(Pos::PASS) * UINT16_MAX, 0, UINT16_MAX);
 
                 // Write binaryInputNCHWPacked
                 packBitsToBytes(inBoardPlane.data(),
-                                maxNumCells,
+                                numCells,
                                 &binaryInputNCHWPacked[i * binaryInputNCHWStride + 0 * numBytes]);
                 packBitsToBytes(selfPlane.data(),
-                                maxNumCells,
+                                numCells,
                                 &binaryInputNCHWPacked[i * binaryInputNCHWStride + 1 * numBytes]);
                 packBitsToBytes(oppoPlane.data(),
-                                maxNumCells,
+                                numCells,
                                 &binaryInputNCHWPacked[i * binaryInputNCHWStride + 2 * numBytes]);
 
                 // Write globalInputNC
                 globalInputNC[i * globalInputNCStride + 0] = (self == BLACK ? -1.0f : 1.0f);
 
                 // Write globalTargetsNC
-                globalTargetsNC[i * globalTargetsNCtride + 0] = e.result == RESULT_WIN;
-                globalTargetsNC[i * globalTargetsNCtride + 1] = e.result == RESULT_LOSS;
-                globalTargetsNC[i * globalTargetsNCtride + 2] = e.result == RESULT_DRAW;
+                if (localSoftValueBuffer[i].has_value()) {
+                    globalTargetsNC[i * globalTargetsNCtride + 0] = (*localSoftValueBuffer[i])[0];
+                    globalTargetsNC[i * globalTargetsNCtride + 1] = (*localSoftValueBuffer[i])[1];
+                    globalTargetsNC[i * globalTargetsNCtride + 2] = (*localSoftValueBuffer[i])[2];
+                }
+                else {
+                    globalTargetsNC[i * globalTargetsNCtride + 0] = e.result == RESULT_WIN;
+                    globalTargetsNC[i * globalTargetsNCtride + 1] = e.result == RESULT_LOSS;
+                    globalTargetsNC[i * globalTargetsNCtride + 2] = e.result == RESULT_DRAW;
+                }
             });
 
         // Write npz with ZIP compression (in another thread)
@@ -686,12 +707,30 @@ private:
         openEntryAndWrite("binaryInputNCHWPacked",
                           binaryInputNCHWPacked,
                           binaryInputNCHWPackedShape);
-        openEntryAndWrite("sparseInputNCHWU8", sparseInputNCHWU8, sparseInputNCHWU8Shape);
-        openEntryAndWrite("sparseInputNCHWU16", sparseInputNCHWU16, sparseInputNCHWU16Shape);
+        if constexpr (WriteSparseInputs) {
+            const std::vector<uint32_t> sparseInputDim {
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN_NB,
+                PATTERN4_NB,
+                PATTERN4_NB,
+                PCODE_NB,
+                PCODE_NB,
+            };
+            std::vector<unsigned long> sparseInputDimShape {(unsigned long)sparseInputDim.size()};
+
+            openEntryAndWrite("sparseInputDim", sparseInputDim, sparseInputDimShape);
+            openEntryAndWrite("sparseInputNCHWU8", sparseInputNCHWU8, sparseInputNCHWU8Shape);
+            openEntryAndWrite("sparseInputNCHWU16", sparseInputNCHWU16, sparseInputNCHWU16Shape);
+        }
         openEntryAndWrite("globalInputNC", globalInputNC, globalInputNCShape);
         openEntryAndWrite("globalTargetsNC", globalTargetsNC, globalTargetsNCShape);
-        openEntryAndWrite("policyTargetsNCHW", policyTargetsNCHW, policyTargetsNCHWShape);
-        openEntryAndWrite("sparseInputDim", sparseInputDim, sparseInputDimShape);
+        openEntryAndWrite("policyTargetsNCMove", policyTargetsNCMove, policyTargetsNCMoveShape);
 
         // Clear all entry buffer
         localEntryBuffer.clear();
@@ -712,24 +751,39 @@ private:
 
 NumpyDataWriter::NumpyDataWriter(std::string                      dirpath,
                                  size_t                           maxNumEntriesPerFile,
-                                 std::function<void(std::string)> flushCallback)
+                                 std::function<void(std::string)> flushCallback,
+                                 bool                             writeSparseInputs)
     : buffer(std::make_unique<DataBuffer>())
     , dirpath(dirpath)
     , maxNumEntriesPerFile(maxNumEntriesPerFile)
     , flushCallback(flushCallback)
-{}
+    , writeSparseInputs(writeSparseInputs)
+{
+    // Create output directory
+    ensureDir(dirpath);
+}
 
 NumpyDataWriter::~NumpyDataWriter()
 {
     if (buffer->bufferedSize())
-        buffer->asyncSaveToDir(dirpath, flushCallback);
+        buffer->asyncSaveToDir(dirpath, flushCallback, writeSparseInputs);
 }
 
 void NumpyDataWriter::writeEntry(const DataEntry &entry)
 {
-    buffer->addEntry(entry);
+    buffer->addEntry(entry, std::nullopt);
     if (buffer->bufferedSize() >= maxNumEntriesPerFile)
-        buffer->asyncSaveToDir(dirpath, flushCallback);
+        buffer->asyncSaveToDir(dirpath, flushCallback, writeSparseInputs);
+}
+
+void NumpyDataWriter::writeEntryWithSoftValueTarget(const DataEntry &entry,
+                                                    float            winprob,
+                                                    float            loseprob,
+                                                    float            drawprob)
+{
+    buffer->addEntry(entry, std::array<float, 3> {winprob, loseprob, drawprob});
+    if (buffer->bufferedSize() >= maxNumEntriesPerFile)
+        buffer->asyncSaveToDir(dirpath, flushCallback, writeSparseInputs);
 }
 
 }  // namespace Tuning

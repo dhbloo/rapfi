@@ -17,7 +17,6 @@
  */
 
 #include "../core/iohelper.h"
-#include "../core/utils.h"
 #include "../tuning/dataset.h"
 #include "../tuning/datawriter.h"
 #include "argutils.h"
@@ -140,8 +139,6 @@ void Command::dataprep(int argc, char *argv[])
             break;
 
         case DataWriterType::Numpy:
-            // Create output directory
-            ensureDir(outputPath);
             dataWriter = std::make_unique<NumpyDataWriter>(
                 outputPath,
                 maxNumEntriesPerFile,
