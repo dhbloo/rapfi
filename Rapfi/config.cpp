@@ -24,11 +24,8 @@
 #include "database/dbstorage.h"
 #include "database/yxdbstorage.h"
 #include "eval/evaluator.h"
-#include "eval/mix6nnue.h"
-#include "eval/mix7nnue.h"
 #include "eval/mix8nnue.h"
 #include "eval/mix9nnue.h"
-#include "eval/nnuev2.h"
 #include "game/pattern.h"
 #include "search/hashtable.h"
 #include "search/searchthread.h"
@@ -579,47 +576,7 @@ void Config::readEvaluator(const cpptoml::table &t)
         return {blackWeightPath, whiteWeightPath};
     };
 
-    if (*evaluatorType == "mix6nnue") {
-        int alignBoardSize = t.get_as<int>("align_board_size").value_or(0);
-
-        Search::Threads.setupEvaluator(warpEvaluatorMaker(
-            [=](int                   boardSize,
-                Rule                  rule,
-                std::filesystem::path weightPath,
-                const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix6::Mix6Evaluator>(
-                    boardSize,
-                    rule,
-                    blackWeightPath,
-                    whiteWeightPath,
-                    weightCfg.get_as<int>("align_board_size").value_or(alignBoardSize));
-            },
-            true));
-    }
-    else if (*evaluatorType == "mix7nnue") {
-        int alignBoardSize = t.get_as<int>("align_board_size").value_or(0);
-
-        Search::Threads.setupEvaluator(warpEvaluatorMaker(
-            [=](int                   boardSize,
-                Rule                  rule,
-                std::filesystem::path weightPath,
-                const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix7::Mix7Evaluator>(
-                    boardSize,
-                    rule,
-                    blackWeightPath,
-                    whiteWeightPath,
-                    weightCfg.get_as<int>("align_board_size").value_or(alignBoardSize));
-            },
-            true));
-    }
-    else if (*evaluatorType == "mix8nnue") {
+    if (*evaluatorType == "mix8nnue") {
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
@@ -648,22 +605,6 @@ void Config::readEvaluator(const cpptoml::table &t)
                                                                          rule,
                                                                          blackWeightPath,
                                                                          whiteWeightPath);
-            },
-            true));
-    }
-    else if (*evaluatorType == "nnuev2") {
-        Search::Threads.setupEvaluator(warpEvaluatorMaker(
-            [=](int                   boardSize,
-                Rule                  rule,
-                std::filesystem::path weightPath,
-                const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::nnuev2::NNUEv2Evaluator>(boardSize,
-                                                                             rule,
-                                                                             blackWeightPath,
-                                                                             whiteWeightPath);
             },
             true));
     }

@@ -78,20 +78,6 @@ constexpr size_t alignDimSize(size_t dimSize)
     return alignBytes * ((dimSize + alignBytes - 1) / alignBytes);
 }
 
-/// @param SimdBits The width of simd instructions (in bits)
-/// @param T The type of elements
-/// @param Size The size of element array
-/// @param RegWidth The number of elements in one register
-/// @param NumBatches Number iterations for one register to loop all elements
-#define DEF_BATCH(SimdBits, T, Size, RegWidth, NumBatches)                                  \
-    constexpr int RegWidth = SimdBits ? (SimdBits / 8) / sizeof(T) : 1;                     \
-    static_assert(Size % RegWidth == 0, "data does not fill a " #SimdBits " bit register"); \
-    constexpr int NumBatches = Size / RegWidth;
-
-#define DEF_BATCH128(T, Size, RegWidth, NumBatches) DEF_BATCH(128, T, Size, RegWidth, NumBatches)
-#define DEF_BATCH256(T, Size, RegWidth, NumBatches) DEF_BATCH(256, T, Size, RegWidth, NumBatches)
-#define DEF_BATCH512(T, Size, RegWidth, NumBatches) DEF_BATCH(512, T, Size, RegWidth, NumBatches)
-
 namespace detail {
 
     template <typename...>
