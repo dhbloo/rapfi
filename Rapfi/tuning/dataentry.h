@@ -21,6 +21,7 @@
 #include "../core/pos.h"
 #include "../core/types.h"
 
+#include <algorithm>
 #include <cassert>
 #include <memory>
 #include <vector>
