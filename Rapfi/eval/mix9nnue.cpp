@@ -113,8 +113,8 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
 
         auto dotsum0i16 = I8Op::dot2_u7i8(in10, in20);
         auto dotsum1i16 = I8Op::dot2_u7i8(in11, in21);
-        dotsum0i16      = I16Op::srai(dotsum0i16, floorLog2(128));
-        dotsum1i16      = I16Op::srai(dotsum1i16, floorLog2(128));
+        dotsum0i16      = I16Op::srai<floorLog2(128)>(dotsum0i16);
+        dotsum1i16      = I16Op::srai<floorLog2(128)>(dotsum1i16);
         auto dotsumi8   = I16Pack::packs_permuted(dotsum0i16, dotsum1i16);
 
         I8LS::store(dotsum + i * B::RegWidth, dotsumi8);
@@ -265,7 +265,7 @@ void Mix9Accumulator::clear(const Mix9Weight &w)
                 for (int b = 0; b < ConvB::NumBatch; b++) {
                     auto feature = I16LS::load(mapSum[innerIdx].data() + b * FeatB::RegWidth);
                     feature      = I16Op::max(feature, I16Op::setzero());
-                    feature      = I16Op::slli(feature, 2);  // mul 4
+                    feature      = I16Op::slli<2>(feature);  // mul 4
                     // Apply feature depthwise conv
                     for (int dy = 0; dy <= 2; dy++) {
                         int yi = y + dy;
@@ -456,8 +456,8 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
 
         // Update mapConv
         for (int b = 0; b < ConvB::NumBatch; b++) {
-            oldFeats[b] = I16Op::slli(oldFeats[b], 2);  // mul 4
-            newFeats[b] = I16Op::slli(newFeats[b], 2);  // mul 4
+            oldFeats[b] = I16Op::slli<2>(oldFeats[b]);  // mul 4
+            newFeats[b] = I16Op::slli<2>(newFeats[b]);  // mul 4
         }
         for (int dy = 0, outerIdxBase = c.y * outerBoardSize + c.x; dy <= 2;
              dy++, outerIdxBase += outerBoardSize) {
@@ -677,7 +677,7 @@ void Mix9Accumulator::evaluatePolicy(const Mix9Weight &w, PolicyBuffer &policyBu
         typedef Batch<PolicyPWConvDim, int32_t> B;
         for (int i = 0; i < B::NumBatch; i++) {
             auto data = I32LS::load(layer2i32 + PolicyPWConvDim * PolicyDim + i * B::RegWidth);
-            data      = I32Op::slli(data, 7);  // scale by 128
+            data      = I32Op::slli<7>(data);  // scale by 128
             I32LS::store(pwconvBiasi32 + i * B::RegWidth, data);
         }
     }

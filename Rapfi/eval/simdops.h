@@ -38,7 +38,7 @@ enum InstructionType {
 constexpr size_t simdBitsOfInstType(InstructionType instType)
 {
     switch (instType) {
-    default: return 0;
+    default: return 128;
     case SSE: return 128;
     case AVX2: return 256;
     case AVX512: return 512;
@@ -54,8 +54,8 @@ constexpr InstructionType NativeInstType  = AVX2;
 #elif defined(USE_SSE)
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SSE;
-#else
-constexpr size_t          NativeAlignment = 8;
+#else  // Delegate to SSE with simde's implementation
+constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SCALAR;
 #endif
 
@@ -90,7 +90,7 @@ namespace detail {
     struct VecBatch
     {
         static constexpr size_t SimdBits    = simdBitsOfInstType(I);
-        static constexpr size_t RegWidth    = SimdBits ? (SimdBits / 8) / sizeof(T) : 1;
+        static constexpr size_t RegWidth    = (SimdBits / 8) / sizeof(T);
         static constexpr size_t NumBatch    = Size / RegWidth;
         static constexpr size_t NumExtra    = Size % RegWidth;
         static constexpr size_t BatchedSize = NumBatch * RegWidth;
@@ -230,11 +230,8 @@ namespace detail {
 #endif
 
     template <typename T, int Alignment>
-    struct VecLoadStore<T, Alignment, SCALAR>
-    {
-        static FORCE_INLINE T    load(const T *addr) { return *addr; }
-        static FORCE_INLINE void store(T *addr, T data) { *addr = data; }
-    };
+    struct VecLoadStore<T, Alignment, SCALAR> : VecLoadStore<T, Alignment, SSE>
+    {};
 
     // ------------------------------------------------------------------------
     // Vec type conversion template
@@ -255,9 +252,9 @@ namespace detail {
             if constexpr (std::is_same_v<FT, int8_t>) {
                 if constexpr (std::is_same_v<TT, int16_t>)
                     return simde_mm_cvtepi8_epi16(a);
-                if constexpr (std::is_same_v<TT, int32_t>)
+                else if constexpr (std::is_same_v<TT, int32_t>)
                     return simde_mm_cvtepi8_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm_cvtepi8_epi64(a);
                 else
                     static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
@@ -265,7 +262,7 @@ namespace detail {
             else if constexpr (std::is_same_v<FT, int16_t>) {
                 if constexpr (std::is_same_v<TT, int32_t>)
                     return simde_mm_cvtepi16_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return simde_mm_cvtepi16_epi64(a);
                 else
                     static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
@@ -381,9 +378,9 @@ namespace detail {
             if constexpr (std::is_same_v<FT, int8_t>) {
                 if constexpr (std::is_same_v<TT, int16_t>)
                     return _mm512_cvtepi8_epi16(a);
-                if constexpr (std::is_same_v<TT, int32_t>)
+                else if constexpr (std::is_same_v<TT, int32_t>)
                     return _mm512_cvtepi8_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return _mm512_cvtepi8_epi64(a);
                 else
                     static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
@@ -391,7 +388,7 @@ namespace detail {
             else if constexpr (std::is_same_v<FT, int16_t>) {
                 if constexpr (std::is_same_v<TT, int32_t>)
                     return _mm512_cvtepi16_epi32(a);
-                if constexpr (std::is_same_v<TT, int64_t>)
+                else if constexpr (std::is_same_v<TT, int64_t>)
                     return _mm512_cvtepi16_epi64(a);
                 else
                     static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
@@ -464,10 +461,8 @@ namespace detail {
 #endif
 
     template <typename FT, typename TT>
-    struct VecCvt<FT, TT, SCALAR>
-    {
-        static FORCE_INLINE TT convert1(FT a) { return static_cast<TT>(a); }
-    };
+    struct VecCvt<FT, TT, SCALAR> : VecCvt<FT, TT, SSE>
+    {};
 
     // ------------------------------------------------------------------------
     // Vec type packing (narrowing-conversion) template
@@ -555,6 +550,10 @@ namespace detail {
     };
 #endif
 
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, SCALAR, std::enable_if_t<std::is_integral_v<TT>>> : VecPack<FT, TT, SSE>
+    {};
+
     // ------------------------------------------------------------------------
     // Vec operation set template
 
@@ -609,7 +608,7 @@ namespace detail {
         static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
         {
 #if defined(USE_VNNI)
-            acc = _mm_dpbusd_epi32(acc, a, b);
+            acc = _mm_dpbusd_avx_epi32(acc, a, b);
 #else
             R product0 = simde_mm_maddubs_epi16(a, b);
             product0   = simde_mm_madd_epi16(product0, simde_mm_set1_epi16(1));
@@ -626,8 +625,8 @@ namespace detail {
             R low7 = simde_mm_andnot_si128(highest_bit, a);
 
 #if defined(USE_VNNI)
-            msb  = _mm_dpbusd_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
-            low7 = _mm_dpbusd_epi32(_mm_setzero_si128(), low7, b);
+            msb  = _mm_dpbusd_avx_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
+            low7 = _mm_dpbusd_avx_epi32(_mm_setzero_si128(), low7, b);
 #else
             // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
             msb  = simde_mm_maddubs_epi16(msb, b);  // 0 or 128
@@ -663,7 +662,7 @@ namespace detail {
         static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
         {
 #if defined(USE_VNNI)
-            acc = _mm256_dpbusd_epi32(acc, a, b);
+            acc = _mm256_dpbusd_avx_epi32(acc, a, b);
 #else
             R product0  = simde_mm256_maddubs_epi16(a, b);
             product0    = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
@@ -680,8 +679,8 @@ namespace detail {
             R low7 = simde_mm256_andnot_si256(highest_bit, a);
 
 #if defined(USE_VNNI)
-            msb  = _mm256_dpbusd_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
-            low7 = _mm256_dpbusd_epi32(_mm256_setzero_si256(), low7, b);
+            msb  = _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
+            low7 = _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), low7, b);
 #else
             // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
             msb  = simde_mm256_maddubs_epi16(msb, b);  // 0 or 128
@@ -731,8 +730,8 @@ namespace detail {
         {
             const R highest_bit = _mm512_set1_epi8(0x80);
 
-            R msb  = _mm512_and_si256(a, highest_bit);
-            R low7 = _mm512_andnot_si256(highest_bit, a);
+            R msb  = _mm512_and_si512(a, highest_bit);
+            R low7 = _mm512_andnot_si512(highest_bit, a);
 
     #if defined(USE_VNNI)
             msb  = _mm512_dpbusd_epi32(_mm512_setzero_si512(), msb, b);  // 0 or 128
@@ -770,30 +769,54 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi16(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi16(a, b); }
         static FORCE_INLINE R avg(R a, R b) { return simde_mm_avg_epu16(a, b); }
-        static FORCE_INLINE R srai(R a, int i) { return simde_mm_srai_epi16(a, i); }
-        static FORCE_INLINE R srli(R a, int i) { return simde_mm_srli_epi16(a, i); }
-        static FORCE_INLINE R slli(R a, int i) { return simde_mm_slli_epi16(a, i); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return simde_mm_srai_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return simde_mm_srli_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return simde_mm_slli_epi16(a, i);
+        }
         static FORCE_INLINE R dot2(R a, R b) { return simde_mm_madd_epi16(a, b); }
     };
 
     template <>
     struct VecOp<int16_t, AVX2> : VecOpSIAVX2
     {
-        typedef int16_t             T;
-        static FORCE_INLINE R       set1(T a) { return simde_mm256_set1_epi16(a); }
-        static FORCE_INLINE R       add(R a, R b) { return simde_mm256_add_epi16(a, b); }
-        static FORCE_INLINE R       adds(R a, R b) { return simde_mm256_adds_epi16(a, b); }
-        static FORCE_INLINE R       sub(R a, R b) { return simde_mm256_sub_epi16(a, b); }
-        static FORCE_INLINE R       subs(R a, R b) { return simde_mm256_subs_epi16(a, b); }
-        static FORCE_INLINE R       mullo(R a, R b) { return simde_mm256_mullo_epi16(a, b); }
-        static FORCE_INLINE R       mulhi(R a, R b) { return simde_mm256_mulhi_epi16(a, b); }
-        static FORCE_INLINE R       mulhrs(R a, R b) { return simde_mm256_mulhrs_epi16(a, b); }
-        static FORCE_INLINE R       min(R a, R b) { return simde_mm256_min_epi16(a, b); }
-        static FORCE_INLINE R       max(R a, R b) { return simde_mm256_max_epi16(a, b); }
-        static FORCE_INLINE R       avg(R a, R b) { return simde_mm256_avg_epu16(a, b); }
-        static FORCE_INLINE R       srai(R a, int i) { return simde_mm256_srai_epi16(a, i); }
-        static FORCE_INLINE R       srli(R a, int i) { return simde_mm256_srli_epi16(a, i); }
-        static FORCE_INLINE R       slli(R a, int i) { return simde_mm256_slli_epi16(a, i); }
+        typedef int16_t       T;
+        static FORCE_INLINE R set1(T a) { return simde_mm256_set1_epi16(a); }
+        static FORCE_INLINE R add(R a, R b) { return simde_mm256_add_epi16(a, b); }
+        static FORCE_INLINE R adds(R a, R b) { return simde_mm256_adds_epi16(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return simde_mm256_sub_epi16(a, b); }
+        static FORCE_INLINE R subs(R a, R b) { return simde_mm256_subs_epi16(a, b); }
+        static FORCE_INLINE R mullo(R a, R b) { return simde_mm256_mullo_epi16(a, b); }
+        static FORCE_INLINE R mulhi(R a, R b) { return simde_mm256_mulhi_epi16(a, b); }
+        static FORCE_INLINE R mulhrs(R a, R b) { return simde_mm256_mulhrs_epi16(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return simde_mm256_min_epi16(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi16(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return simde_mm256_avg_epu16(a, b); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return simde_mm256_srai_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return simde_mm256_srli_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return simde_mm256_slli_epi16(a, i);
+        }
         static FORCE_INLINE R       dot2(R a, R b) { return simde_mm256_madd_epi16(a, b); }
         static FORCE_INLINE int32_t reduceadd(R a)
         {
@@ -825,9 +848,21 @@ namespace detail {
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi16(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi16(a, b); }
         static FORCE_INLINE R avg(R a, R b) { return _mm512_avg_epu16(a, b); }
-        static FORCE_INLINE R srai(R a, int i) { return _mm512_srai_epi16(a, i); }
-        static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi16(a, i); }
-        static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi16(a, i); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return _mm512_srai_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return _mm512_srli_epi16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return _mm512_slli_epi16(a, i);
+        }
         static FORCE_INLINE R dot2(R a, R b) { return _mm512_madd_epi16(a, b); }
     };
 #endif
@@ -841,9 +876,21 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return simde_mm_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm_max_epi32(a, b); }
-        static FORCE_INLINE R srai(R a, int i) { return simde_mm_srai_epi32(a, i); }
-        static FORCE_INLINE R srli(R a, int i) { return simde_mm_srli_epi32(a, i); }
-        static FORCE_INLINE R slli(R a, int i) { return simde_mm_slli_epi32(a, i); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return simde_mm_srai_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return simde_mm_srli_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return simde_mm_slli_epi32(a, i);
+        }
         static FORCE_INLINE T reduceadd(R a)
         {
             auto hi64  = simde_mm_shuffle_epi32(a, SIMDE_MM_SHUFFLE(1, 0, 3, 2));
@@ -872,9 +919,21 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return simde_mm256_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return simde_mm256_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return simde_mm256_max_epi32(a, b); }
-        static FORCE_INLINE R srai(R a, int i) { return simde_mm256_srai_epi32(a, i); }
-        static FORCE_INLINE R srli(R a, int i) { return simde_mm256_srli_epi32(a, i); }
-        static FORCE_INLINE R slli(R a, int i) { return simde_mm256_slli_epi32(a, i); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return simde_mm256_srai_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return simde_mm256_srli_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return simde_mm256_slli_epi32(a, i);
+        }
         static FORCE_INLINE T reduceadd(R a)
         {
             auto lo    = simde_mm256_castsi256_si128(a);
@@ -913,9 +972,21 @@ namespace detail {
         static FORCE_INLINE R sub(R a, R b) { return _mm512_sub_epi32(a, b); }
         static FORCE_INLINE R min(R a, R b) { return _mm512_min_epi32(a, b); }
         static FORCE_INLINE R max(R a, R b) { return _mm512_max_epi32(a, b); }
-        static FORCE_INLINE R srai(R a, int i) { return _mm512_srai_epi32(a, i); }
-        static FORCE_INLINE R srli(R a, int i) { return _mm512_srli_epi32(a, i); }
-        static FORCE_INLINE R slli(R a, int i) { return _mm512_slli_epi32(a, i); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return _mm512_srai_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return _mm512_srli_epi32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return _mm512_slli_epi32(a, i);
+        }
         static FORCE_INLINE T reduceadd(R a) { return _mm512_reduce_add_epi32(a); }
 
         /// Horizontal sum [i32x16] of 4 groups into one [i32x4].
@@ -936,35 +1007,6 @@ namespace detail {
                                     I32OpHalf::add(sum2lo, sum2hi),
                                     I32OpHalf::add(sum3lo, sum3hi));
         }
-    };
-#endif
-
-    template <>
-    struct VecOp<int64_t, SSE> : VecOpSISSE
-    {
-        typedef int64_t       T;
-        static FORCE_INLINE R set1(T a) { return simde_mm_set1_epi64x(a); }
-        static FORCE_INLINE R add(R a, R b) { return simde_mm_add_epi64(a, b); }
-        static FORCE_INLINE R sub(R a, R b) { return simde_mm_sub_epi64(a, b); }
-    };
-
-    template <>
-    struct VecOp<int64_t, AVX2> : VecOpSIAVX2
-    {
-        typedef int64_t       T;
-        static FORCE_INLINE R set1(T a) { return simde_mm256_set1_epi64x(a); }
-        static FORCE_INLINE R add(R a, R b) { return simde_mm256_add_epi64(a, b); }
-        static FORCE_INLINE R sub(R a, R b) { return simde_mm256_sub_epi64(a, b); }
-    };
-
-#ifdef USE_AVX512
-    template <>
-    struct VecOp<int64_t, AVX512> : VecOpSIAVX512
-    {
-        typedef int64_t       T;
-        static FORCE_INLINE R set1(T a) { return _mm512_set1_epi64(a); }
-        static FORCE_INLINE R add(R a, R b) { return _mm512_add_epi64(a, b); }
-        static FORCE_INLINE R sub(R a, R b) { return _mm512_sub_epi64(a, b); }
     };
 #endif
 
@@ -1015,14 +1057,10 @@ namespace detail {
         static FORCE_INLINE R fmadd(R a, R b, R c) { return simde_mm256_fmadd_ps(a, b, c); }
         static FORCE_INLINE T reduceadd(R a)
         {
-            auto lo   = simde_mm256_castps256_ps128(a);
-            auto hi   = simde_mm256_extractf128_ps(a, 1);
-            lo        = simde_mm_add_ps(lo, hi);
-            auto shuf = simde_mm_movehdup_ps(lo);  // broadcast elements 3,1 to 2,0
-            auto sums = simde_mm_add_ps(lo, shuf);
-            shuf      = simde_mm_movehl_ps(shuf, sums);  // high half -> low half
-            sums      = simde_mm_add_ss(sums, shuf);
-            return simde_mm_cvtss_f32(sums);
+            auto lo = simde_mm256_castps256_ps128(a);
+            auto hi = simde_mm256_extractf128_ps(a, 1);
+            lo      = simde_mm_add_ps(lo, hi);
+            return VecOp<float, SSE>::reduceadd(lo);
         }
     };
 
@@ -1046,35 +1084,8 @@ namespace detail {
 #endif
 
     template <typename T>
-    struct VecOp<T, SCALAR>
-    {
-        typedef T             R;
-        static FORCE_INLINE R setzero() { return T(0); }
-        static FORCE_INLINE R set1(T a) { return a; }
-        static FORCE_INLINE R add(R a, R b) { return a + b; }
-        static FORCE_INLINE R sub(R a, R b) { return a - b; }
-        static FORCE_INLINE R mul(R a, R b) { return a * b; }
-        static FORCE_INLINE R div(R a, R b) { return a / b; }
-        static FORCE_INLINE R min(R a, R b) { return std::min(a, b); }
-        static FORCE_INLINE R max(R a, R b) { return std::max(a, b); }
-        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
-        static FORCE_INLINE R srai(R a, int i)
-        {
-            return static_cast<T>(static_cast<std::make_signed_t<T>>(a) >> i);
-        }
-        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
-        static FORCE_INLINE R srli(R a, int i)
-        {
-            return static_cast<T>(static_cast<std::make_unsigned_t<T>>(a) >> i);
-        }
-        template <typename = typename std::enable_if_t<std::is_integral_v<T>, void>>
-        static FORCE_INLINE R slli(R a, int i)
-        {
-            return a << i;
-        }
-        static FORCE_INLINE R fmadd(R a, R b, R c) { return a * b + c; }
-        static FORCE_INLINE T reduceadd(R a) { return a; }
-    };
+    struct VecOp<T, SCALAR> : VecOp<T, SSE>
+    {};
 
     // ------------------------------------------------------------------------
     // Affine transform operation (y = Ax + b) template
@@ -1117,7 +1128,7 @@ namespace detail {
                 auto sum3 = I32Op::setzero();
 
                 // Each innermost loop processes a 32x4 chunk of weights, so 128 weights at a time!
-                typedef detail::VecBatch<InSize, int8_t, AVX2> B;
+                typedef detail::VecBatch<InSize, int8_t, I> B;
                 for (int j = 0; j < B::NumBatch; j++) {
                     // We unroll by 4 so that we can reuse this value, reducing the number of
                     // memory operations required.
@@ -1182,7 +1193,7 @@ namespace detail {
                 auto sum3 = I32Op::setzero();
 
                 // Each innermost loop processes a 16x4 chunk of weights, so 64 weights at a time!
-                typedef detail::VecBatch<InSize, int16_t, AVX2> B;
+                typedef detail::VecBatch<InSize, int16_t, I> B;
                 for (int j = 0; j < B::NumBatch; j++) {
                     // We unroll by 4 so that we can reuse this value, reducing the number of
                     // memory operations required.
@@ -1350,8 +1361,8 @@ int8_t *crelu(int8_t output[Size], const int32_t input[Size])
         auto in01 = I32Pack::packs(in0, in1);
         auto in23 = I32Pack::packs(in2, in3);
         if constexpr (Log2Divisor > 0) {
-            in01 = I16Op::srai(in01, Log2Divisor);
-            in23 = I16Op::srai(in23, Log2Divisor);
+            in01 = I16Op::template srai<Log2Divisor>(in01);
+            in23 = I16Op::template srai<Log2Divisor>(in23);
         }
         auto result = I16Pack::packs(in01, in23);
         if constexpr (!NoReLU)
@@ -1405,8 +1416,8 @@ int16_t *crelu(int16_t output[Size], const int32_t input[Size])
         auto in0 = I32LS::load(input + (i * 2 + 0) * InB::RegWidth);
         auto in1 = I32LS::load(input + (i * 2 + 1) * InB::RegWidth);
         if constexpr (Log2Divisor > 0) {
-            in0 = I32Op::srai(in0, Log2Divisor);
-            in1 = I32Op::srai(in1, Log2Divisor);
+            in0 = I32Op::template srai<Log2Divisor>(in0);
+            in1 = I32Op::template srai<Log2Divisor>(in1);
         }
         auto result = I32Pack::packs(in0, in1);
         if constexpr (!NoReLU)
