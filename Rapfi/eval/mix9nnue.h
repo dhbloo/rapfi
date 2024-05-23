@@ -32,7 +32,6 @@ namespace Evaluation::mix9 {
 using namespace Evaluation;
 
 constexpr uint32_t ArchHashBase    = 0x247e6c70;
-constexpr size_t   Alignment       = 64;
 constexpr int      ShapeNum        = 708588;
 constexpr int      FeatureDim      = 64;
 constexpr int      PolicyDim       = 32;
@@ -52,7 +51,7 @@ struct StarBlockWeight
     int32_t value_corner_down_bias[OutSize];
 };
 
-struct alignas(Alignment) Mix9Weight
+struct alignas(simd::NativeAlignment) Mix9Weight
 {
     // 1  mapping layer
     int16_t mapping[2][ShapeNum][FeatureDim];
@@ -94,7 +93,7 @@ struct alignas(Alignment) Mix9Weight
 class Mix9Accumulator
 {
 public:
-    struct alignas(Alignment) ValueSumType
+    struct alignas(simd::NativeAlignment) ValueSumType
     {
         static constexpr int NGroup = 3;
 

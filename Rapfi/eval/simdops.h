@@ -20,6 +20,7 @@
 #include "../core/platform.h"
 #include "../core/utils.h"
 
+#include <cstring>
 #include <simde/x86/avx2.h>
 #include <simde/x86/fma.h>
 #include <tuple>
@@ -664,9 +665,9 @@ namespace detail {
 #if defined(USE_VNNI)
             acc = _mm256_dpbusd_avx_epi32(acc, a, b);
 #else
-            R product0  = simde_mm256_maddubs_epi16(a, b);
-            product0    = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
-            acc         = simde_mm256_add_epi32(acc, product0);
+            R product0 = simde_mm256_maddubs_epi16(a, b);
+            product0   = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
+            acc        = simde_mm256_add_epi32(acc, product0);
 #endif
         }
 
@@ -1089,16 +1090,86 @@ namespace detail {
 
     // ------------------------------------------------------------------------
     // Affine transform operation (y = Ax + b) template
-    template <int OutSize, int InSize, int Alignment, InstructionType I, typename Enabled = void>
+    template <int OutSize,
+              int InSize,
+              typename InType,
+              int             Alignment,
+              InstructionType I,
+              typename Enabled = void>
     struct Affine
     {};
 
     template <int OutSize, int InSize, int Alignment, InstructionType I>
-    struct Affine<OutSize,
-                  InSize,
-                  Alignment,
-                  I,
-                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    struct Affine<
+        OutSize,
+        InSize,
+        int8_t,
+        Alignment,
+        I,
+        std::enable_if_t<(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)>>
+    {
+        static constexpr int ChunkSize = 4;
+        static constexpr int NumChunks = InSize / ChunkSize;
+        static_assert(InSize % ChunkSize == 0, "InSize must be a multiple of ChunkSize=4");
+
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int8_t, Alignment, I>  I8LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, I> I32LS;
+            typedef detail::VecOp<int8_t, I>                    I8Op;
+            typedef detail::VecOp<int32_t, I>                   I32Op;
+
+            const auto input32 = reinterpret_cast<const int32_t *>(input);
+
+            typedef VecBatch<OutSize, int32_t, I> OutB;
+            typename I32Op::R                     acc[OutB::NumBatch];
+            for (int j = 0; j < OutB::NumBatch; j++)
+                acc[j] = I32LS::load(bias + j * OutB::RegWidth);
+
+            for (int i = 0; i < NumChunks; i++) {
+                const auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
+                const auto w0 =
+                    reinterpret_cast<const typename I8Op::R *>(weight + i * OutSize * ChunkSize);
+
+                for (int j = 0; j < OutB::NumBatch; j++) {
+                    if constexpr (SignedInput)
+                        I8Op::dot4_i8i8_accum(acc[j], in0, I8LS::load(&w0[j]));
+                    else
+                        I8Op::dot4_u7i8_accum(acc[j], in0, I8LS::load(&w0[j]));
+                }
+            }
+
+            for (int j = 0; j < OutB::NumBatch; j++)
+                I32LS::store(output + j * OutB::RegWidth, acc[j]);
+        }
+
+        static void preprocessWeight(int8_t *weight)
+        {
+            int8_t weightScrambled[OutSize * InSize];
+            for (int i = 0; i < OutSize * InSize; i++) {
+                int offset             = i % ChunkSize;
+                int idxChunk           = i / ChunkSize;
+                int colChunk           = idxChunk % (InSize / ChunkSize);
+                int rowChunk           = i / InSize;
+                int transposedIdxChunk = colChunk * OutSize + rowChunk;
+
+                weightScrambled[transposedIdxChunk * ChunkSize + offset] = weight[i];
+            }
+            std::memcpy(weight, weightScrambled, OutSize * InSize);
+        }
+    };
+
+    template <int OutSize, int InSize, int Alignment, InstructionType I>
+    struct Affine<
+        OutSize,
+        InSize,
+        int8_t,
+        Alignment,
+        I,
+        std::enable_if_t<!(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)
+                         && (OutSize >= 4 && OutSize % 4 == 0)>>
     {
         template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
         static void
@@ -1164,7 +1235,16 @@ namespace detail {
                 I32LS128::store(output + i * 4, outval);
             }
         }
+    };
 
+    template <int OutSize, int InSize, int Alignment, InstructionType I>
+    struct Affine<OutSize,
+                  InSize,
+                  int16_t,
+                  Alignment,
+                  I,
+                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    {
         template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
         static void
         forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
@@ -1222,6 +1302,14 @@ namespace detail {
             }
         }
     };
+
+    template <class T, class = void>
+    struct HasPreprocessWeight : std::false_type
+    {};
+
+    template <class T>
+    struct HasPreprocessWeight<T, std::void_t<decltype(T::preprocessWeight)>> : std::true_type
+    {};
 
 }  // namespace detail
 
@@ -1295,6 +1383,22 @@ T *add(T *output, const T *input0, const T *input1)
     return output + B::NumBatch * B::RegWidth;
 }
 
+/// Preprocess int8/int16 linear layer with int32 accumulation.
+template <int             OutSize,
+          int             InSize,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType,
+          typename InputType        = int8_t>
+void preprocessLinear(InputType weight[OutSize * InSize])
+{
+    static_assert(std::is_same_v<InputType, int8_t> || std::is_same_v<InputType, int16_t>,
+                  "Only int8_t or int16_t weight is supported");
+
+    typedef detail::Affine<OutSize, InSize, InputType, Alignment, Inst> Affine;
+    if constexpr (detail::HasPreprocessWeight<Affine>::value)
+        Affine::preprocessWeight(weight);
+}
+
 /// Apply int8/int16 linear layer with int32 accumulation.
 template <int             OutSize,
           int             InSize,
@@ -1321,7 +1425,7 @@ AccType *linear(AccType         *output,
     if constexpr (Bias)
         assert(isPtrAligned<Alignment>(bias));
 
-    typedef detail::Affine<OutSize, InSize, Alignment, Inst> Affine;
+    typedef detail::Affine<OutSize, InSize, InputType, Alignment, Inst> Affine;
     Affine::template forward<SignedInput, Bias, PreReLU, PostReLU>(output, input, weight, bias);
 
     return output + OutSize;
@@ -1451,7 +1555,7 @@ template <Activation Activation,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType,
           bool            Bias      = true>
-void linearLayer(T out[],
+void linearLayer(T       out[],
                  const T (&in)[InDim],
                  const T (&weight)[InDim][OutDim],
                  const T (&bias)[OutDim])

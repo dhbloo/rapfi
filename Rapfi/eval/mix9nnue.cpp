@@ -60,30 +60,56 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         auto w = std::make_unique<Mix9Weight>();
         in.read(reinterpret_cast<char *>(w.get()), sizeof(Mix9Weight));
 
-        if (in && in.peek() == std::ios::traits_type::eof())
+        if (in && in.peek() == std::ios::traits_type::eof()) {
+            preprocess(*w);
             return w;
+        }
         else
             return nullptr;
     }
+
+    void preprocess(Mix9Weight &w)
+    {
+        for (int bucketIdx = 0; bucketIdx < NumHeadBucket; bucketIdx++) {
+            auto &b = w.buckets[bucketIdx];
+            simd::preprocessLinear<PolicyDim * 2, FeatureDim>(b.policy_pwconv_layer_l1_weight);
+            simd::preprocessLinear<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>(
+                b.policy_pwconv_layer_l2_weight);
+            preprocess(b.value_corner);
+            preprocess(b.value_edge);
+            preprocess(b.value_center);
+            preprocess(b.value_quad);
+            simd::preprocessLinear<ValueDim, FeatureDim + ValueDim * 4>(b.value_l1_weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.value_l2_weight);
+            simd::preprocessLinear<4, ValueDim>(b.value_l3_weight);
+        }
+    }
+
+    template <int OutSize, int InSize>
+    void preprocess(StarBlockWeight<OutSize, InSize> &b)
+    {
+        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up1_weight);
+        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up2_weight);
+        simd::preprocessLinear<OutSize, OutSize>(b.value_corner_down_weight);
+    }
 };
 
+constexpr int                   Alignment = simd::NativeAlignment;
+constexpr simd::InstructionType IT        = simd::NativeInstType;
 template <size_t Size, typename T>
-using Batch = simd::detail::VecBatch<Size, T, simd::NativeInstType>;
+using Batch = simd::detail::VecBatch<Size, T, IT>;
 template <typename FT, typename TT>
-using Convert = simd::detail::VecCvt<FT, TT, simd::NativeInstType>;
-using I8LS    = simd::detail::VecLoadStore<int8_t, mix9::Alignment, simd::NativeInstType>;
-using I16LS   = simd::detail::VecLoadStore<int16_t, mix9::Alignment, simd::NativeInstType>;
-using I32LS   = simd::detail::VecLoadStore<int32_t, mix9::Alignment, simd::NativeInstType>;
-using F32LS   = simd::detail::VecLoadStore<float, mix9::Alignment, simd::NativeInstType>;
-using I8Op    = simd::detail::VecOp<int8_t, simd::NativeInstType>;
-using I16Op   = simd::detail::VecOp<int16_t, simd::NativeInstType>;
-using I32Op   = simd::detail::VecOp<int32_t, simd::NativeInstType>;
-using F32Op   = simd::detail::VecOp<float, simd::NativeInstType>;
+using Convert = simd::detail::VecCvt<FT, TT, IT>;
+using I8LS    = simd::detail::VecLoadStore<int8_t, Alignment, IT>;
+using I16LS   = simd::detail::VecLoadStore<int16_t, Alignment, IT>;
+using I32LS   = simd::detail::VecLoadStore<int32_t, Alignment, IT>;
+using F32LS   = simd::detail::VecLoadStore<float, Alignment, IT>;
+using I8Op    = simd::detail::VecOp<int8_t, IT>;
+using I16Op   = simd::detail::VecOp<int16_t, IT>;
+using I32Op   = simd::detail::VecOp<int32_t, IT>;
+using F32Op   = simd::detail::VecOp<float, IT>;
 
-template <int                   OutSize,
-          int                   InSize,
-          int                   Alignment = mix9::Alignment,
-          simd::InstructionType Inst      = simd::NativeInstType>
+template <int OutSize, int InSize, int Alignment = Alignment, simd::InstructionType Inst = IT>
 inline void
 starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<OutSize, InSize> &w)
 {
