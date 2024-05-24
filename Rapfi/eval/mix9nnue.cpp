@@ -73,6 +73,12 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         for (int bucketIdx = 0; bucketIdx < NumHeadBucket; bucketIdx++) {
             auto &b = w.buckets[bucketIdx];
             simd::preprocessLinear<PolicyDim * 2, FeatureDim>(b.policy_pwconv_layer_l1_weight);
+            simd::preprocessDynamicWeightLinear<PolicyPWConvDim,
+                                                PolicyDim,
+                                                int16_t,
+                                                PolicyDim * 2,
+                                                0>(b.policy_pwconv_layer_l2_weight,
+                                                   b.policy_pwconv_layer_l2_bias);
             simd::preprocessLinear<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>(
                 b.policy_pwconv_layer_l2_weight);
             preprocess(b.value_corner);

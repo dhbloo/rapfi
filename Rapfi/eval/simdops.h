@@ -1125,13 +1125,19 @@ namespace detail {
 
             typedef VecBatch<OutSize, int32_t, I> OutB;
             typename I32Op::R                     acc[OutB::NumBatch];
-            for (int j = 0; j < OutB::NumBatch; j++)
-                acc[j] = I32LS::load(bias + j * OutB::RegWidth);
+            for (int j = 0; j < OutB::NumBatch; j++) {
+                if constexpr (Bias)
+                    acc[j] = I32LS::load(bias + j * OutB::RegWidth);
+                else
+                    acc[j] = I32Op::setzero();
+            }
 
             for (int i = 0; i < NumChunks; i++) {
-                const auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
-                const auto w0 =
+                auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
+                auto w0 =
                     reinterpret_cast<const typename I8Op::R *>(weight + i * OutSize * ChunkSize);
+                if constexpr (PreReLU)
+                    in0 = I8Op::max(in0, I8Op::setzero());
 
                 for (int j = 0; j < OutB::NumBatch; j++) {
                     if constexpr (SignedInput)
@@ -1141,23 +1147,11 @@ namespace detail {
                 }
             }
 
-            for (int j = 0; j < OutB::NumBatch; j++)
+            for (int j = 0; j < OutB::NumBatch; j++) {
+                if constexpr (PostReLU)
+                    acc[j] = I32Op::max(acc[j], I32Op::setzero());
                 I32LS::store(output + j * OutB::RegWidth, acc[j]);
-        }
-
-        static void preprocessWeight(int8_t *weight)
-        {
-            int8_t weightScrambled[OutSize * InSize];
-            for (int i = 0; i < OutSize * InSize; i++) {
-                int offset             = i % ChunkSize;
-                int idxChunk           = i / ChunkSize;
-                int colChunk           = idxChunk % (InSize / ChunkSize);
-                int rowChunk           = i / InSize;
-                int transposedIdxChunk = colChunk * OutSize + rowChunk;
-
-                weightScrambled[transposedIdxChunk * ChunkSize + offset] = weight[i];
             }
-            std::memcpy(weight, weightScrambled, OutSize * InSize);
         }
     };
 
@@ -1238,12 +1232,66 @@ namespace detail {
     };
 
     template <int OutSize, int InSize, int Alignment, InstructionType I>
-    struct Affine<OutSize,
-                  InSize,
-                  int16_t,
-                  Alignment,
-                  I,
-                  std::enable_if_t<(OutSize >= 4 && OutSize % 4 == 0)>>
+    struct Affine<
+        OutSize,
+        InSize,
+        int16_t,
+        Alignment,
+        I,
+        std::enable_if_t<(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)>>
+    {
+        static constexpr int ChunkSize = 2;
+        static constexpr int NumChunks = InSize / ChunkSize;
+        static_assert(InSize % ChunkSize == 0, "InSize must be a multiple of ChunkSize=2");
+
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
+        {
+            typedef detail::VecLoadStore<int16_t, Alignment, I> I16LS;
+            typedef detail::VecLoadStore<int32_t, Alignment, I> I32LS;
+            typedef detail::VecOp<int16_t, I>                   I16Op;
+            typedef detail::VecOp<int32_t, I>                   I32Op;
+
+            const auto input32 = reinterpret_cast<const int32_t *>(input);
+
+            typedef VecBatch<OutSize, int32_t, I> OutB;
+            typename I32Op::R                     acc[OutB::NumBatch];
+            for (int j = 0; j < OutB::NumBatch; j++) {
+                if constexpr (Bias)
+                    acc[j] = I32LS::load(bias + j * OutB::RegWidth);
+                else
+                    acc[j] = I32Op::setzero();
+            }
+
+            for (int i = 0; i < NumChunks; i++) {
+                auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
+                auto w0 =
+                    reinterpret_cast<const typename I16Op::R *>(weight + i * OutSize * ChunkSize);
+                if constexpr (PreReLU)
+                    in0 = I16Op::max(in0, I16Op::setzero());
+
+                for (int j = 0; j < OutB::NumBatch; j++)
+                    acc[j] = I32Op::add(acc[j], I16Op::dot2(in0, I16LS::load(&w0[j])));
+            }
+
+            for (int j = 0; j < OutB::NumBatch; j++) {
+                if constexpr (PostReLU)
+                    acc[j] = I32Op::max(acc[j], I32Op::setzero());
+                I32LS::store(output + j * OutB::RegWidth, acc[j]);
+            }
+        }
+    };
+
+    template <int OutSize, int InSize, int Alignment, InstructionType I>
+    struct Affine<
+        OutSize,
+        InSize,
+        int16_t,
+        Alignment,
+        I,
+        std::enable_if_t<!(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)
+                         && (OutSize >= 4 && OutSize % 4 == 0)>>
     {
         template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
         static void
@@ -1304,11 +1352,11 @@ namespace detail {
     };
 
     template <class T, class = void>
-    struct HasPreprocessWeight : std::false_type
+    struct HasChunkSize : std::false_type
     {};
 
     template <class T>
-    struct HasPreprocessWeight<T, std::void_t<decltype(T::preprocessWeight)>> : std::true_type
+    struct HasChunkSize<T, std::void_t<decltype(T::ChunkSize)>> : std::true_type
     {};
 
 }  // namespace detail
@@ -1395,8 +1443,75 @@ void preprocessLinear(InputType weight[OutSize * InSize])
                   "Only int8_t or int16_t weight is supported");
 
     typedef detail::Affine<OutSize, InSize, InputType, Alignment, Inst> Affine;
-    if constexpr (detail::HasPreprocessWeight<Affine>::value)
-        Affine::preprocessWeight(weight);
+    if constexpr (detail::HasChunkSize<Affine>::value) {
+        constexpr int ChunkSize = Affine::ChunkSize;
+
+        InputType weightScrambled[OutSize * InSize];
+        for (int i = 0; i < OutSize * InSize; i++) {
+            int offset             = i % ChunkSize;
+            int idxChunk           = i / ChunkSize;
+            int colChunk           = idxChunk % (InSize / ChunkSize);
+            int rowChunk           = i / InSize;
+            int transposedIdxChunk = colChunk * OutSize + rowChunk;
+
+            weightScrambled[transposedIdxChunk * ChunkSize + offset] = weight[i];
+        }
+
+        std::memcpy(weight, weightScrambled, sizeof(InputType) * OutSize * InSize);
+    }
+}
+
+/// Preprocess int8/int16 hyper linear layer used for computing dynamic linear weight.
+template <int DynamicOutSize,
+          int DynamicInSize,
+          typename DynamicWeightType,
+          int             HyperInSize,
+          int             DynamicWeightOffset,
+          int             Alignment = NativeAlignment,
+          InstructionType Inst      = NativeInstType,
+          typename WeightType       = int8_t,
+          typename BiasType         = int32_t>
+void preprocessDynamicWeightLinear(WeightType *weight, BiasType *bias)
+{
+    typedef detail::Affine<DynamicOutSize, DynamicInSize, DynamicWeightType, Alignment, Inst>
+        DynamicAffine;
+    if constexpr (detail::HasChunkSize<DynamicAffine>::value) {
+        typedef std::array<WeightType, HyperInSize> Row;
+
+        constexpr int ChunkSize = DynamicAffine::ChunkSize;
+        Row           rowScrambled[DynamicOutSize * DynamicInSize];
+        for (int i = 0; i < DynamicOutSize * DynamicInSize; i++) {
+            int offset             = i % ChunkSize;
+            int idxChunk           = i / ChunkSize;
+            int colChunk           = idxChunk % (DynamicInSize / ChunkSize);
+            int rowChunk           = i / DynamicInSize;
+            int transposedIdxChunk = colChunk * DynamicOutSize + rowChunk;
+
+            rowScrambled[transposedIdxChunk * ChunkSize + offset] =
+                *reinterpret_cast<Row *>(weight + (i + DynamicWeightOffset) * HyperInSize);
+        }
+
+        for (int i = 0; i < DynamicOutSize * DynamicInSize; i++)
+            *reinterpret_cast<Row *>(weight + (i + DynamicWeightOffset) * HyperInSize) =
+                rowScrambled[i];
+
+        if (bias) {
+            BiasType biasScrambled[DynamicOutSize * DynamicInSize];
+            for (int i = 0; i < DynamicOutSize * DynamicInSize; i++) {
+                int offset             = i % ChunkSize;
+                int idxChunk           = i / ChunkSize;
+                int colChunk           = idxChunk % (DynamicInSize / ChunkSize);
+                int rowChunk           = i / DynamicInSize;
+                int transposedIdxChunk = colChunk * DynamicOutSize + rowChunk;
+
+                biasScrambled[transposedIdxChunk * ChunkSize + offset] =
+                    bias[i + DynamicWeightOffset];
+            }
+
+            for (int i = 0; i < DynamicOutSize * DynamicInSize; i++)
+                bias[i + DynamicWeightOffset] = biasScrambled[i];
+        }
+    }
 }
 
 /// Apply int8/int16 linear layer with int32 accumulation.
