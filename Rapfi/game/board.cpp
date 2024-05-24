@@ -228,10 +228,10 @@ void Board::move(Pos pos)
     int           x         = pos.x() + BOARD_BOUNDARY;
     int           y         = pos.y() + BOARD_BOUNDARY;
     uint64_t      bitKey[4] = {
-        rightShift(bitKey0[y], 2 * (x - 2 * L)),
-        rightShift(bitKey1[x], 2 * (y - 2 * L)),
-        rightShift(bitKey2[x + y], 2 * (x - 2 * L)),
-        rightShift(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - 2 * L)),
+        rotr(bitKey0[y], 2 * (x - 2 * L)),
+        rotr(bitKey1[x], 2 * (y - 2 * L)),
+        rotr(bitKey2[x + y], 2 * (x - 2 * L)),
+        rotr(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - 2 * L)),
     };
 
     for (int i = -L; i <= L; i += 1 + (i == -1)) {
@@ -341,10 +341,10 @@ void Board::undo()
     int           x         = lastPos.x() + BOARD_BOUNDARY;
     int           y         = lastPos.y() + BOARD_BOUNDARY;
     uint64_t      bitKey[4] = {
-        rightShift(bitKey0[y], 2 * (x - 2 * L)),
-        rightShift(bitKey1[x], 2 * (y - 2 * L)),
-        rightShift(bitKey2[x + y], 2 * (x - 2 * L)),
-        rightShift(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - 2 * L)),
+        rotr(bitKey0[y], 2 * (x - 2 * L)),
+        rotr(bitKey1[x], 2 * (y - 2 * L)),
+        rotr(bitKey2[x + y], 2 * (x - 2 * L)),
+        rotr(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - 2 * L)),
     };
 
     for (int i = -L; i <= L; i += 1 + (i == -1)) {

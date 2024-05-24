@@ -413,10 +413,10 @@ inline uint64_t Board::getKeyAt(Pos pos, int dir) const
 
     switch (dir) {
     default:
-    case 0: return rightShift(bitKey0[y], 2 * (x - L));
-    case 1: return rightShift(bitKey1[x], 2 * (y - L));
-    case 2: return rightShift(bitKey2[x + y], 2 * (x - L));
-    case 3: return rightShift(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - L));
+    case 0: return rotr(bitKey0[y], 2 * (x - L));
+    case 1: return rotr(bitKey1[x], 2 * (y - L));
+    case 2: return rotr(bitKey2[x + y], 2 * (x - L));
+    case 3: return rotr(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - L));
     }
 }
 

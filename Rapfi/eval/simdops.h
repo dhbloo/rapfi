@@ -1097,7 +1097,12 @@ namespace detail {
               InstructionType I,
               typename Enabled = void>
     struct Affine
-    {};
+    {
+        static_assert(always_false_v<std::integral_constant<int, OutSize>,
+                                     std::integral_constant<int, InSize>,
+                                     InType>,
+                      "No valid implementation for this affine parameter");
+    };
 
     template <int OutSize, int InSize, int Alignment, InstructionType I>
     struct Affine<

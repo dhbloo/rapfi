@@ -26,14 +26,12 @@
     #include <xmmintrin.h>  // SSE
 #endif
 
-#ifdef USE_ROTR
-    #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
-        #include <x86intrin.h>
-    #else
-        #include <cstdlib>
-    #endif
+#if defined(_MSC_VER)
+    #include <cstdlib>   // for _rotr64
+    #include <intrin.h>  // for __umulh
 #endif
 
+#include <cstddef>
 #include <cstdint>
 
 // Define some macros for platform specific optimization hint
@@ -62,16 +60,15 @@
 
 /// A right logical shift function that supports negetive shamt.
 /// It might be implemented as rotr64 to avoid conditional branch.
-inline uint64_t rightShift(uint64_t x, int shamt)
+inline uint64_t rotr(uint64_t x, int shamt)
 {
-#ifdef USE_ROTR
-    #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
-    return __rorq(x, shamt);
-    #else
+#if defined(__clang__)
+    return __builtin_rotateright64(x, shamt);
+#elif defined(_MSC_VER)
     return _rotr64(x, shamt);
-    #endif
 #else
-    return shamt < 0 ? x << (-shamt) : x >> shamt;
+    shamt &= 63;
+    return (x << (64 - shamt)) | (x >> shamt);
 #endif
 }
 
@@ -85,28 +82,9 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
     return ((unsigned __int128)a * (unsigned __int128)b) >> 64;
 }
 
-#elif defined(_M_X64) || defined(_M_ARM64)  // MSVC
+#elif defined(_M_X64) || defined(_M_ARM64)  // MSVC for x86-64 or AArch64
 
-    // MSVC for x86-64 or AArch64
-    // possibly also  || defined(_M_IA64) || defined(_WIN64)
-    // but the docs only guarantee x86-64!  Don't use *just* _WIN64;
-    // it doesn't include AArch64 Android / Linux
-    // https://docs.microsoft.com/en-gb/cpp/intrinsics/umulh
-    #include <intrin.h>
     #define mulhi64 __umulh
-
-#elif defined(_M_IA64)  // || defined(_M_ARM)       // MSVC again
-
-    // https://docs.microsoft.com/en-gb/cpp/intrinsics/umul128
-    // incorrectly say that _umul128 is available for ARM
-    // which would be weird because there's no single insn on AArch32
-    #include <intrin.h>
-inline uint64_t mulhi64(uint64_t a, uint64_t b)
-{
-    unsigned __int64 HighProduct;
-    (void)_umul128(a, b, &HighProduct);
-    return HighProduct;
-}
 
 #else
 
@@ -128,19 +106,11 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
-
-    #if defined(__INTEL_COMPILER)
-    // This hack prevents prefetches from being optimized away by
-    // Intel compiler. Both MSVC and gcc seem not be affected by this.
-    __asm__("");
-    #endif
-
     #if defined(__INTEL_COMPILER) || defined(_MSC_VER)
     _mm_prefetch((char *)addr, _MM_HINT_T0);
     #else
     __builtin_prefetch(addr);
     #endif
-
 #endif
 }
 
