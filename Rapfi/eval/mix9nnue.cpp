@@ -58,7 +58,14 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
     std::unique_ptr<Mix9Weight> load(std::istream &in)
     {
         auto w = std::make_unique<Mix9Weight>();
-        in.read(reinterpret_cast<char *>(w.get()), sizeof(Mix9Weight));
+
+        read_compressed_mapping(in, *w);
+        in.read(reinterpret_cast<char *>(&w->feature_dwconv_weight[0][0]),
+                sizeof(w->feature_dwconv_weight));
+        in.read(reinterpret_cast<char *>(&w->feature_dwconv_bias[0]),
+                sizeof(w->feature_dwconv_bias));
+        for (int headIdx = 0; headIdx < NumHeadBucket; headIdx++)
+            in.read(reinterpret_cast<char *>(&w->buckets[headIdx]), sizeof(w->buckets[headIdx]));
 
         if (in && in.peek() == std::ios::traits_type::eof()) {
             preprocess(*w);
@@ -66,6 +73,49 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         }
         else
             return nullptr;
+    }
+
+    void read_compressed_mapping(std::istream &in, Mix9Weight &w)
+    {
+        constexpr int      MappingBits   = 10;
+        constexpr uint64_t MappingMask   = (1 << MappingBits) - 1;
+        constexpr uint16_t ExtensionMask = 1 << (MappingBits - 1);
+        constexpr uint16_t ExtensionBits = ~static_cast<uint16_t>(MappingMask);
+
+        uint64_t u64val    = 0;
+        int      bits_left = 0;
+
+        for (int mappingIdx = 0; mappingIdx < arraySize(w.mapping); mappingIdx++) {
+            auto &mapping = w.mapping[mappingIdx];
+
+            for (int i = 0; i < ShapeNum; i++)
+                for (int j = 0; j < FeatureDim; j++) {
+                    int16_t feature = 0;
+
+                    if (bits_left >= MappingBits) {
+                        uint16_t masked    = static_cast<uint16_t>(u64val & MappingMask);
+                        uint16_t extension = (masked & ExtensionMask) ? 0xfc00 : 0;
+                        feature            = static_cast<int16_t>(extension | masked);
+
+                        u64val >>= MappingBits;
+                        bits_left -= MappingBits;
+                    }
+                    else {
+                        uint64_t u64val2;
+                        in.read(reinterpret_cast<char *>(&u64val2), sizeof(u64val2));
+
+                        u64val |= u64val2 << bits_left;
+                        uint16_t masked    = static_cast<uint16_t>(u64val & MappingMask);
+                        uint16_t extension = (masked & ExtensionMask) ? 0xfc00 : 0;
+                        feature            = static_cast<int16_t>(extension | masked);
+
+                        u64val    = u64val2 >> (MappingBits - bits_left);
+                        bits_left = 64 - (MappingBits - bits_left);
+                    }
+
+                    mapping[i][j] = feature;
+                }
+        }
     }
 
     void preprocess(Mix9Weight &w)
