@@ -32,7 +32,7 @@ namespace Evaluation::mix9 {
 using namespace Evaluation;
 
 constexpr uint32_t ArchHashBase    = 0x247e6c70;
-constexpr int      ShapeNum        = 708588;
+constexpr int      ShapeNum        = 442503;
 constexpr int      FeatureDim      = 64;
 constexpr int      PolicyDim       = 32;
 constexpr int      ValueDim        = 64;
@@ -122,7 +122,7 @@ private:
         uint16_t inner, outer;
     };
     //=============================================================
-    // Mix8 network states
+    // Network states
 
     /// Value feature sum of the full board
     ValueSumType *valueSumTable;          // [H*W+1, FeatureDim] (aligned)

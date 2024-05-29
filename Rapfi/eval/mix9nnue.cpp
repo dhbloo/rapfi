@@ -214,56 +214,72 @@ Mix9Accumulator::~Mix9Accumulator()
 
 void Mix9Accumulator::initIndexTable()
 {
+    constexpr int length = 11;  // length of line shape
+    constexpr int half   = length / 2;
+
     // Clear shape table
     std::fill_n(&indexTable[0][0], 4 * boardSize * boardSize, 0);
 
-    auto getIndex = [&](int x, int y) -> std::array<uint32_t, 4> & {
-        return indexTable[x + y * boardSize];
+    /// Get an empty line encoding with the given boarder distance.
+    /// @param left The distance to the left boarder, in range [0, length/2].
+    /// @param right The distance to the right boarder, in range [0, length/2].
+    auto get_boarder_encoding = [=](int left, int right) -> uint32_t {
+        assert(0 <= left && left <= half);
+        assert(0 <= right && right <= half);
+
+        if (left == half && right == half)
+            return 0;
+        else if (right == half)  // (left < half)
+        {
+            uint32_t code      = 2 * Power3[length];
+            int      left_dist = half - left;
+            for (int i = 1; i < left_dist; i++)
+                code += 1 * Power3[length - i];
+            return code;
+        }
+        else  // (right < half && left <= half)
+        {
+            uint32_t code       = 1 * Power3[length];
+            int      left_dist  = half - left;
+            int      right_dist = half - right;
+            int      right_twos = std::min(left_dist, right_dist);
+            int      left_twos  = std::min(left_dist, right_dist - 1);
+
+            for (int i = 0; i < right_twos; i++)
+                code += 2 * Power3[i];
+            for (int i = 0; i < left_twos; i++)
+                code += 2 * Power3[length - 1 - i];
+
+            for (int i = right_twos; i < right_dist - 1; i++)
+                code += 1 * Power3[i];
+            for (int i = left_twos; i < left_dist - 1; i++)
+                code += 1 * Power3[length - 1 - i];
+
+            return code;
+        }
     };
 
-    // Init shape table
-    for (int thick = 1; thick <= 5; thick++) {
-        for (int i = 0; i < boardSize; i++) {
-            int c = 0;
-            for (int j = 0; j < thick; j++)
-                c += Power3[11 - j];
+    for (int y = 0; y < boardSize; y++)
+        for (int x = 0; x < boardSize; x++) {
+            auto &idxs   = indexTable[y * boardSize + x];
+            int   distx0 = std::min(x - 0, half);
+            int   distx1 = std::min(boardSize - 1 - x, half);
+            int   disty0 = std::min(y - 0, half);
+            int   disty1 = std::min(boardSize - 1 - y, half);
 
-            getIndex(boardSize - 6 + thick, i)[0] = c;
-            getIndex(i, boardSize - 6 + thick)[1] = c;
-            getIndex(boardSize - 6 + thick, i)[2] = c;
-            getIndex(i, boardSize - 6 + thick)[2] = c;
-            getIndex(boardSize - 6 + thick, i)[3] = c;
-            getIndex(i, 6 - 1 - thick)[3]         = c;
-        }
-    }
+            // DX[1]=0, DY[1]=1
+            idxs[0] = get_boarder_encoding(distx0, distx1);
+            // DX[1]=0, DY[1]=1
+            idxs[1] = get_boarder_encoding(disty0, disty1);
+            // DX[2]=1, DY[2]=1
+            idxs[2] = get_boarder_encoding(std::min(distx0, disty0), std::min(distx1, disty1));
+            // DX[3]=1, DY[3]=-1
+            idxs[3] = get_boarder_encoding(std::min(distx0, disty1), std::min(distx1, disty0));
 
-    for (int thick = 1; thick <= 5; thick++) {
-        for (int i = 0; i < boardSize; i++) {
-            int c = 2 * Power3[11];
-            for (int j = 0; j < thick - 1; j++)
-                c += Power3[j];
-
-            getIndex(6 - 1 - thick, i)[0]         = c;
-            getIndex(i, 6 - 1 - thick)[1]         = c;
-            getIndex(6 - 1 - thick, i)[2]         = c;
-            getIndex(i, 6 - 1 - thick)[2]         = c;
-            getIndex(6 - 1 - thick, i)[3]         = c;
-            getIndex(i, boardSize - 6 + thick)[3] = c;
-        }
-    }
-
-    for (int a = 1; a <= 5; a++)
-        for (int b = 1; b <= 5; b++) {
-            int c = 3 * Power3[11];
-            for (int i = 0; i < a - 1; i++)
-                c += Power3[10 - i];
-            for (int i = 0; i < b - 1; i++)
-                c += Power3[i];
-
-            getIndex(boardSize - 6 + a, 5 - b)[2]             = c;
-            getIndex(5 - b, boardSize - 6 + a)[2]             = c;
-            getIndex(5 - b, 5 - a)[3]                         = c;
-            getIndex(boardSize - 6 + a, boardSize - 6 + b)[3] = c;
+            assert(idxs[0] < ShapeNum);
+            assert(idxs[1] < ShapeNum);
+            assert(idxs[2] < ShapeNum);
+            assert(idxs[3] < ShapeNum);
         }
 }
 
@@ -343,9 +359,8 @@ void Mix9Accumulator::clear(const Mix9Weight &w)
             for (int x = 0; x < boardSize; x++, outerIdx++) {
                 for (int b = 0; b < ConvB::NumBatch; b++) {
                     auto feature  = I16LS::load(mapConv[outerIdx].data() + b * ConvB::RegWidth);
+                    feature       = I16Op::max(feature, I16Op::setzero());  // relu
                     auto [v0, v1] = Convert<int16_t, int32_t>::convert(feature);
-                    v0            = I32Op::max(v0, I32Op::setzero());  // relu
-                    v1            = I32Op::max(v1, I32Op::setzero());  // relu
 
                     auto addToAccumulator =
                         [&, v0_ = v0, v1_ = v1](std::array<int32_t, FeatureDim> &vSum) {
@@ -426,10 +441,10 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
     int       newMapIdx     = changeNum.inner;
     for (int dir = 0; dir < 4; dir++) {
         for (int dist = -5; dist <= 5; dist++) {
-            int xi = x - dist * DX[dir];
-            int yi = y - dist * DY[dir];
+            int xi = x + dist * DX[dir];
+            int yi = y + dist * DY[dir];
 
-            // less-branch test: xi < 0 || xi >= boardSize || yi < 0 || yi >= boardSize
+            // branchless test: xi < 0 || xi >= boardSize || yi < 0 || yi >= boardSize
             if ((xi | (boardSizeSub1 - xi) | yi | (boardSizeSub1 - yi)) < 0)
                 continue;
 
@@ -444,7 +459,7 @@ void Mix9Accumulator::move(const Mix9Weight &w, Color pieceColor, int x, int y)
             c.newShape                 = c.oldShape + dPower3 * Power3[dist + 5];
             indexTable[newMapIdx]      = indexTable[c.oldMapIdx];
             indexTable[newMapIdx][dir] = c.newShape;
-            assert(0 <= c.newShape && c.newShape < ShapeNum);
+            assert(c.newShape < ShapeNum);
 
             versionInnerIndexTable[innerVersionIdxBase + innerIdx] = newMapIdx++;
         }
