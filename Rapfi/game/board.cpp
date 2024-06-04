@@ -521,8 +521,8 @@ void Board::expandCandArea(Pos pos, int fillDist, int lineDist)
     area.expand(pos, boardSize, std::max(fillDist, lineDist));
 
     for (int i = std::max(3, fillDist + 1); i <= lineDist; i++) {
-        for (int d = 0; d < 4; d++) {
-            Pos posi = pos + DIRECTION[d] * i;
+        for (int dir = 0; dir < 4; dir++) {
+            Pos posi = pos + DIRECTION[dir] * i;
             if (candCondition(posi))
                 cells[posi].cand++;
         }

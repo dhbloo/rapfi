@@ -14,19 +14,19 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "tuner.h"
 
 #include "../config.h"
 #include "../core/iohelper.h"
 #include "../eval/eval.h"
+#include "BS_thread_pool.hpp"
 #include "dataset.h"
 #include "optimizer.h"
 
 #include <algorithm>
 #include <cmath>
-#include <execution>
 #include <future>
 #include <iomanip>
 #include <iterator>
@@ -47,13 +47,17 @@ inline bool checkEqual(Float a, Float b)
 /// sigmoid(x) = 1/(1+exp(-x))
 inline Float sigmoid(Float x)
 {
-    return Float(1.0) / (Float(1.0) + std::exp(-x));
+    return Float(1) / (Float(1) + std::exp(-x));
 }
 
-/// sign(x) = +1(x>0), -1(x<0), 0(x=0)
-inline Float sgn(Float val)
+inline Float scoreToWinrate(Float score, Float invScalingFactor)
 {
-    return (Float(0) < val) - (val < Float(0));
+    return sigmoid(score * invScalingFactor);
+}
+
+inline Float scoreToWinrateGrad(Float winrate, Float invScalingFactor)
+{
+    return winrate * (Float(1) - winrate) * invScalingFactor;
 }
 
 inline Float lossFunction(LossType lt, Float pred, Float target)
@@ -75,12 +79,13 @@ inline Float lossFunction(LossType lt, Float pred, Float target)
     }
 }
 
-inline Float lossFunctionGradientPart(LossType lt, Float pred, Float target)
+inline Float lossFunctionGrad(LossType lt, Float pred, Float target)
 {
+    Float diff = pred - target;
     switch (lt) {
-    case LossType::L1: return sgn(pred - target);
-    case LossType::L2: return Float(2) * (pred - target);
-    case LossType::BCE: return (pred - target) / (pred * (Float(1) - pred));
+    case LossType::L1: return (Float(0) < diff) - (diff < Float(0));
+    case LossType::L2: return Float(2) * diff;
+    case LossType::BCE: return diff / (pred * (Float(1) - pred));
     default: return Float(0);
     }
 }
@@ -134,6 +139,66 @@ void collectMoveScoreCoeffs(Rule r, const Board &board, Collector collect)
     }
 }
 
+static BS::thread_pool ThreadPool;
+
+template <typename InputIt, typename T, typename BinaryOp, typename UnaryOp>
+T parallel_transform_reduce(InputIt first, InputIt last, T init, BinaryOp reduce, UnaryOp transform)
+{
+    auto length = std::distance(first, last);
+    if (length == 0)
+        return init;
+
+    constexpr size_t MaxBlockSize = 16384;
+    constexpr size_t MinBlockSize = 4096;
+    size_t           numThreads   = ThreadPool.get_thread_count();
+    size_t blockSize = std::clamp<size_t>(length / numThreads, MinBlockSize, MaxBlockSize);
+    size_t numBlocks = (length + blockSize - 1) / blockSize;
+    std::vector<std::future<T>> futures;
+
+    // parallel transform phase
+    for (size_t i = 0; i < numBlocks; ++i) {
+        auto blockBegin = first + i * blockSize;
+        auto blockEnd   = std::min(blockBegin + blockSize, last);
+
+        futures.emplace_back(ThreadPool.submit_task([blockBegin, blockEnd, transform]() {
+            T blockResult = T {};
+            for (auto it = blockBegin; it != blockEnd; ++it)
+                blockResult += transform(*it);
+            return blockResult;
+        }));
+    }
+
+    // parallel reduce phase
+    size_t futureBegin = 0;
+    size_t futureEnd   = futures.size();
+    size_t chunkSize   = std::clamp<size_t>(futureEnd / numThreads, MinBlockSize, MaxBlockSize);
+    while (futureEnd - futureBegin >= chunkSize) {
+        size_t newNumFeatures = 0;
+
+        for (size_t i = futureBegin; i + (chunkSize - 1) < futureEnd; i += chunkSize) {
+            futures.emplace_back(ThreadPool.submit_task([&futures, reduce, chunkSize, i]() {
+                T chunkResult = T {};
+                for (size_t j = 0; j < chunkSize; ++j)
+                    chunkResult = reduce(chunkResult, futures[i + j].get());
+                return chunkResult;
+            }));
+            newNumFeatures++;
+            futureBegin += chunkSize;
+        }
+
+        futureEnd += newNumFeatures;
+        chunkSize =
+            std::clamp<size_t>((futureEnd - futureBegin) / numThreads, MinBlockSize, MaxBlockSize);
+    }
+
+    // sequential reduce phase
+    T result = init;
+    for (size_t i = futureBegin; i < futureEnd; ++i)
+        result = reduce(result, futures[i].get());
+
+    return result;
+}
+
 }  // namespace
 
 namespace Tuning {
@@ -179,7 +244,7 @@ TuneEntry::TuneEntry(const DataEntry                 &dataEntry,
 
         collectEvalCoeffs(dataEntry.rule,
                           evalInfo,
-                          [this, &tuner](auto coeff, auto scaleFactor, void *addr) {
+                          [this, &tuner](int coeff, int coeffScale, void *addr) {
                               // Check overflow in coefficient
                               assert(INT16_MIN <= coeff && coeff <= INT16_MAX);
 
@@ -187,7 +252,7 @@ TuneEntry::TuneEntry(const DataEntry                 &dataEntry,
                               if (coeff == 0)
                                   return;
 
-                              evalCoeffs.push_back({(int16_t)(coeff * CoeffScale / scaleFactor),
+                              evalCoeffs.push_back({(int16_t)(coeff * CoeffScale / coeffScale),
                                                     (uint16_t)tuner.paramIndex(addr)});
                           });
     }
@@ -228,11 +293,9 @@ Float TuneEntry::computeEvalLoss(const std::vector<TuneParam> &params, Float K, 
     if (evalCoeffs.empty())
         return Float(0);
 
-    Float prediction = UseTunedEval ? computeLinearEval(params) : Float(staticEval);
-    // Sigmoid activition function
-    prediction = sigmoid(K * prediction);
-    // Apply loss function
-    return lossFunction(loss, prediction, result);
+    Float eval    = UseTunedEval ? computeLinearEval(params) : Float(staticEval);
+    Float winrate = scoreToWinrate(eval, K);
+    return lossFunction(loss, winrate, result);
 }
 
 /// TuneEntry::computeMoveScoreLoss() computes loss of move scores with best move.
@@ -273,7 +336,7 @@ Float TuneEntry::computeMoveScoreLoss(const std::vector<TuneParam> &params, Floa
 
 /// TuneEntry::computeEvalGradient() computes gradient of params for this tune entry
 /// based on loss function of eval. The gradient is not normalized.
-void TuneEntry::computeEvalGradient(std::vector<Float>           &gradient,
+void TuneEntry::computeEvalGradient(std::vector<Float>           &grads,
                                     const std::vector<TuneParam> &params,
                                     Float                         K,
                                     LossType                      loss) const
@@ -282,23 +345,23 @@ void TuneEntry::computeEvalGradient(std::vector<Float>           &gradient,
         return;
 
     // For linear evaluation: Eval = ... + coeffs[i] * params[i] + ...
-    // Its gradient to l2 loss: d_l2/d_params[j] = -2K/N * Sum_i^N(coeffs[j] * T_i),
+    // Its gradient to l2 loss: d_l2/d_params[j] = -2K/N * Sum_i^N(coeffs[j] * E_i),
     // where N is the number of tune entries.
-    //   T_i = S_i * (1 - S_i) * (Result_i - S_i)
-    //   S_i = sigmoid(K * E_i)
+    //   E_i = W_i * (1 - W_i) * (Result_i - W_i)
+    //   W_i = sigmoid(K * E_i)
 
-    Float S  = sigmoid(K * computeLinearEval(params));
-    Float KS = K * S * (Float(1.0) - S);
-    Float T  = lossFunctionGradientPart(loss, S, result) * KS;
+    Float winrate        = scoreToWinrate(computeLinearEval(params), K);
+    Float dWinrate_dEval = scoreToWinrateGrad(winrate, K);
+    Float dL_dWinrate    = lossFunctionGrad(loss, winrate, result);
+    Float dL_dEval       = dL_dWinrate * dWinrate_dEval;
 
-    for (const auto &c : evalCoeffs) {
-        gradient[c.index] += c.coeff * T;
-    }
+    for (const auto &c : evalCoeffs)
+        grads[c.index] += c.coeff * dL_dEval;
 }
 
 /// TuneEntry::computeMoveScoreGradient() computes gradient of params for this tune
 /// entry based on loss function of move score. The gradient is not normalized.
-void TuneEntry::computeMoveScoreGradient(std::vector<Float>           &gradient,
+void TuneEntry::computeMoveScoreGradient(std::vector<Float>           &grads,
                                          const std::vector<TuneParam> &params,
                                          Float                         gamma) const
 {
@@ -343,7 +406,7 @@ void TuneEntry::computeMoveScoreGradient(std::vector<Float>           &gradient,
         Float dFLdScore = dFLdCE * dCEdScore;
 
         for (const auto c : coeffs)
-            gradient[c.index] += c.coeff * dFLdScore;
+            grads[c.index] += c.coeff * dFLdScore;
     }
 }
 
@@ -528,7 +591,6 @@ void Tuner::initTuneEntries(std::vector<TuneEntry> &tuneEntries, class Dataset &
 
     // Read dataset and convert to TuneEntry vectors parallelly
     size_t totalEntriesRead = 0;
-    Time   lastTime         = now();
     while (totalEntriesRead < config.maxTuneEntries) {
         // Read raw data entries from dataset
         dataEntries.reserve(config.batchSize);
@@ -546,8 +608,8 @@ void Tuner::initTuneEntries(std::vector<TuneEntry> &tuneEntries, class Dataset &
             totalEntriesRead += dataEntries.size();
 
         // Transform batched raw data entry to batched tune entry in parallel
-        tuneEntryJobs.push_back(std::async(
-            [this, &tuneEntries, &tuneEntriesMutex](std::vector<DataEntry> data) {
+        ThreadPool.detach_task(
+            [this, &tuneEntries, &tuneEntriesMutex, data = std::move(dataEntries)]() {
                 std::unordered_map<int, Board> boardObjectCache;
                 std::vector<TuneEntry>         entries;
                 entries.reserve(data.size());
@@ -571,13 +633,7 @@ void Tuner::initTuneEntries(std::vector<TuneEntry> &tuneEntries, class Dataset &
                                        std::make_move_iterator(entries.begin()),
                                        std::make_move_iterator(entries.end()));
                 }
-            },
-            std::move(dataEntries)));
-
-        if (now() - lastTime >= 10000) {
-            MESSAGEL(totalEntriesRead << " tune entries are read...");
-            lastTime = now();
-        }
+            });
 
         dataEntries.clear();
     }
@@ -585,17 +641,10 @@ void Tuner::initTuneEntries(std::vector<TuneEntry> &tuneEntries, class Dataset &
     MESSAGEL("Read " << totalEntriesRead << " tune entries from dataset, initializing...");
 
     // Collect tune Entries from all jobs
-    lastTime = now();
-    for (auto &result : tuneEntryJobs) {
-        result.get();
+    while (!ThreadPool.wait_for(std::chrono::seconds(10)))
+        MESSAGEL(tuneEntries.size() << " tune entries are initialized...");
 
-        if (now() - lastTime >= 10000) {
-            MESSAGEL(tuneEntries.size() << " tune entries are initialized...");
-            lastTime = now();
-        }
-    }
     tuneEntries.shrink_to_fit();
-
     MESSAGEL(tuneEntries.size() << " tune entries initialized.");
 
     // Shuffle tune entries if needed
@@ -658,12 +707,11 @@ Float Tuner::computeEvaluationLoss(Float K, bool validation) const
     if (entries.empty())
         return Float(0.0);
 
-    return std::transform_reduce(
-               std::execution::par_unseq,
+    return parallel_transform_reduce(
                entries.begin(),
                entries.end(),
                Float(0.0),
-               std::plus<>(),
+               std::plus<Float>(),
                [this, K](const TuneEntry &e) {
                    return e.computeEvalLoss<UseTunedEval>(tuneParams, K, config.lossType);
                })
@@ -679,24 +727,23 @@ Float Tuner::computeMoveScoreLoss(bool validation) const
     if (entries.empty())
         return Float(0.0);
 
-    return std::transform_reduce(std::execution::par_unseq,
-                                 entries.begin(),
-                                 entries.end(),
-                                 Float(0.0),
-                                 std::plus<>(),
-                                 [this](const TuneEntry &e) {
-                                     return e.computeMoveScoreLoss(tuneParams,
-                                                                   config.moveScoreLossGamma);
-                                 })
+    return parallel_transform_reduce(entries.begin(),
+                                     entries.end(),
+                                     Float(0.0),
+                                     std::plus<Float>(),
+                                     [this](const TuneEntry &e) {
+                                         return e.computeMoveScoreLoss(tuneParams,
+                                                                       config.moveScoreLossGamma);
+                                     })
            / Float(entries.size());
 }
 
 /// computeGradients() computes gradients of all parameters used in one tune
 /// entries batch and accumulates them into gradients vector. These gradients
 /// then will be used to tune the parameters with a gradient descent optimizer.
-void Tuner::computeGradientBatch(std::vector<Float> &gradient, Float K, size_t batchIdx)
+void Tuner::computeGradientBatch(std::vector<Float> &grads, Float K, size_t batchIdx)
 {
-    assert(gradient.size() == tuneParams.size());
+    assert(grads.size() == tuneParams.size());
     typedef std::vector<TuneEntry>::const_iterator TuneEntryIterator;
 
     // Calculate size of each job and number of total jobs in parallel
@@ -715,36 +762,31 @@ void Tuner::computeGradientBatch(std::vector<Float> &gradient, Float K, size_t b
         TuneEntryIterator jobEnd = jobBegin + (jobIdx == numJobs ? undivided : jobSize);
 
         // Accumulate local gradient asynchronously
-        gradJobs.push_back(std::async(
-            [this, K](TuneEntryIterator begin, TuneEntryIterator end) {
-                std::vector<Float> localGradient(tuneParams.size(), Float(0.0));
+        auto job = ThreadPool.submit_task([this, K, jobBegin, jobEnd] {
+            std::vector<Float> localGrads(tuneParams.size(), Float(0.0));
 
-                for (TuneEntryIterator e = begin; e != end; e++) {
-                    e->computeEvalGradient(localGradient, tuneParams, K, config.lossType);
-                    e->computeMoveScoreGradient(localGradient,
-                                                tuneParams,
-                                                config.moveScoreLossGamma);
-                }
+            for (TuneEntryIterator e = jobBegin; e != jobEnd; e++) {
+                e->computeEvalGradient(localGrads, tuneParams, K, config.lossType);
+                e->computeMoveScoreGradient(localGrads, tuneParams, config.moveScoreLossGamma);
+            }
 
-                // Scale gradient according to batch size
-                Float S = 1 / Float(config.batchSize);
-                for (Float &gradient : localGradient)
-                    gradient *= S;
+            // Scale gradient according to batch size
+            Float S = 1 / Float(config.batchSize);
+            for (Float &gradient : localGrads)
+                gradient *= S;
 
-                return localGradient;
-            },
-            jobBegin,
-            jobEnd));
+            return localGrads;
+        });
+        gradJobs.push_back(std::move(job));
     }
 
     // Accumulate gradients from all jobs
     for (auto &job : gradJobs) {
-        std::vector<Float> grad = job.get();
-        assert(gradient.size() == grad.size());
+        std::vector<Float> localGrads = job.get();
+        assert(grads.size() == localGrads.size());
 
-        for (size_t i = 0; i < gradient.size(); i++) {
-            gradient[i] += grad[i];
-        }
+        for (size_t i = 0; i < grads.size(); i++)
+            grads[i] += localGrads[i];
     }
 }
 

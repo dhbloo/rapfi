@@ -62,7 +62,7 @@ using FixedCoeffVec = CoeffVec<std::array<TuneCoeff<>, Size>>;
 /// TuneEntry struct contains all information needed to tune a position.
 struct TuneEntry
 {
-    static constexpr size_t CoeffScale = 4;
+    static constexpr size_t CoeffScale = 8;
 
     Float           result;  // win rate [0.0~1.0], 0=loss, 0.5=draw, 1=win
     Value           staticEval;
@@ -81,11 +81,11 @@ struct TuneEntry
     template <bool UseTunedEval = true>
     Float computeEvalLoss(const std::vector<TuneParam> &params, Float K, LossType loss) const;
     Float computeMoveScoreLoss(const std::vector<TuneParam> &params, Float gamma) const;
-    void  computeEvalGradient(std::vector<Float>           &gradient,
+    void  computeEvalGradient(std::vector<Float>           &grads,
                               const std::vector<TuneParam> &params,
                               Float                         K,
                               LossType                      loss) const;
-    void  computeMoveScoreGradient(std::vector<Float>           &gradient,
+    void  computeMoveScoreGradient(std::vector<Float>           &grads,
                                    const std::vector<TuneParam> &params,
                                    Float                         gamma) const;
 };
@@ -195,7 +195,7 @@ private:
     template <bool UseTunedEval = true>
     Float computeEvaluationLoss(Float K, bool validation) const;
     Float computeMoveScoreLoss(bool validation) const;
-    void  computeGradientBatch(std::vector<Float> &gradient, Float K, size_t batchIdx);
+    void  computeGradientBatch(std::vector<Float> &grads, Float K, size_t batchIdx);
 
     void   addParams(void         *address,
                      size_t        numElems,
@@ -234,7 +234,7 @@ Tuning::Tuner::addSingleParam(T &param, ParamGetter<const T &> getter, ParamSett
 }
 
 template <typename T, size_t Length, size_t ParamPerElem>
-inline void Tuning::Tuner::addArrayParams(T (&paramArray)[Length],
+inline void Tuning::Tuner::addArrayParams(T                      (&paramArray)[Length],
                                           ParamGetter<const T &> getter,
                                           ParamSetter<T &>       setter)
 {

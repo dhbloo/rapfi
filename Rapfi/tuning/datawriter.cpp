@@ -26,7 +26,6 @@
 
 #include <cassert>
 #include <chrono>
-#include <execution>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -601,97 +600,91 @@ private:
         size_t policyTargetsNCMoveStride = lengthOfShape(policyTargetsNCMoveShape, 1);
 
         std::atomic<uint64_t> hash = 0;
-        std::for_each(
-            std::execution::par_unseq,
-            localEntryBuffer.begin(),
-            localEntryBuffer.end(),
-            [&](DataEntry &e) {
-                // Get index of entry
-                size_t i = std::distance(localEntryBuffer.data(), &e);
+        for (size_t i = 0; i < localEntryBuffer.size(); i++) {
+            const DataEntry &e = localEntryBuffer[i];
 
-                // Initialize board from position
-                Board board(e.boardsize);
-                board.newGame(e.rule);
-                for (Pos pos : e.position)
-                    board.move(e.rule, pos);
+            // Initialize board from position
+            Board board(e.boardsize);
+            board.newGame(e.rule);
+            for (Pos pos : e.position)
+                board.move(e.rule, pos);
 
-                // Update inboard, self, oppo plane
-                std::vector<uint8_t> inBoardPlane(numCells, 0);
-                std::vector<uint8_t> selfPlane(numCells, 0);
-                std::vector<uint8_t> oppoPlane(numCells, 0);
-                Color                self = board.sideToMove(), oppo = ~self;
-                FOR_EVERY_POSITION(&board, pos)
-                {
-                    int         posIdx   = pos.y() * board.size() + pos.x();
-                    const Cell &c        = board.cell(pos);
-                    inBoardPlane[posIdx] = true;
-                    selfPlane[posIdx]    = c.piece == self;
-                    oppoPlane[posIdx]    = c.piece == oppo;
-                    oppoPlane[posIdx]    = c.piece == oppo;
+            // Update inboard, self, oppo plane
+            std::vector<uint8_t> inBoardPlane(numCells, 0);
+            std::vector<uint8_t> selfPlane(numCells, 0);
+            std::vector<uint8_t> oppoPlane(numCells, 0);
+            Color                self = board.sideToMove(), oppo = ~self;
+            FOR_EVERY_POSITION(&board, pos)
+            {
+                int         posIdx   = pos.y() * board.size() + pos.x();
+                const Cell &c        = board.cell(pos);
+                inBoardPlane[posIdx] = true;
+                selfPlane[posIdx]    = c.piece == self;
+                oppoPlane[posIdx]    = c.piece == oppo;
 
-                    if constexpr (WriteSparseInputs) {
-                        // Write sparseInputNCHWU8 and sparseInputNCHWU16
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 0 * numCells + posIdx] =
-                            c.pattern(self, 0);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 1 * numCells + posIdx] =
-                            c.pattern(self, 1);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 2 * numCells + posIdx] =
-                            c.pattern(self, 2);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 3 * numCells + posIdx] =
-                            c.pattern(self, 3);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 4 * numCells + posIdx] =
-                            c.pattern(oppo, 0);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 5 * numCells + posIdx] =
-                            c.pattern(oppo, 1);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 6 * numCells + posIdx] =
-                            c.pattern(oppo, 2);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 7 * numCells + posIdx] =
-                            c.pattern(oppo, 3);
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 8 * numCells + posIdx] =
-                            c.pattern4[self];
-                        sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 9 * numCells + posIdx] =
-                            c.pattern4[oppo];
-                        sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 0 * numCells + posIdx] =
-                            self == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
-                        sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 1 * numCells + posIdx] =
-                            oppo == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
-                    }
-
-                    // Write policyTargetsNCMove
-                    policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + posIdx] =
-                        std::clamp<int>(e.policyTarget(pos) * UINT16_MAX, 0, UINT16_MAX);
+                if constexpr (WriteSparseInputs) {
+                    // Write sparseInputNCHWU8 and sparseInputNCHWU16
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 0 * numCells + posIdx] =
+                        c.pattern(self, 0);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 1 * numCells + posIdx] =
+                        c.pattern(self, 1);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 2 * numCells + posIdx] =
+                        c.pattern(self, 2);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 3 * numCells + posIdx] =
+                        c.pattern(self, 3);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 4 * numCells + posIdx] =
+                        c.pattern(oppo, 0);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 5 * numCells + posIdx] =
+                        c.pattern(oppo, 1);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 6 * numCells + posIdx] =
+                        c.pattern(oppo, 2);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 7 * numCells + posIdx] =
+                        c.pattern(oppo, 3);
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 8 * numCells + posIdx] =
+                        c.pattern4[self];
+                    sparseInputNCHWU8[i * sparseInputNCHWU8Stride + 9 * numCells + posIdx] =
+                        c.pattern4[oppo];
+                    sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 0 * numCells + posIdx] =
+                        self == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
+                    sparseInputNCHWU16[i * sparseInputNCHWU16Stride + 1 * numCells + posIdx] =
+                        oppo == BLACK ? c.pcode<BLACK>() : c.pcode<WHITE>();
                 }
 
-                // Write policyTargetsNCMove for the PASS move
-                policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + numCells] =
-                    std::clamp<int>(e.policyTarget(Pos::PASS) * UINT16_MAX, 0, UINT16_MAX);
+                // Write policyTargetsNCMove
+                policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + posIdx] =
+                    std::clamp<int>(e.policyTarget(pos) * UINT16_MAX, 0, UINT16_MAX);
+            }
 
-                // Write binaryInputNCHWPacked
-                packBitsToBytes(inBoardPlane.data(),
-                                numCells,
-                                &binaryInputNCHWPacked[i * binaryInputNCHWStride + 0 * numBytes]);
-                packBitsToBytes(selfPlane.data(),
-                                numCells,
-                                &binaryInputNCHWPacked[i * binaryInputNCHWStride + 1 * numBytes]);
-                packBitsToBytes(oppoPlane.data(),
-                                numCells,
-                                &binaryInputNCHWPacked[i * binaryInputNCHWStride + 2 * numBytes]);
+            // Write policyTargetsNCMove for the PASS move
+            policyTargetsNCMove[i * policyTargetsNCMoveStride + 0 * numPolicy + numCells] =
+                std::clamp<int>(e.policyTarget(Pos::PASS) * UINT16_MAX, 0, UINT16_MAX);
 
-                // Write globalInputNC
-                globalInputNC[i * globalInputNCStride + 0] = (self == BLACK ? -1.0f : 1.0f);
+            // Write binaryInputNCHWPacked
+            packBitsToBytes(inBoardPlane.data(),
+                            numCells,
+                            &binaryInputNCHWPacked[i * binaryInputNCHWStride + 0 * numBytes]);
+            packBitsToBytes(selfPlane.data(),
+                            numCells,
+                            &binaryInputNCHWPacked[i * binaryInputNCHWStride + 1 * numBytes]);
+            packBitsToBytes(oppoPlane.data(),
+                            numCells,
+                            &binaryInputNCHWPacked[i * binaryInputNCHWStride + 2 * numBytes]);
 
-                // Write globalTargetsNC
-                if (localSoftValueBuffer[i].has_value()) {
-                    globalTargetsNC[i * globalTargetsNCtride + 0] = (*localSoftValueBuffer[i])[0];
-                    globalTargetsNC[i * globalTargetsNCtride + 1] = (*localSoftValueBuffer[i])[1];
-                    globalTargetsNC[i * globalTargetsNCtride + 2] = (*localSoftValueBuffer[i])[2];
-                }
-                else {
-                    globalTargetsNC[i * globalTargetsNCtride + 0] = e.result == RESULT_WIN;
-                    globalTargetsNC[i * globalTargetsNCtride + 1] = e.result == RESULT_LOSS;
-                    globalTargetsNC[i * globalTargetsNCtride + 2] = e.result == RESULT_DRAW;
-                }
-            });
+            // Write globalInputNC
+            globalInputNC[i * globalInputNCStride + 0] = (self == BLACK ? -1.0f : 1.0f);
+
+            // Write globalTargetsNC
+            if (localSoftValueBuffer[i].has_value()) {
+                globalTargetsNC[i * globalTargetsNCtride + 0] = (*localSoftValueBuffer[i])[0];
+                globalTargetsNC[i * globalTargetsNCtride + 1] = (*localSoftValueBuffer[i])[1];
+                globalTargetsNC[i * globalTargetsNCtride + 2] = (*localSoftValueBuffer[i])[2];
+            }
+            else {
+                globalTargetsNC[i * globalTargetsNCtride + 0] = e.result == RESULT_WIN;
+                globalTargetsNC[i * globalTargetsNCtride + 1] = e.result == RESULT_LOSS;
+                globalTargetsNC[i * globalTargetsNCtride + 2] = e.result == RESULT_DRAW;
+            }
+        };
 
         // Write npz with ZIP compression (in another thread)
         Compressor compressor(os, Compressor::Type::ZIP_DEFAULT);
