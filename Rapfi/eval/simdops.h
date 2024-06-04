@@ -55,6 +55,9 @@ constexpr InstructionType NativeInstType  = AVX2;
 #elif defined(USE_SSE)
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SSE;
+#elif defined(USE_NEON)
+constexpr size_t          NativeAlignment = 16;
+constexpr InstructionType NativeInstType  = SSE;
 #else  // Delegate to SSE with simde's implementation
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SCALAR;

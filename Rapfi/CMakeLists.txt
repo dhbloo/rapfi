@@ -16,6 +16,7 @@ option(USE_AVX2 "Enable AVX2/FMA instruction" ON)
 option(USE_AVX512 "Enable AVX512 instruction" OFF)
 option(USE_BMI2 "Enable BMI2 instruction" OFF)
 option(USE_VNNI "Enable AVX512_VNNI/AVX_VNNI instruction" OFF)
+option(USE_NEON "Enable NEON instruction" OFF)
 
 option(ENABLE_LTO "Enable link time optimization" OFF)
 option(FORCE_ASSERTION "Enable force assertion for all build type" OFF)
@@ -243,6 +244,9 @@ endif()
 if(USE_VNNI)
 	target_compile_definitions(rapfi PRIVATE USE_VNNI)
 endif()
+if(USE_NEON)
+    target_compile_definitions(rapfi PRIVATE USE_NEON)
+endif()
 
 if(ENABLE_LTO)
     include(CheckIPOSupported)
@@ -327,6 +331,10 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
 
     if(USE_BMI2 OR USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi2")
+    endif()
+
+    if(USE_NEON)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+simd")
     endif()
 
     if(FORCE_ASSERTION)

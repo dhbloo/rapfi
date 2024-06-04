@@ -369,7 +369,7 @@ void YXDBStorage::save(std::ostream &os) noexcept
         os.write(metadata.c_str(), metadata.length());
     }
 
-    const char PassMove[2] = {-1, -1};
+    const int8_t PassMove[2] = {-1, -1};
     for (auto it = recordsMap.cbegin(); it != recordsMap.cend(); it++) {
         const CompactDBKey &key    = it->first;
         const DBRecord     &record = it->second;
@@ -385,11 +385,11 @@ void YXDBStorage::save(std::ostream &os) noexcept
         os.write(reinterpret_cast<const char *>(key.blackStonesBegin()),
                  (key.blackStonesEnd() - key.blackStonesBegin()) * 2);
         if (addPassMove && normalSTM == BLACK)
-            os.write(PassMove, 2);
+            os.write(reinterpret_cast<const char *>(PassMove), 2);
         os.write(reinterpret_cast<const char *>(key.whiteStonesBegin()),
                  (key.whiteStonesEnd() - key.whiteStonesBegin()) * 2);
         if (addPassMove && normalSTM == WHITE)
-            os.write(PassMove, 2);
+            os.write(reinterpret_cast<const char *>(PassMove), 2);
 
         // Write record message
         if (record.isNull()) {

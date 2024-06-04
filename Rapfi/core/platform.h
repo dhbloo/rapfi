@@ -22,13 +22,9 @@
     #include <immintrin.h>  // BMI2, AVX512
 #endif
 
-#if !defined(NO_PREFETCH) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
-    #include <xmmintrin.h>  // SSE
-#endif
-
 #if defined(_MSC_VER)
     #include <cstdlib>   // for _rotr64
-    #include <intrin.h>  // for __umulh
+    #include <intrin.h>  // for __umulh, _mm_prefetch, __prefetch
 #endif
 
 #include <cstddef>
@@ -106,7 +102,9 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
-    #if defined(__INTEL_COMPILER) || defined(_MSC_VER)
+    #if defined(_MSC_VER) && (defined(_M_ARM) || defined(_M_ARM64))
+    __prefetch(addr);
+    #elif defined(_MSC_VER)
     _mm_prefetch((char *)addr, _MM_HINT_T0);
     #else
     __builtin_prefetch(addr);
