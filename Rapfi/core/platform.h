@@ -22,6 +22,10 @@
     #include <immintrin.h>  // BMI2, AVX512
 #endif
 
+#if defined(USE_NEON)
+    #include <arm_neon.h>  // NEON
+#endif
+
 #if defined(_MSC_VER)
     #include <cstdlib>   // for _rotr64
     #include <intrin.h>  // for __umulh, _mm_prefetch, __prefetch
@@ -102,12 +106,12 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
-    #if defined(_MSC_VER) && (defined(_M_ARM) || defined(_M_ARM64))
-    __prefetch(addr);
-    #elif defined(_MSC_VER)
-    _mm_prefetch((char *)addr, _MM_HINT_T0);
-    #else
+    #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
     __builtin_prefetch(addr);
+    #elif defined(_M_ARM) || defined(_M_ARM64)
+    __prefetch(addr);
+    #else
+    _mm_prefetch((char *)addr, _MM_HINT_T0);
     #endif
 #endif
 }

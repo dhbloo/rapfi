@@ -269,6 +269,100 @@
           "type": "BOOL"
         }
       ]
+    },
+    {
+      "name": "arm64-Release-DOTPROD",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_arm64_x64" ],
+      "variables": [
+        {
+          "name": "USE_NEON",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_NEON_DOTPROD",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_SSE",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX2",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
+      "name": "arm64-Clang-Release",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_arm64_x64" ],
+      "variables": [
+        {
+          "name": "USE_NEON",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_SSE",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX2",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
+      "name": "arm64-Clang-Release-DOTPROD",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_arm64_x64" ],
+      "variables": [
+        {
+          "name": "USE_NEON",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_NEON_DOTPROD",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_SSE",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX2",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
     }
   ]
 }

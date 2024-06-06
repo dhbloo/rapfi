@@ -33,6 +33,7 @@ enum InstructionType {
     SSE,
     AVX2,
     AVX512,
+    NEON,
 };
 
 /// Get simd register width of the given instruction type.
@@ -43,6 +44,7 @@ constexpr size_t simdBitsOfInstType(InstructionType instType)
     case SSE: return 128;
     case AVX2: return 256;
     case AVX512: return 512;
+    case NEON: return 128;
     }
 }
 
@@ -57,7 +59,7 @@ constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SSE;
 #elif defined(USE_NEON)
 constexpr size_t          NativeAlignment = 16;
-constexpr InstructionType NativeInstType  = SSE;
+constexpr InstructionType NativeInstType  = NEON;
 #else  // Delegate to SSE with simde's implementation
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SCALAR;
@@ -101,6 +103,59 @@ namespace detail {
 
         static_assert(AllowExtra || NumExtra == 0, "data does not fill a register");
     };
+
+    // ------------------------------------------------------------------------
+    // Neon type helper
+#ifdef USE_NEON
+    template <typename T>
+    struct NeonReg
+    {};
+
+    template <>
+    struct NeonReg<int8_t>
+    {
+        typedef int8x16_t type;
+    };
+
+    template <>
+    struct NeonReg<int16_t>
+    {
+        typedef int16x8_t type;
+    };
+
+    template <>
+    struct NeonReg<int32_t>
+    {
+        typedef int32x4_t type;
+    };
+
+    template <>
+    struct NeonReg<uint8_t>
+    {
+        using type = uint8x16_t;
+    };
+
+    template <>
+    struct NeonReg<uint16_t>
+    {
+        using type = uint16x8_t;
+    };
+
+    template <>
+    struct NeonReg<uint32_t>
+    {
+        using type = uint32x4_t;
+    };
+
+    template <>
+    struct NeonReg<float>
+    {
+        typedef float32x4_t type;
+    };
+
+    template <typename T>
+    using NeonReg_t = typename NeonReg<T>::type;
+#endif
 
     // ------------------------------------------------------------------------
     // Vec store & load template
@@ -171,6 +226,48 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <typename T, int Alignment>
+    struct VecLoadStore<T, Alignment, NEON, std::enable_if_t<std::is_integral_v<T>>>
+    {
+        static FORCE_INLINE auto load(const void *addr)
+        {
+            if constexpr (std::is_same_v<T, int8_t>)
+                return vld1q_s8(reinterpret_cast<const int8_t *>(addr));
+            else if constexpr (std::is_same_v<T, uint8_t>)
+                return vld1q_u8(reinterpret_cast<const uint8_t *>(addr));
+            else if constexpr (std::is_same_v<T, int16_t>)
+                return vld1q_s16(reinterpret_cast<const int16_t *>(addr));
+            else if constexpr (std::is_same_v<T, uint16_t>)
+                return vld1q_u16(reinterpret_cast<const uint16_t *>(addr));
+            else if constexpr (std::is_same_v<T, int32_t>)
+                return vld1q_s32(reinterpret_cast<const int32_t *>(addr));
+            else if constexpr (std::is_same_v<T, uint32_t>)
+                return vld1q_u32(reinterpret_cast<const uint32_t *>(addr));
+            else
+                static_assert(always_false_v<T>, "unsupported load type");
+        }
+
+        static FORCE_INLINE void store(void *addr, NeonReg_t<T> data)
+        {
+            if constexpr (std::is_same_v<T, int8_t>)
+                vst1q_s8(reinterpret_cast<int8_t *>(addr), data);
+            else if constexpr (std::is_same_v<T, uint8_t>)
+                vst1q_u8(reinterpret_cast<uint8_t *>(addr), data);
+            else if constexpr (std::is_same_v<T, int16_t>)
+                vst1q_s16(reinterpret_cast<int16_t *>(addr), data);
+            else if constexpr (std::is_same_v<T, uint16_t>)
+                vst1q_u16(reinterpret_cast<uint16_t *>(addr), data);
+            else if constexpr (std::is_same_v<T, int32_t>)
+                vst1q_s32(reinterpret_cast<int32_t *>(addr), data);
+            else if constexpr (std::is_same_v<T, uint32_t>)
+                vst1q_u32(reinterpret_cast<uint32_t *>(addr), data);
+            else
+                static_assert(always_false_v<T>, "unsupported store type");
+        }
+    };
+#endif
+
     template <int Alignment>
     struct VecLoadStore<float, Alignment, SSE>
     {
@@ -229,6 +326,22 @@ namespace detail {
                 _mm512_store_ps(addr, data);
             else
                 _mm512_storeu_ps(addr, data);
+        }
+    };
+#endif
+
+#ifdef USE_NEON
+    template <int Alignment>
+    struct VecLoadStore<float, Alignment, NEON>
+    {
+        static FORCE_INLINE auto load(const void *addr)
+        {
+            return vld1q_f32(reinterpret_cast<const float *>(addr));
+        }
+
+        static FORCE_INLINE void store(void *addr, float32x4_t data)
+        {
+            vst1q_f32(reinterpret_cast<float *>(addr), data);
         }
     };
 #endif
@@ -435,6 +548,58 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <typename FT, typename TT>
+    struct VecCvt<FT, TT, NEON, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef NeonReg_t<FT> FR;
+        typedef NeonReg_t<TT> TR;
+
+        static FORCE_INLINE TR convert1(FR a)
+        {
+            if constexpr (std::is_same_v<FT, int8_t>) {
+                if constexpr (std::is_same_v<TT, int16_t>)
+                    return vmovl_s8(vget_low_s8(a));
+                else if constexpr (std::is_same_v<TT, int32_t>)
+                    return vmovl_s16(vget_low_s16(vmovl_s8(vget_low_s8(a))));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
+            }
+            else if constexpr (std::is_same_v<FT, int16_t>) {
+                if constexpr (std::is_same_v<TT, int32_t>)
+                    return vmovl_s16(vget_low_s16(a));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
+            }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
+        }
+
+        static FORCE_INLINE auto convert(FR a)
+        {
+            if constexpr (std::is_same_v<FT, int8_t>) {
+                if constexpr (std::is_same_v<TT, int16_t>)
+                    return std::tuple(vmovl_s8(vget_low_s8(a)), vmovl_s8(vget_high_s8(a)));
+                else if constexpr (std::is_same_v<TT, int32_t>)
+                    return std::tuple(vmovl_s16(vget_low_s16(vmovl_s8(vget_low_s8(a)))),
+                                      vmovl_s16(vget_high_s16(vmovl_s8(vget_low_s8(a)))),
+                                      vmovl_s16(vget_low_s16(vmovl_s8(vget_high_s8(a)))),
+                                      vmovl_s16(vget_high_s16(vmovl_s8(vget_high_s8(a)))));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
+            }
+            else if constexpr (std::is_same_v<FT, int16_t>) {
+                if constexpr (std::is_same_v<TT, int32_t>)
+                    return std::tuple(vmovl_s16(vget_low_s16(a)), vmovl_s16(vget_high_s16(a)));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
+            }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
+        }
+    };
+#endif
+
     template <>
     struct VecCvt<int32_t, float, SSE>
     {
@@ -464,6 +629,17 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <>
+    struct VecCvt<int32_t, float, NEON>
+    {
+        typedef int32x4_t   FR;
+        typedef float32x4_t TR;
+
+        static FORCE_INLINE TR convert1(FR a) { return vcvtq_f32_s32(a); }
+    };
+#endif
+
     template <typename FT, typename TT>
     struct VecCvt<FT, TT, SCALAR> : VecCvt<FT, TT, SSE>
     {};
@@ -485,11 +661,11 @@ namespace detail {
         {
             if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
                 return simde_mm_packs_epi16(a, b);
-            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+            else if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, uint8_t>)
                 return simde_mm_packus_epi16(a, b);
             else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
                 return simde_mm_packs_epi32(a, b);
-            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, uint16_t>)
                 return simde_mm_packus_epi32(a, b);
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
@@ -507,11 +683,11 @@ namespace detail {
         {
             if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
                 return simde_mm256_packs_epi16(a, b);
-            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+            else if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, uint8_t>)
                 return simde_mm256_packus_epi16(a, b);
             else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
                 return simde_mm256_packs_epi32(a, b);
-            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, uint16_t>)
                 return simde_mm256_packus_epi32(a, b);
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
@@ -535,11 +711,11 @@ namespace detail {
         {
             if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
                 return _mm512_packs_epi16(a, b);
-            else if constexpr (std::is_same_v<FT, uint16_t> && std::is_same_v<TT, uint8_t>)
+            else if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, uint8_t>)
                 return _mm512_packus_epi16(a, b);
             else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
                 return _mm512_packs_epi32(a, b);
-            else if constexpr (std::is_same_v<FT, uint32_t> && std::is_same_v<TT, uint16_t>)
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, uint16_t>)
                 return _mm512_packus_epi32(a, b);
             else
                 static_assert(always_false_v<FT, TT>, "unsupported packs type");
@@ -551,6 +727,31 @@ namespace detail {
             r   = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7), r);
             return r;
         }
+    };
+#endif
+
+#ifdef USE_NEON
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, NEON, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef NeonReg_t<FT> FR;
+        typedef NeonReg_t<TT> TR;
+
+        static FORCE_INLINE TR packs(FR a, FR b)
+        {
+            if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
+                return vqmovn_high_s16(vqmovn_s16(a), b);
+            else if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, uint8_t>)
+                return vqmovun_high_s16(vqmovun_s16(a), b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
+                return vqmovn_high_s32(vqmovn_s32(a), b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, uint16_t>)
+                return vqmovun_high_s32(vqmovun_s32(a), b);
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+
+        static FORCE_INLINE TR packs_permuted(FR a, FR b) { return packs(a, b); }
     };
 #endif
 
@@ -758,6 +959,66 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <>
+    struct VecOp<int8_t, NEON>
+    {
+        typedef int8_t        T;
+        typedef int8x16_t     R;
+        static FORCE_INLINE R setzero() { return vdupq_n_s8(0); }
+        static FORCE_INLINE R set1(T a) { return vdupq_n_s8(a); }
+        static FORCE_INLINE R bitwiseor(R a, R b) { return vorrq_s8(a, b); }
+        static FORCE_INLINE R bitwiseand(R a, R b) { return vandq_s8(a, b); }
+        static FORCE_INLINE R bitwisexor(R a, R b) { return veorq_s8(a, b); }
+        static FORCE_INLINE R add(R a, R b) { return vaddq_s8(a, b); }
+        static FORCE_INLINE R adds(R a, R b) { return vqaddq_s8(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return vsubq_s8(a, b); }
+        static FORCE_INLINE R subs(R a, R b) { return vqsubq_s8(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return vminq_s8(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return vmaxq_s8(a, b); }
+        static FORCE_INLINE R avg(R a, R b)
+        {
+            return vreinterpretq_s8_u8(vrhaddq_u8(vreinterpretq_u8_s8(a), vreinterpretq_u8_s8(b)));
+        }
+
+        static FORCE_INLINE int16x8_t dot2_u7i8(R a, R b)
+        {
+            uint8x16_t a_u8 = vreinterpretq_u8_s8(a);
+            int16x8_t  tl   = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(a_u8))),
+                                     vmovl_s8(vget_low_s8(b)));
+            int16x8_t  th   = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(a_u8))),
+                                     vmovl_s8(vget_high_s8(b)));
+            return vqaddq_s16(vuzp1q_s16(tl, th), vuzp2q_s16(tl, th));
+        }
+
+        /// Compute 4-element dot product of [u7x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_u7i8_accum(int32x4_t &acc, R a, R b)
+        {
+    #if defined(USE_NEON_DOTPROD)
+            acc = vdotq_s32(acc, a, b);
+    #else
+            int16x8_t product0 = vmull_s8(vget_low_s8(a), vget_low_s8(b));
+            int16x8_t product1 = vmull_high_s8(a, b);
+            int16x8_t sum      = vpaddq_s16(product0, product1);
+            acc                = vpadalq_s16(acc, sum);
+    #endif
+        }
+
+        /// Compute 4-element dot product of [i8x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_i8i8_accum(int32x4_t &acc, R a, R b)
+        {
+    #if defined(USE_NEON_DOTPROD)
+            acc = vdotq_s32(acc, a, b);
+    #else
+            int16x8_t product0 = vmull_s8(vget_low_s8(a), vget_low_s8(b));
+            int16x8_t product1 = vmull_high_s8(a, b);
+            int16x8_t sum      = vpaddq_s16(product0, product1);
+            acc                = vpadalq_s16(acc, sum);
+    #endif
+        }
+    };
+#endif
+
     template <>
     struct VecOp<int16_t, SSE> : VecOpSISSE
     {
@@ -868,6 +1129,75 @@ namespace detail {
             return _mm512_slli_epi16(a, i);
         }
         static FORCE_INLINE R dot2(R a, R b) { return _mm512_madd_epi16(a, b); }
+    };
+#endif
+
+#ifdef USE_NEON
+    template <>
+    struct VecOp<int16_t, NEON>
+    {
+        typedef int16_t       T;
+        typedef int16x8_t     R;
+        static FORCE_INLINE R setzero() { return vdupq_n_s16(0); }
+        static FORCE_INLINE R set1(T a) { return vdupq_n_s16(a); }
+        static FORCE_INLINE R bitwiseor(R a, R b) { return vorrq_s16(a, b); }
+        static FORCE_INLINE R bitwiseand(R a, R b) { return vandq_s16(a, b); }
+        static FORCE_INLINE R bitwisexor(R a, R b) { return veorq_s16(a, b); }
+        static FORCE_INLINE R add(R a, R b) { return vaddq_s16(a, b); }
+        static FORCE_INLINE R adds(R a, R b) { return vqaddq_s16(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return vsubq_s16(a, b); }
+        static FORCE_INLINE R subs(R a, R b) { return vqsubq_s16(a, b); }
+        static FORCE_INLINE R mullo(R a, R b) { return vmulq_s16(a, b); }
+        static FORCE_INLINE R mulhi(R a, R b)
+        {
+            int16x4_t a3210  = vget_low_s16(a);
+            int16x4_t b3210  = vget_low_s16(b);
+            int32x4_t ab3210 = vmull_s16(a3210, b3210);  // 3333222211110000
+            int32x4_t ab7654 = vmull_high_s16(a, b);
+            return vuzp2q_s16(vreinterpretq_s16_s32(ab3210), vreinterpretq_s16_s32(ab7654));
+        }
+        static FORCE_INLINE R mulhrs(R a, R b)
+        {
+            // Multiply
+            int32x4_t mul_lo = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+            int32x4_t mul_hi = vmull_s16(vget_high_s16(a), vget_high_s16(b));
+
+            // Rounding narrowing shift right
+            // narrow = (int16_t)((mul + 16384) >> 15);
+            int16x4_t narrow_lo = vrshrn_n_s32(mul_lo, 15);
+            int16x4_t narrow_hi = vrshrn_n_s32(mul_hi, 15);
+
+            // Join together
+            return vcombine_s16(narrow_lo, narrow_hi);
+        }
+        static FORCE_INLINE R min(R a, R b) { return vminq_s16(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return vmaxq_s16(a, b); }
+        static FORCE_INLINE R avg(R a, R b)
+        {
+            return vreinterpretq_s16_u16(
+                vrhaddq_u16(vreinterpretq_u16_s16(a), vreinterpretq_u16_s16(b)));
+        }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return vshrq_n_s16(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return vreinterpretq_s16_u16(vshrq_n_u16(vreinterpretq_u16_s16(a), i));
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return vreinterpretq_s16_u16(vshlq_n_u16(vreinterpretq_u16_s16(a), i));
+        }
+        static FORCE_INLINE int32x4_t dot2(R a, R b)
+        {
+            int32x4_t low  = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+            int32x4_t high = vmull_high_s16(a, b);
+            return vpaddq_s32(low, high);
+        }
     };
 #endif
 
@@ -1014,6 +1344,49 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <>
+    struct VecOp<int32_t, NEON>
+    {
+        typedef int32_t       T;
+        typedef int32x4_t     R;
+        static FORCE_INLINE R setzero() { return vdupq_n_s32(0); }
+        static FORCE_INLINE R set1(T a) { return vdupq_n_s32(a); }
+        static FORCE_INLINE R bitwiseor(R a, R b) { return vorrq_s32(a, b); }
+        static FORCE_INLINE R bitwiseand(R a, R b) { return vandq_s32(a, b); }
+        static FORCE_INLINE R bitwisexor(R a, R b) { return veorq_s32(a, b); }
+        static FORCE_INLINE R add(R a, R b) { return vaddq_s32(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return vsubq_s32(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return vminq_s32(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return vmaxq_s32(a, b); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return vshrq_n_s32(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return vreinterpretq_s32_u32(vshrq_n_u32(vreinterpretq_u32_s32(a), i));
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return vreinterpretq_s32_u32(vshlq_n_u32(vreinterpretq_u32_s32(a), i));
+        }
+        static FORCE_INLINE T reduceadd(R a) { return vaddvq_s32(a); }
+
+        /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
+        static FORCE_INLINE R hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            sum0 = vpaddq_s32(sum0, sum1);
+            sum2 = vpaddq_s32(sum2, sum3);
+            sum0 = vpaddq_s32(sum0, sum2);
+            return sum0;
+        }
+    };
+#endif
+
     template <>
     struct VecOp<float, SSE>
     {
@@ -1087,6 +1460,25 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_NEON
+    template <>
+    struct VecOp<float, NEON>
+    {
+        typedef float         T;
+        typedef float32x4_t   R;
+        static FORCE_INLINE R setzero() { return vdupq_n_f32(0.0f); }
+        static FORCE_INLINE R set1(T a) { return vdupq_n_f32(a); }
+        static FORCE_INLINE R add(R a, R b) { return vaddq_f32(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return vsubq_f32(a, b); }
+        static FORCE_INLINE R mul(R a, R b) { return vmulq_f32(a, b); }
+        static FORCE_INLINE R div(R a, R b) { return vdivq_f32(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return vminq_f32(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return vmaxq_f32(a, b); }
+        static FORCE_INLINE R fmadd(R a, R b, R c) { return vfmaq_f32(c, b, a); }
+        static FORCE_INLINE T reduceadd(R a) { return vaddvq_f32(a); }
+    };
+#endif
+
     template <typename T>
     struct VecOp<T, SCALAR> : VecOp<T, SSE>
     {};
@@ -1141,7 +1533,7 @@ namespace detail {
             }
 
             for (int i = 0; i < NumChunks; i++) {
-                auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
+                auto in0 = typename I8Op::R(I32Op::set1(input32[i]));  // Broadcast input value
                 auto w0 =
                     reinterpret_cast<const typename I8Op::R *>(weight + i * OutSize * ChunkSize);
                 if constexpr (PreReLU)
@@ -1273,7 +1665,7 @@ namespace detail {
             }
 
             for (int i = 0; i < NumChunks; i++) {
-                auto in0 = I32Op::set1(input32[i]);  // Broadcast input value
+                auto in0 = typename I16Op::R(I32Op::set1(input32[i]));  // Broadcast input value
                 auto w0 =
                     reinterpret_cast<const typename I16Op::R *>(weight + i * OutSize * ChunkSize);
                 if constexpr (PreReLU)
