@@ -50,6 +50,7 @@ set(CORE_SOURCES
     eval/evaluator.cpp
     eval/mix8nnue.cpp
     eval/mix9nnue.cpp
+    eval/mix9litennue.cpp
 
     game/board.cpp
     game/movegen.cpp
@@ -106,6 +107,7 @@ set(HEADERS
     eval/evaluator.h
     eval/mix8nnue.h
     eval/mix9nnue.h
+    eval/mix9litennue.h
     eval/simdops.h
     eval/weightloader.h
 

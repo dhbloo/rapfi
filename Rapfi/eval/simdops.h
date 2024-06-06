@@ -48,6 +48,14 @@ constexpr size_t simdBitsOfInstType(InstructionType instType)
     }
 }
 
+/// Returns the next lower instruction type.
+constexpr InstructionType getInstTypeOfWidth(InstructionType instType, size_t width)
+{
+    return simdBitsOfInstType(instType) <= width
+               ? instType
+               : getInstTypeOfWidth(static_cast<InstructionType>(instType - 1), width);
+}
+
 #if defined(USE_AVX512)
 constexpr size_t          NativeAlignment = 64;
 constexpr InstructionType NativeInstType  = AVX512;
@@ -100,6 +108,8 @@ namespace detail {
         static constexpr size_t NumBatch    = Size / RegWidth;
         static constexpr size_t NumExtra    = Size % RegWidth;
         static constexpr size_t BatchedSize = NumBatch * RegWidth;
+
+        static constexpr InstructionType Inst = I;
 
         static_assert(AllowExtra || NumExtra == 0, "data does not fill a register");
     };
