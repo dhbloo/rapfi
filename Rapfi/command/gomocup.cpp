@@ -19,7 +19,6 @@
 #include "../config.h"
 #include "../core/iohelper.h"
 #include "../core/utils.h"
-#include "../core/version.h"
 #include "../database/dbclient.h"
 #include "../database/dbutils.h"
 #include "../database/yxdbstorage.h"
@@ -170,7 +169,7 @@ void think(Board                             &board,
 
 void setGUIMode()
 {
-    MESSAGEL("Rapfi Engine Ver " CURRENT_VER);
+    MESSAGEL("Rapfi " << getVersionInfo());
     MESSAGEL("INFO MAX_THREAD_NUM 256");
     MESSAGEL("INFO MAX_HASH_SIZE 30");
     GUIMode = true;
@@ -1280,7 +1279,7 @@ extern "C" bool gomocupLoopOnce()
      && cmd != "YXQUERYDATABASEALLT")      Search::Threads.stopThinking();
 
     if (cmd == "END")                      return true;
-    else if (cmd == "ABOUT")               std::cout << EngineInfo << std::endl;
+    else if (cmd == "ABOUT")               std::cout << getEngineInfo() << std::endl;
     else if (cmd == "START")               start();
     else if (cmd == "RECTSTART")           rectStart();
     else if (cmd == "INFO")                getOption();

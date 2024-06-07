@@ -20,7 +20,6 @@
 
 #include "../core/iohelper.h"
 #include "../core/utils.h"
-#include "../core/version.h"
 #include "searchthread.h"
 
 #include <cassert>

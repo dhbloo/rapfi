@@ -187,3 +187,15 @@ std::vector<std::string> makeFileListFromPathList(const std::vector<std::string>
 /// If raiseException is true, when failed to create, an filesystem::filesystem_error is raised.
 /// @return Whether directory exists (or created) if raiseException is false.
 bool ensureDir(std::string dirpath, bool raiseException = true);
+
+// -------------------------------------------------
+// Engine Version
+
+/// Returns the engine major/minor/revision version numbers.
+std::tuple<int, int, int> getVersionNumbers();
+
+/// Returns the engine version information.
+std::string getVersionInfo();
+
+/// Returns the engine information.
+std::string getEngineInfo();

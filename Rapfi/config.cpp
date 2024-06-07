@@ -20,7 +20,6 @@
 
 #include "command/command.h"
 #include "core/iohelper.h"
-#include "core/version.h"
 #include "database/dbstorage.h"
 #include "database/yxdbstorage.h"
 #include "eval/evaluator.h"
@@ -273,8 +272,8 @@ bool Config::loadConfig(std::istream &configStream, bool skipModelLoading)
 /// This is used to check if the config file is suitable for current version of Rapfi.
 void Config::readRequirement(const cpptoml::table &t)
 {
-    uint64_t rapVer = ((uint64_t)RAPFI_MAJOR_VER << 32) | ((uint64_t)RAPFI_MINOR_VER << 16)
-                      | (uint64_t)RAPFI_REVISION_VER;
+    auto [major, minor, revision] = getVersionNumbers();
+    uint64_t rapVer = ((uint64_t)major << 32) | ((uint64_t)minor << 16) | (uint64_t)revision;
     if (auto minVer = t.get_array_of<int64_t>("min_version")) {
         if (minVer->size() != 3)
             throw std::runtime_error("illegal min_version");

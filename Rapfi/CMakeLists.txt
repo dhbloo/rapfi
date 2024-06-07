@@ -40,6 +40,7 @@ set(CORE_SOURCES
     core/iohelper.cpp
     core/utils.cpp
     core/platform.cpp
+    core/version.cpp
 
     database/dbclient.cpp
     database/dbutils.cpp
@@ -93,7 +94,6 @@ set(HEADERS
     core/pos.h
     core/types.h
     core/utils.h
-    core/version.h
 
     database/cache.h
     database/dbclient.h
