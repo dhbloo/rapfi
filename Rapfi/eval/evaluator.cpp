@@ -66,6 +66,14 @@ PolicyBuffer::PolicyBuffer(int boardWidth, int boardHeight)
     std::fill_n(computeFlag, bufferSize, false);
 }
 
+void PolicyBuffer::setComputeFlagForAllCell(const Board &board, bool enabled)
+{
+    FOR_EVERY_POSITION(&board, pos)
+    {
+        setComputeFlag(pos, enabled);
+    }
+}
+
 void PolicyBuffer::setComputeFlagForAllEmptyCell(const Board &board, bool enabled)
 {
     FOR_EVERY_EMPTY_POS(&board, pos)

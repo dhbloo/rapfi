@@ -11,12 +11,13 @@ option(NO_MULTI_THREADING "Disable multi-threading" OFF)
 option(NO_COMMAND_MODULES "Disable command modules" OFF)
 option(NO_PREFETCH "Disable prefetch in search" OFF)
 
-option(USE_ROTR "Enable ROTR instruction" ON)
-option(USE_SSE  "Enable SSE-SSE4.2 instruction" ON)
-option(USE_AVX  "Enable AVX instruction" ON)
+option(USE_SSE  "Enable SSE2/SSSE3/SSE4.1 instruction" ON)
 option(USE_AVX2 "Enable AVX2/FMA instruction" ON)
 option(USE_AVX512 "Enable AVX512 instruction" OFF)
 option(USE_BMI2 "Enable BMI2 instruction" OFF)
+option(USE_VNNI "Enable AVX512_VNNI/AVX_VNNI instruction" OFF)
+option(USE_NEON "Enable NEON instruction" OFF)
+option(USE_NEON_DOTPROD "Enable NEON dotprod instruction" OFF)
 
 option(ENABLE_LTO "Enable link time optimization" OFF)
 option(FORCE_ASSERTION "Enable force assertion for all build type" OFF)
@@ -47,10 +48,9 @@ set(CORE_SOURCES
 
     eval/eval.cpp
     eval/evaluator.cpp
-    eval/mix6nnue.cpp
-    eval/mix7nnue.cpp
     eval/mix8nnue.cpp
-    eval/nnuev2.cpp
+    eval/mix9nnue.cpp
+    eval/mix9litennue.cpp
 
     game/board.cpp
     game/movegen.cpp
@@ -102,12 +102,12 @@ set(HEADERS
 	database/dbutils.h
     database/yxdbstorage.h
 
+    eval/crosscheck.h
     eval/eval.h
     eval/evaluator.h
-    eval/mix6nnue.h
-    eval/mix7nnue.h
     eval/mix8nnue.h
-    eval/nnuev2.h
+    eval/mix9nnue.h
+    eval/mix9litennue.h
     eval/simdops.h
     eval/weightloader.h
 
@@ -157,7 +157,8 @@ if(NOT NO_COMMAND_MODULES)
     add_subdirectory(external/flat.hpp)
     add_subdirectory(external/zip)
     add_subdirectory(external/libnpy)
-    target_link_libraries(rapfi PRIVATE flat.hpp zip libnpy)
+    add_subdirectory(external/thread-pool)
+    target_link_libraries(rapfi PRIVATE flat.hpp zip libnpy BS_thread_pool)
 endif()
 
 #==========================================================
@@ -172,11 +173,10 @@ if(EMSCRIPTEN)
             "Command modules is not supported for wasm build. "
             "Must set option NO_COMMAND_MODULES to ON.")
     endif()
-    set(USE_ROTR OFF)
-    set(USE_AVX OFF)
     set(USE_AVX2 OFF)
     set(USE_AVX512 OFF)
     set(USE_BMI2 OFF)
+    set(USE_VNNI OFF)
 
     target_compile_options(rapfi
         PRIVATE "-fexceptions"
@@ -232,14 +232,8 @@ endif()
 if(NO_PREFETCH)
     target_compile_definitions(rapfi PRIVATE NO_PREFETCH)
 endif()
-if(USE_ROTR)
-    target_compile_definitions(rapfi PRIVATE USE_ROTR)
-endif()
 if(USE_SSE)
     target_compile_definitions(rapfi PRIVATE USE_SSE)
-endif()
-if(USE_AVX)
-    target_compile_definitions(rapfi PRIVATE USE_AVX)
 endif()
 if(USE_AVX2)
     target_compile_definitions(rapfi PRIVATE USE_AVX2)
@@ -249,6 +243,15 @@ if(USE_AVX512)
 endif()
 if(USE_BMI2 OR USE_AVX512)
     target_compile_definitions(rapfi PRIVATE USE_BMI2)
+endif()
+if(USE_VNNI)
+	target_compile_definitions(rapfi PRIVATE USE_VNNI)
+endif()
+if(USE_NEON OR USE_NEON_DOTPROD)
+    target_compile_definitions(rapfi PRIVATE USE_NEON)
+endif()
+if(USE_NEON_DOTPROD)
+	target_compile_definitions(rapfi PRIVATE USE_NEON_DOTPROD)
 endif()
 
 if(ENABLE_LTO)
@@ -262,19 +265,49 @@ if(ENABLE_LTO)
 endif()
 
 if(MSVC)
-    message(STATUS "Setting up build for MSVC.")
-
-    string(REGEX REPLACE "/O2" "/Ox"
-        CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(STATUS "Setting up build for MSVC Clang-CL.")
+        string(REGEX REPLACE "/O2" "/clang:-O3" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+    else()
+        message(STATUS "Setting up build for MSVC.")
+        string(REGEX REPLACE "/O2" "/Ox" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+    endif()
 
 	if(USE_AVX512)
+        # Fix SSE3, SSSE3, SSE4.1, AVX, AVX2, FMA, AVX512F, AVX512DQ, AVX512BW flags on MSVC
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D__SSE3__ /D__SSSE3__ /D__SSE4_1__ /D__AVX__ /D__AVX2__ /D__FMA__ /D__AVX512F__ /D__AVX512DQ__ /D__AVX512BW__")
 	    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX512")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-mavx512f /clang:-mavx512dq /clang:-mavx512bw")
+            if(USE_VNNI)
+                set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D__AVX512VNNI__")
+                set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-mavx512vnni")
+            endif()
+        endif()
     elseif(USE_AVX2)
+        # Fix SSE3, SSSE3, SSE4.1, AVX, AVX2, FMA flags on MSVC
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D__SSE3__ /D__SSSE3__ /D__SSE4_1__ /D__AVX__ /D__AVX2__ /D__FMA__")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
-    elseif(USE_AVX)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-mavx2 /clang:-mfma")
+            if(USE_VNNI)
+                set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-mavxvnni")
+            endif()
+        endif()
     elseif(USE_SSE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /d2archSSE42")
+        # Fix SSE3, SSSE3, SSE4.1 flags on MSVC
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D__SSE3__ /D__SSSE3__ /D__SSE4_1__")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-msse /clang:-msse2 /clang:-msse3 /clang:-mssse3 /clang:-msse4 /clang:-msse4.1")
+        endif()
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        if(USE_NEON_DOTPROD)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-march=armv8.2-a+dotprod")
+	    elseif(USE_NEON)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-march=armv8-a+simd")
+        endif()
     endif()
 
     if(FORCE_ASSERTION)
@@ -298,23 +331,33 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
 
 	if(USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512bw")
+        if(USE_VNNI)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512vnni")
+        endif()
     elseif(USE_AVX2)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
-    elseif(USE_AVX)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
+        if(USE_VNNI)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavxvnni")
+        endif()
     elseif(USE_SSE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse -msse2 -msse3 -mssse3 -msse4 -msse4a -msse4.1 -msse4.2")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse -msse2 -msse3 -mssse3 -msse4 -msse4.1")
     endif()
 
     if(USE_BMI2 OR USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi2")
     endif()
 
+    if(USE_NEON_DOTPROD)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.2-a+dotprod")
+	elseif(USE_NEON)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+simd")
+    endif()
+
     if(FORCE_ASSERTION)
         string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE_UPPER)
         string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE_UPPER}})
     endif()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unused-variable -Wno-unused-function -Wno-missing-braces -Wno-logical-op-parentheses -Wno-parentheses -Wno-sign-compare -Wno-strict-prototypes")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unused-variable -Wno-unused-function -Wno-missing-braces -Wno-logical-op-parentheses -Wno-parentheses -Wno-sign-compare")
 
 	if(USE_ASAN)
 	    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
@@ -323,17 +366,12 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
     if(WIN32)
         if(NO_COMMAND_MODULES)
             target_link_libraries(rapfi PRIVATE -static)
-		else()
-            target_link_libraries(rapfi PRIVATE tbb12)
         endif()
     elseif(NOT EMSCRIPTEN)
         if(NO_MULTI_THREADING AND NO_COMMAND_MODULES)
             target_link_libraries(rapfi PRIVATE -static)
         else()
 		    target_link_libraries(rapfi PRIVATE pthread)
-            if(NOT NO_COMMAND_MODULES)
-                target_link_libraries(rapfi PRIVATE tbb)
-            endif()
         endif()
     endif()
 endif()

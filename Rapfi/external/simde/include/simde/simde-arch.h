@@ -42,6 +42,8 @@
 #if !defined(SIMDE_ARCH_H)
 #define SIMDE_ARCH_H
 
+#include "hedley.h"
+
 /* Alpha
    <https://en.wikipedia.org/wiki/DEC_Alpha> */
 #if defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)
@@ -121,6 +123,15 @@
 #endif
 #if defined(__ARM_FEATURE_SVE)
 #  define SIMDE_ARCH_ARM_SVE
+#endif
+#if defined(__ARM_FEATURE_FMA) && __ARM_FEATURE_FMA
+#  define SIMDE_ARCH_ARM_FMA
+#endif
+#if defined(__ARM_FEATURE_CRYPTO)
+#  define SIMDE_ARCH_ARM_CRYPTO
+#endif
+#if defined(__ARM_FEATURE_QRDMX)
+#  define SIMDE_ARCH_ARM_QRDMX
 #endif
 
 /* Blackfin
@@ -267,7 +278,7 @@
 #    if !defined(SIMDE_ARCH_X86_SSE4_1)
 #      define SIMDE_ARCH_X86_SSE4_1 1
 #    endif
-#    if !defined(SIMDE_ARCH_X86_SSE4_1)
+#    if !defined(SIMDE_ARCH_X86_SSE4_2)
 #      define SIMDE_ARCH_X86_SSE4_2 1
 #    endif
 #  endif
@@ -322,6 +333,9 @@
 #  if defined(__AVX512VL__)
 #    define SIMDE_ARCH_X86_AVX512VL 1
 #  endif
+#  if defined(__AVX512FP16__)
+#    define SIMDE_ARCH_X86_AVX512FP16 1
+#  endif
 #  if defined(__GFNI__)
 #    define SIMDE_ARCH_X86_GFNI 1
 #  endif
@@ -331,8 +345,11 @@
 #  if defined(__VPCLMULQDQ__)
 #    define SIMDE_ARCH_X86_VPCLMULQDQ 1
 #  endif
-#  if defined(__F16C__)
+#  if defined(__F16C__) || (defined(HEDLEY_MSVC_VERSION) && HEDLEY_MSVC_VERSION_CHECK(19,30,0) && defined(SIMDE_ARCH_X86_AVX2) )
 #    define SIMDE_ARCH_X86_F16C 1
+#  endif
+#  if defined(__AES__)
+#    define SIMDE_ARCH_X86_AES 1
 #  endif
 #endif
 
@@ -462,6 +479,10 @@
   #define SIMDE_ARCH_POWER_ALTIVEC_CHECK(version) (0)
 #endif
 
+#if defined(__riscv) && __riscv_xlen==64
+#  define SIMDE_ARCH_RISCV64
+#endif
+
 /* SPARC
    <https://en.wikipedia.org/wiki/SPARC> */
 #if defined(__sparc_v9__) || defined(__sparcv9)
@@ -560,6 +581,10 @@
 #  define SIMDE_ARCH_WASM_SIMD128
 #endif
 
+#if defined(SIMDE_ARCH_WASM) && defined(__wasm_relaxed_simd__)
+#  define SIMDE_ARCH_WASM_RELAXED_SIMD
+#endif
+
 /* Xtensa
    <https://en.wikipedia.org/wiki/> */
 #if defined(__xtensa__) || defined(__XTENSA__)
@@ -569,6 +594,29 @@
 /* Availability of 16-bit floating-point arithmetic intrinsics */
 #if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 #  define SIMDE_ARCH_ARM_NEON_FP16
+#endif
+
+/* Availability of 16-bit brain floating-point arithmetic intrinsics */
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+#  define SIMDE_ARCH_ARM_NEON_BF16
+#endif
+
+/* LoongArch
+   <https://en.wikipedia.org/wiki/Loongson#LoongArch> */
+#if defined(__loongarch32)
+#  define SIMDE_ARCH_LOONGARCH 1
+#elif defined(__loongarch64)
+#  define SIMDE_ARCH_LOONGARCH 2
+#endif
+
+/* LSX: LoongArch 128-bits SIMD extension */
+#if defined(__loongarch_sx)
+#  define SIMDE_ARCH_LOONGARCH_LSX 1
+#endif
+
+/* LASX: LoongArch 256-bits SIMD extension */
+#if defined(__loongarch_asx)
+#  define SIMDE_ARCH_LOONGARCH_LASX 2
 #endif
 
 #endif /* !defined(SIMDE_ARCH_H) */

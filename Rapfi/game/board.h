@@ -377,10 +377,11 @@ inline void Board::setBitKey(Pos pos, Color c)
     int x = pos.x() + BOARD_BOUNDARY;
     int y = pos.y() + BOARD_BOUNDARY;
 
-    bitKey0[y] |= uint64_t(0x1 + c) << (2 * x);
-    bitKey1[x] |= uint64_t(0x1 + c) << (2 * y);
-    bitKey2[x + y] |= uint64_t(0x1 + c) << (2 * x);
-    bitKey3[FULL_BOARD_SIZE - 1 - x + y] |= uint64_t(0x1 + c) << (2 * x);
+    const uint64_t mask = 0x1 + c;
+    bitKey0[y] |= mask << (2 * x);
+    bitKey1[x] |= mask << (2 * y);
+    bitKey2[x + y] |= mask << (2 * x);
+    bitKey3[FULL_BOARD_SIZE - 1 - x + y] |= mask << (2 * x);
 }
 
 /// Flip the color of bitkey of 4 directions at pos.
@@ -396,10 +397,11 @@ inline void Board::flipBitKey(Pos pos, Color c)
     assert(FULL_BOARD_SIZE - 1 - x + y >= 0
            && FULL_BOARD_SIZE - 1 - x + y < 2 * FULL_BOARD_SIZE - 1);
 
-    bitKey0[y] ^= uint64_t(0x1 + c) << (2 * x);
-    bitKey1[x] ^= uint64_t(0x1 + c) << (2 * y);
-    bitKey2[x + y] ^= uint64_t(0x1 + c) << (2 * x);
-    bitKey3[FULL_BOARD_SIZE - 1 - x + y] ^= uint64_t(0x1 + c) << (2 * x);
+    const uint64_t mask = 0x1 + c;
+    bitKey0[y] ^= mask << (2 * x);
+    bitKey1[x] ^= mask << (2 * y);
+    bitKey2[x + y] ^= mask << (2 * x);
+    bitKey3[FULL_BOARD_SIZE - 1 - x + y] ^= mask << (2 * x);
 }
 
 template <Rule R>
@@ -413,10 +415,10 @@ inline uint64_t Board::getKeyAt(Pos pos, int dir) const
 
     switch (dir) {
     default:
-    case 0: return rightShift(bitKey0[y], 2 * (x - L));
-    case 1: return rightShift(bitKey1[x], 2 * (y - L));
-    case 2: return rightShift(bitKey2[x + y], 2 * (x - L));
-    case 3: return rightShift(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - L));
+    case 0: return rotr(bitKey0[y], 2 * (x - L));
+    case 1: return rotr(bitKey1[x], 2 * (y - L));
+    case 2: return rotr(bitKey2[x + y], 2 * (x - L));
+    case 3: return rotr(bitKey3[FULL_BOARD_SIZE - 1 - x + y], 2 * (x - L));
     }
 }
 

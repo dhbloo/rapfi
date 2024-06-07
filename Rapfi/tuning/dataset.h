@@ -136,9 +136,7 @@ private:
 ///         Channel 5: color of side to move (black = -1.0, white = 1.0)
 /// 3. globalTargetsNC, [N, C], float
 ///     Global output targets.
-///         Channel 0: win probability of current side to move
-///         Channel 1: loss probability of current side to move
-///         Channel 2: draw probability
+///         Channel 0-3: win-loss-draw probability of current side to move
 /// 4. policyTargetsNCMove, [N, C, Pos], int16
 ///     Pos dimension length is BoardSize*BoardSize+1, due to the pass input.
 ///         Channel 0: policy target this turn

@@ -1157,6 +1157,7 @@ void swap2board()
 void traceBoard()
 {
     Search::Threads.waitForIdle();
+    Search::Threads.main()->searchOptions = options;
     Search::Threads.updateEvaluator(*board);  // Update evaluator
     Search::Threads.main()->board = std::make_unique<Board>(*board, Search::Threads.main());
 
@@ -1170,6 +1171,7 @@ void traceBoard()
 void traceSearch()
 {
     Search::Threads.waitForIdle();
+    Search::Threads.main()->searchOptions = options;
     Search::Threads.updateEvaluator(*board);  // Update evaluator
     Search::Threads.main()->board = std::make_unique<Board>(*board, Search::Threads.main());
     Board &board                  = *Search::Threads.main()->board;

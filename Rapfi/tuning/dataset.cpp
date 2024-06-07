@@ -33,6 +33,15 @@
 
 namespace {
 
+/// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
+/// constructed with two index x and y using uint16_t move = (x << 5) | y.
+Pos decodeU16Move(uint16_t move)
+{
+    int x = (move >> 5) & 0x1f;
+    int y = move & 0x1f;
+    return Pos {x, y};
+}
+
 /// Unpacks a byte array into bit array (in big-endian).
 /// @param bytes The source of byte array
 /// @param numBits number of bits to unpack
@@ -222,20 +231,13 @@ bool SimpleBinaryDataset::next(DataEntry *entry)
         std::unordered_set<Pos> movedPos;
         movedPos.reserve(MAX_MOVES);
 
-        /// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
-        /// constructed with two index x and y using uint16_t move = (x << 5) | y.
-        const auto coordX = [](uint16_t move) { return (move >> 5) & 0x1f; };
-        const auto coordY = [](uint16_t move) { return move & 0x1f; };
-
         for (uint16_t ply = 0; ply < ehead.ply; ply++) {
-            int x = coordX(position[ply]);
-            int y = coordY(position[ply]);
-            Pos pos {x, y};
-
-            if (x < 0 || y < 0 || x >= ehead.boardsize || y >= ehead.boardsize)
-                throw std::runtime_error("wrong move sequence in dataset ([" + std::to_string(x)
-                                         + "," + std::to_string(y) + "] in boardsize "
-                                         + std::to_string(ehead.boardsize) + ")");
+            Pos pos = decodeU16Move(position[ply]);
+            if (!pos.isInBoard(ehead.boardsize, ehead.boardsize))
+                throw std::runtime_error("wrong move sequence in dataset (["
+                                         + std::to_string(pos.x()) + "," + std::to_string(pos.y())
+                                         + "] in boardsize " + std::to_string(ehead.boardsize)
+                                         + ")");
             else if (movedPos.find(pos) != movedPos.end()) {
                 std::stringstream ss;
                 ss << "duplicate move in sequence ([" << pos << "], current sequence ["
@@ -247,15 +249,11 @@ bool SimpleBinaryDataset::next(DataEntry *entry)
             entry->position.push_back(pos);
         }
 
-        int bestX = coordX(ehead.move);
-        int bestY = coordY(ehead.move);
-        Pos bestMove {bestX, bestY};
-        if (bestX == ehead.boardsize && bestY == ehead.boardsize)
-            ;  // Allow special marked no-bestmove
-        else if (bestX < 0 || bestY < 0 || bestX >= ehead.boardsize || bestY >= ehead.boardsize
-                 || movedPos.find(bestMove) != movedPos.end())
-            throw std::runtime_error("wrong best move in dataset ([" + std::to_string(bestX) + ","
-                                     + std::to_string(bestY) + "] in boardsize "
+        Pos bestMove = decodeU16Move(ehead.move);
+        if (!bestMove.isInBoard(ehead.boardsize, ehead.boardsize)
+            || movedPos.find(bestMove) != movedPos.end())
+            throw std::runtime_error("wrong best move in dataset ([" + std::to_string(bestMove.x())
+                                     + "," + std::to_string(bestMove.y()) + "] in boardsize "
                                      + std::to_string(ehead.boardsize) + ")");
 
         entry->move        = bestMove;
@@ -452,20 +450,13 @@ private:
         // Read position move sequence according the ply in header
         is.read(reinterpret_cast<char *>(&position), ehead.initPly * sizeof(uint16_t));
 
-        /// Each move is represented by a 16bit unsigned integer. It's lower 10 bits are
-        /// constructed with two index x and y using uint16_t move = (x << 5) | y.
-        const auto coordX = [](uint16_t move) { return (move >> 5) & 0x1f; };
-        const auto coordY = [](uint16_t move) { return move & 0x1f; };
-
         for (uint32_t ply = 0; ply < ehead.initPly; ply++) {
-            int x = coordX(position[ply]);
-            int y = coordY(position[ply]);
-            Pos pos {x, y};
-
-            if (x < 0 || y < 0 || x >= entry.boardSize || y >= entry.boardSize)
-                throw std::runtime_error("wrong move sequence in dataset ([" + std::to_string(x)
-                                         + "," + std::to_string(y) + "] in boardsize "
-                                         + std::to_string(entry.boardSize) + ")");
+            Pos pos = decodeU16Move(position[ply]);
+            if (!pos.isInBoard(entry.boardSize, entry.boardSize))
+                throw std::runtime_error("wrong move sequence in dataset (["
+                                         + std::to_string(pos.x()) + "," + std::to_string(pos.y())
+                                         + "] in boardsize " + std::to_string(entry.boardSize)
+                                         + ")");
 
             entry.initPosition.push_back(pos);
         }
@@ -492,12 +483,11 @@ private:
             if (moveData.isPass)
                 pos = Pos::PASS;
             else {
-                int x = coordX(moveData.move);
-                int y = coordY(moveData.move);
-                pos   = Pos {x, y};
-                if (x < 0 || y < 0 || x >= entry.boardSize || y >= entry.boardSize)
-                    throw std::runtime_error("wrong move sequence in dataset ([" + std::to_string(x)
-                                             + "," + std::to_string(y) + "] in boardsize "
+                pos = decodeU16Move(moveData.move);
+                if (!pos.isInBoard(entry.boardSize, entry.boardSize))
+                    throw std::runtime_error("wrong move sequence in dataset (["
+                                             + std::to_string(pos.x()) + ","
+                                             + std::to_string(pos.y()) + "] in boardsize "
                                              + std::to_string(entry.boardSize) + ")");
             }
 

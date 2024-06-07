@@ -205,25 +205,25 @@ Move *findFourDefence(const Board &board, Move *const moveList)
 
         *list++ = f4Pos;
 
-        for (int d = 0; d < 4; d++) {
+        for (int dir = 0; dir < 4; dir++) {
             int i, j;
             Pos pos = f4Pos;
             for (i = 0; i < MaxFindDist; i++) {
-                pos -= DIRECTION[d];
+                pos -= DIRECTION[dir];
 
                 if (const Cell &c = board.cell(pos); c.piece == oppo)
                     continue;
-                else if (c.piece == EMPTY && c.pattern(oppo, d) >= B4)
+                else if (c.piece == EMPTY && c.pattern(oppo, dir) >= B4)
                     *list++ = pos;
                 break;
             }
             pos = f4Pos;
             for (j = MaxFindDist - i; j > 0; j--) {
-                pos += DIRECTION[d];
+                pos += DIRECTION[dir];
 
                 if (const Cell &c = board.cell(pos); c.piece == oppo)
                     continue;
-                else if (c.piece == EMPTY && c.pattern(oppo, d) >= B4)
+                else if (c.piece == EMPTY && c.pattern(oppo, dir) >= B4)
                     *list++ = pos;
                 break;
             }

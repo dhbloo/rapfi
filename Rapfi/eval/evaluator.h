@@ -82,6 +82,7 @@ public:
     PolicyType &operator()(int index) { return policy[index]; }
     PolicyType  operator()(int index) const { return policy[index]; }
     void  setComputeFlag(Pos pos, bool enabled = true) { computeFlag[posToIndex(pos)] = enabled; }
+    void  setComputeFlagForAllCell(const Board &board, bool enabled = true);
     void  setComputeFlagForAllEmptyCell(const Board &board, bool enabled = true);
     void  setComputeFlagForAllCandidateCell(const Board &board, bool enabled = true);
     bool  getComputeFlag(int x, int y) const { return computeFlag[boardWidth * y + x]; }
