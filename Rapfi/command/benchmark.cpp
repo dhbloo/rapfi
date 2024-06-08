@@ -44,20 +44,20 @@ struct BenchEntry
 
 static const std::vector<BenchEntry> benchSet = {
     // Freestyle positions
-    {FREESTYLE, 15, 15, "h8g7f6g8g9"},
-    {FREESTYLE, 15, 16, "h2h5h4f6"},
-    {FREESTYLE, 20, 15, "e2f2h3g3g6h5f9"},
-    {FREESTYLE, 20, 16, "f5e3b7h5g3g4i6e4h4d4f2i5f4f6e5d6d7e7f8"},
+    {FREESTYLE, 15, 17, "h8g7f6g8g9"},
+    {FREESTYLE, 15, 19, "h2h5h4f6"},
+    {FREESTYLE, 20, 17, "e2f2h3g3g6h5f9"},
+    {FREESTYLE, 20, 19, "f5e3b7h5g3g4i6e4h4d4f2i5f4f6e5d6d7e7f8"},
 
     // Standard positions
-    {STANDARD, 15, 15, "h8h7j6i7f7"},
-    {STANDARD, 15, 16, "f6i9h8"},
-    {STANDARD, 15, 16, "b3k10g2f6"},
+    {STANDARD, 15, 17, "h8h7j6i7f7"},
+    {STANDARD, 15, 18, "f6i9h8"},
+    {STANDARD, 15, 19, "b3k10g2f6"},
 
     // Renju positions
-    {RENJU, 15, 15, "h8i9j10i8i7g9"},
-    {RENJU, 15, 16, "h8h9j9j8f8i7g7i9h6e9f6k7l6i10i6f9g9g11h10i11i8"},
-    {RENJU, 15, 16, "h8h9h6i10i6i9g9g8j11i7"},
+    {RENJU, 15, 17, "h8i9j10i8i7g9"},
+    {RENJU, 15, 18, "h8h9j9j8f8i7g7i9h6e9f6k7l6i10i6f9g9g11h10i11i8"},
+    {RENJU, 15, 19, "h8h9h6i10i6i9g9g8j11i7"},
 };
 
 struct EngineState
