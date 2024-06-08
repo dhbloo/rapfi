@@ -36,15 +36,15 @@ constexpr int MAX_PLY   = 256;
 
 constexpr Value MARGIN_INFINITE      = Value(INT16_MAX);
 constexpr Depth ASPIRATION_DEPTH     = 5.0f;
-constexpr Depth IID_DEPTH            = 15.3f;
-constexpr Depth IIR_REDUCTION        = 0.7f;
-constexpr Depth IIR_REDUCTION_PV     = 0.32f;
-constexpr Depth IIR_REDUCTION_TT     = 0.337f;
+constexpr Depth IID_DEPTH            = 14.0f;
+constexpr Depth IIR_REDUCTION        = 0.65f;
+constexpr Depth IIR_REDUCTION_PV     = 0.30f;
+constexpr Depth IIR_REDUCTION_TT     = 0.31f;
 constexpr Depth IIR_REDUCTION_TT_MAX = 3.6f;
-constexpr Depth SE_DEPTH             = 7.2f;
-constexpr Depth SE_TTE_DEPTH         = 1.95f;
-constexpr Depth TRIVIAL_PRUN_DEPTH   = 4.7f;
+constexpr Depth SE_DEPTH             = 7.0f;
+constexpr Depth SE_TTE_DEPTH         = 1.96f;
 constexpr Depth SE_EXTRA_MAX_DEPTH   = 12.0f;
+constexpr Depth TRIVIAL_PRUN_DEPTH   = 4.5f;
 constexpr Depth LMR_EXTRA_MAX_DEPTH  = 5.0f;
 
 // -------------------------------------------------
@@ -62,14 +62,14 @@ constexpr Value nextAspirationWindowDelta(Value prevValue, Value prevDelta = VAL
 template <Rule R>
 constexpr Value razorMargin(Depth d)
 {
-    return d < 2.7f ? Value(std::max(int(0.18f * d * d + 17 * d) + 18, 0)) : MARGIN_INFINITE;
+    return d < 2.6f ? Value(std::max(int(0.18f * d * d + 16 * d) + 18, 0)) : MARGIN_INFINITE;
 }
 
 /// Static futility pruning depth & margins
 template <Rule R>
 constexpr Value futilityMargin(Depth d, bool noTTCutNode, bool improving)
 {
-    constexpr int FutilityScale[RULE_NB] = {63, 69, 73};
+    constexpr int FutilityScale[RULE_NB] = {63, 61, 78};
     return Value(std::max(int((FutilityScale[R] - 13 * noTTCutNode) * (d - improving)), 0));
 }
 
@@ -77,9 +77,12 @@ constexpr Value futilityMargin(Depth d, bool noTTCutNode, bool improving)
 template <Rule R>
 constexpr Value nullMoveMargin(Depth d)
 {
-    constexpr int NMMBias[RULE_NB]  = {585, 484, 573};
-    constexpr int NMMScale[RULE_NB] = {27, 26, 29};
-    return d >= 10 ? Value(NMMBias[R] - std::min(NMMScale[R] * int(d), 315)) : MARGIN_INFINITE;
+    constexpr int NMMDepth[RULE_NB] = {10, 11, 8};
+    constexpr int NMMBias[RULE_NB]  = {585, 538, 652};
+    constexpr int NMMScale[RULE_NB] = {27, 27, 29};
+    constexpr int NMMMax[RULE_NB]   = {315, 345, 242};
+    return d >= NMMDepth[R] ? Value(NMMBias[R] - std::min(NMMScale[R] * int(d), NMMMax[R]))
+                            : MARGIN_INFINITE;
 }
 
 /// Null move search depth reduction. The result of a null move will be
@@ -87,8 +90,8 @@ constexpr Value nullMoveMargin(Depth d)
 template <Rule R>
 constexpr Depth nullMoveReduction(Depth d)
 {
-    constexpr float NMRBias[RULE_NB]  = {3.67f, 3.66f, 4.44f};
-    constexpr float NMRScale[RULE_NB] = {0.135f, 0.134f, 0.157f};
+    constexpr float NMRBias[RULE_NB]  = {3.67f, 4.07f, 4.30f};
+    constexpr float NMRScale[RULE_NB] = {0.135f, 0.134f, 0.174f};
     return NMRBias[R] + NMRScale[R] * d;
 }
 
@@ -96,8 +99,8 @@ constexpr Depth nullMoveReduction(Depth d)
 template <Rule R>
 constexpr Depth iidDepthReduction(Depth d)
 {
-    constexpr Depth IDRBias[RULE_NB]  = {7.6f, 7.9f, 9.1f};
-    constexpr Depth IDRScale[RULE_NB] = {0.67f, 0.57f, 0.64f};
+    constexpr Depth IDRBias[RULE_NB]  = {7.6f, 8.2f, 9.8f};
+    constexpr Depth IDRScale[RULE_NB] = {0.67f, 0.60f, 0.64f};
     return IDRBias[R] + IDRScale[R] * d;
 }
 
@@ -105,17 +108,18 @@ constexpr Depth iidDepthReduction(Depth d)
 template <Rule R>
 constexpr Value failHighMargin(Depth d, int oppo4)
 {
-    constexpr int FHBias[RULE_NB]  = {-10, -12, -8};
-    constexpr int FHScale[RULE_NB] = {18, 16, 16};
-    return Value(FHBias[R] + FHScale[R] * int(d) + 88 * bool(oppo4));
+    constexpr int FHBias[RULE_NB]  = {-10, -12, -9};
+    constexpr int FHScale[RULE_NB] = {18, 15, 14};
+    constexpr int FHOppo4[RULE_NB] = {88, 93, 87};
+    return Value(FHBias[R] + FHScale[R] * int(d) + FHOppo4[R] * bool(oppo4));
 }
 
 /// Fail low reduction margin
 template <Rule R>
 constexpr Value failLowMargin(Depth d)
 {
-    constexpr int FLBias[RULE_NB]  = {89, 82, 104};
-    constexpr int FLScale[RULE_NB] = {58, 54, 43};
+    constexpr int FLBias[RULE_NB]  = {89, 82, 106};
+    constexpr int FLScale[RULE_NB] = {58, 54, 45};
     return Value(FLBias[R] + int(FLScale[R] * d));
 }
 
@@ -123,7 +127,7 @@ constexpr Value failLowMargin(Depth d)
 inline const auto FutilityMC = []() {
     std::array<int, MAX_MOVES + 1> MC {0};  // [depth]
     for (size_t i = 1; i < MC.size(); i++)
-        MC[i] = 3 + int(std::pow(i, 1.33));
+        MC[i] = 3 + int(std::pow(i, 1.32));
     return MC;
 }();
 
@@ -136,27 +140,37 @@ constexpr int futilityMoveCount(Depth d, bool improving)
 }
 
 /// Singular extension margin
+template <Rule R>
 constexpr Value singularMargin(Depth d, bool formerPv)
 {
-    return Value((0.91f + formerPv) * d);
+    constexpr float SEScale[RULE_NB] = {0.91f, 0.86f, 0.95f};
+    return Value((SEScale[R] + formerPv) * d);
 }
 
 /// Depth reduction for singular move test search
 constexpr Depth singularReduction(Depth d, bool formerPv)
 {
-    return d * 0.515f - formerPv;
+    return d * 0.57f - formerPv;
 }
 
 /// Margin for double singular extension
+template <Rule R>
 constexpr Value doubleSEMargin(Depth d)
 {
-    return Value(29 - std::min(int(d * 0.56f), 9));
+    constexpr int   DSEBias[RULE_NB]  = {29, 32, 26};
+    constexpr float DSEScale[RULE_NB] = {0.56f, 0.55f, 0.53f};
+    constexpr int   DSEMax[RULE_NB]   = {9, 8, 9};
+    return Value(DSEBias[R] - std::min(int(d * DSEScale[R]), DSEMax[R]));
 }
 
 /// Delta pruning margin for QVCF search
-constexpr Value qvcfDeltaMargin(Rule rule, Depth d)  // note: d <= 0
+template <Rule R>
+constexpr Value qvcfDeltaMargin(Depth d)  // note: d <= 0
 {
-    return Value(std::max(2086 + 60 * int(d), 768));
+    constexpr int QVCFBias[RULE_NB]  = {2086, 1818, 2163};
+    constexpr int QVCFScale[RULE_NB] = {60, 64, 58};
+
+    return Value(std::max(QVCFBias[R] + QVCFScale[R] * int(d), 768));
 }
 
 /// LMR move count. For non-PV all node, moves that exceeds late move count
@@ -166,8 +180,8 @@ constexpr int lateMoveCount(Depth d, bool improving)
 {
     constexpr float LMC[RULE_NB][2] = {
         {0.82f, 1.48f},
-        {0.91f, 1.06f},
-        {0.66f, 1.45f},
+        {0.83f, 0.89f},
+        {0.70f, 1.65f},
     };
     return 1 + 2 * improving + int(LMC[R][improving] * d);
 }
@@ -177,12 +191,12 @@ template <Rule R>
 constexpr int
 lmrExtension(Depth newDepth, Depth searchedDepth, Value value, Value alpha, Value bestValue)
 {
-    constexpr int LMRExt1Bias[RULE_NB] = {37, 31, 37};
-    constexpr int LMRExt2Bias[RULE_NB] = {349, 344, 258};
+    constexpr int LMRExt1Bias[RULE_NB] = {37, 28, 36};
+    constexpr int LMRExt2Bias[RULE_NB] = {349, 311, 290};
 
-    bool doDeeperSearch = value > (alpha + LMRExt1Bias[R] + Value(12 * (newDepth - searchedDepth)));
+    bool doDeeperSearch = value > (alpha + LMRExt1Bias[R] + Value(11 * (newDepth - searchedDepth)));
     bool doEvenDeeperSearch =
-        value > (alpha + LMRExt2Bias[R] + Value(32 * (newDepth - searchedDepth)));
+        value > (alpha + LMRExt2Bias[R] + Value(29 * (newDepth - searchedDepth)));
     bool doShallowerSearch = value < bestValue + Value(newDepth);
     return doDeeperSearch + doEvenDeeperSearch - doShallowerSearch;
 }
@@ -190,7 +204,7 @@ lmrExtension(Depth newDepth, Depth searchedDepth, Value value, Value alpha, Valu
 /// Init Reductions table according to num threads.
 inline void initReductionLUT(std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB], int numThreads = 1)
 {
-    constexpr double Factor[RULE_NB] = {1.0, 0.97, 0.90};
+    constexpr double Factor[RULE_NB] = {1.0, 0.78, 0.75};
     double           threadBias      = 0.1 * std::log(numThreads);
     for (int r = 0; r < RULE_NB; r++) {
         lut[r][0] = 0.0f;
@@ -202,11 +216,11 @@ inline void initReductionLUT(std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB], i
 /// Basic depth reduction in LMR search
 template <Rule R, bool PvNode>
 constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB],
-                          Depth d,
-                          int   moveCount,
-                          int   improvement,
-                          Value delta,
-                          Value rootDelta)
+                          Depth                                  d,
+                          int                                    moveCount,
+                          int                                    improvement,
+                          Value                                  delta,
+                          Value                                  rootDelta)
 {
     assert(d > 0.0f);
     assert(moveCount > 0 && moveCount < lut[R].size());
@@ -221,9 +235,9 @@ constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB]
 template <Rule R>
 constexpr Depth complexityReduction(bool trivialMove, bool importantMove, bool distract)
 {
-    constexpr Depth CR1[RULE_NB] = {0.0968f, 0.079f, 0.083f};
-    constexpr Depth CR2[RULE_NB] = {0.0385f, 0.026f, 0.032f};
-    constexpr Depth CR3[RULE_NB] = {0.0222f, 0.022f, 0.021f};
+    constexpr Depth CR1[RULE_NB] = {0.0968f, 0.075f, 0.069f};
+    constexpr Depth CR2[RULE_NB] = {0.0385f, 0.024f, 0.029f};
+    constexpr Depth CR3[RULE_NB] = {0.0222f, 0.020f, 0.023f};
     constexpr Depth CR4[RULE_NB] = {0.0055f, 0.007f, 0.007f};
     return (trivialMove ? (distract ? CR1 : CR2) : !importantMove ? CR3 : CR4)[R];
 }
@@ -232,9 +246,9 @@ constexpr Depth complexityReduction(bool trivialMove, bool importantMove, bool d
 template <Rule R>
 constexpr Depth policyReduction(float normalizedPolicyScore)
 {
-    constexpr Depth PolicyReductionScale[RULE_NB] = {3.14f, 3.63f, 3.40f};
-    constexpr Depth PolicyReductionBias[RULE_NB]  = {2.21f, 3.08f, 4.25f};
-    constexpr Depth PolicyReductionMax[RULE_NB]   = {5.00f, 3.77f, 4.84f};
+    constexpr Depth PolicyReductionScale[RULE_NB] = {3.14f, 2.95f, 3.39f};
+    constexpr Depth PolicyReductionBias[RULE_NB]  = {2.21f, 3.81f, 4.40f};
+    constexpr Depth PolicyReductionMax[RULE_NB]   = {5.00f, 3.76f, 5.04f};
 
     Depth r = PolicyReductionBias[R] - PolicyReductionScale[R] * normalizedPolicyScore;
     return std::min(std::max(r, 0.0f), PolicyReductionMax[R]);
@@ -244,8 +258,8 @@ constexpr Depth policyReduction(float normalizedPolicyScore)
 template <Rule R>
 inline int policyPruningScore(Depth d)
 {
-    constexpr int PPBias[RULE_NB]  = {394, 454, 484};
-    constexpr int PPScale[RULE_NB] = {46, 51, 53};
+    constexpr int PPBias[RULE_NB]  = {394, 370, 403};
+    constexpr int PPScale[RULE_NB] = {46, 55, 60};
     return PPBias[R] - int(d * PPScale[R]);
 }
 
@@ -253,7 +267,7 @@ inline int policyPruningScore(Depth d)
 template <Rule R>
 inline int policyReductionScore(Depth d)
 {
-    constexpr int PRBias[RULE_NB] = {489, 506, 581};
+    constexpr int PRBias[RULE_NB] = {489, 535, 520};
     return PRBias[R];
 }
 

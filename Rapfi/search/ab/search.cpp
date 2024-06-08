@@ -1034,7 +1034,7 @@ moves_loop:
                  && ttDepth >= depth - SE_TTE_DEPTH            // ttEntry has enough depth to trust
         ) {
             bool  formerPv     = !PvNode && ss->ttPv;
-            Value singularBeta = std::max(ttValue - singularMargin(depth, formerPv), -VALUE_MATE);
+            Value singularBeta = std::max(ttValue - singularMargin<Rule>(depth, formerPv), -VALUE_MATE);
 
             // Backup current P4
             // Pattern4 moveP4Backup[SIDE_NB] = {ss->moveP4[BLACK], ss->moveP4[WHITE]};
@@ -1056,7 +1056,7 @@ moves_loop:
             // Extend if only the ttMove fails high, while other moves fails low.
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
-                if (!PvNode && value < singularBeta - doubleSEMargin(depth)
+                if (!PvNode && value < singularBeta - doubleSEMargin<Rule>(depth)
                     && ss->extraExtension < SE_EXTRA_MAX_DEPTH)
                     extension = 2.0f;
                 else
@@ -1574,7 +1574,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         alpha = bestValue;
 
     // Step 6. Delta pruning at non-PV node
-    if (!PvNode && bestValue + qvcfDeltaMargin(Rule, depth) < alpha) {
+    if (!PvNode && bestValue + qvcfDeltaMargin<Rule>(depth) < alpha) {
         // Save static evaluation into transposition table
         if (!ttHit)
             TT.store(posKey,
