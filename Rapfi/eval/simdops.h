@@ -823,7 +823,11 @@ namespace detail {
         static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
         {
 #if defined(USE_VNNI)
+    #if !defined(USE_AVX512)
             acc = _mm_dpbusd_avx_epi32(acc, a, b);
+    #else
+            acc = _mm_dpbusd_epi32(acc, a, b);
+    #endif
 #else
             R product0 = simde_mm_maddubs_epi16(a, b);
             product0   = simde_mm_madd_epi16(product0, simde_mm_set1_epi16(1));
@@ -840,8 +844,13 @@ namespace detail {
             R low7 = simde_mm_andnot_si128(highest_bit, a);
 
 #if defined(USE_VNNI)
+    #if !defined(USE_AVX512)
             msb  = _mm_dpbusd_avx_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
             low7 = _mm_dpbusd_avx_epi32(_mm_setzero_si128(), low7, b);
+    #else
+            msb  = _mm_dpbusd_epi32(_mm_setzero_si128(), msb, b);  // 0 or 128
+            low7 = _mm_dpbusd_epi32(_mm_setzero_si128(), low7, b);
+    #endif
 #else
             // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
             msb  = simde_mm_maddubs_epi16(msb, b);  // 0 or 128
@@ -877,7 +886,11 @@ namespace detail {
         static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
         {
 #if defined(USE_VNNI)
+    #if !defined(USE_AVX512)
             acc = _mm256_dpbusd_avx_epi32(acc, a, b);
+    #else
+            acc = _mm256_dpbusd_epi32(acc, a, b);
+    #endif
 #else
             R product0 = simde_mm256_maddubs_epi16(a, b);
             product0   = simde_mm256_madd_epi16(product0, simde_mm256_set1_epi16(1));
@@ -894,8 +907,13 @@ namespace detail {
             R low7 = simde_mm256_andnot_si256(highest_bit, a);
 
 #if defined(USE_VNNI)
+    #if !defined(USE_AVX512)
             msb  = _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
             low7 = _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), low7, b);
+    #else
+            msb  = _mm256_dpbusd_epi32(_mm256_setzero_si256(), msb, b);  // 0 or 128
+            low7 = _mm256_dpbusd_epi32(_mm256_setzero_si256(), low7, b);
+    #endif
 #else
             // Multiply a * b in two parts and accumulate neighbouring outputs into int16 values
             msb  = simde_mm256_maddubs_epi16(msb, b);  // 0 or 128

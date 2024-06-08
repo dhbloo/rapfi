@@ -122,6 +122,34 @@
       ]
     },
     {
+      "name": "x64-Release-AVX512VNNI",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "ENABLE_LTO",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_AVX512",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_VNNI",
+          "value": "True",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
       "name": "x64-Release-ST",
       "generator": "Ninja",
       "configurationType": "Release",
@@ -214,6 +242,29 @@
       "variables": [
         {
           "name": "USE_AVX512",
+          "value": "True",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
+      "name": "x64-Clang-Release-AVX512VNNI",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_x64_x64" ],
+      "variables": [
+        {
+          "name": "USE_AVX512",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_VNNI",
           "value": "True",
           "type": "BOOL"
         }

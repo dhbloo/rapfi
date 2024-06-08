@@ -20,7 +20,7 @@ jobs:
         target:
           - {
               name: linux-gcc,
-              os: ubuntu-20.04,
+              os: ubuntu-22.04,
               c_compiler: gcc,
               cxx_compiler: g++,
               cmake_command: "",
@@ -29,8 +29,8 @@ jobs:
           - {
               name: linux-clang,
               os: ubuntu-20.04,
-              c_compiler: clang,
-              cxx_compiler: clang++,
+              c_compiler: clang-18,
+              cxx_compiler: clang++-18,
               cmake_command: "",
               shell: "bash {0}"
             }
@@ -55,9 +55,11 @@ jobs:
               shell: "msys2 {0}"
             }
         arch:
-          - { name: avx2, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=ON -DUSE_AVX=ON -DUSE_SSE=ON" }
-          - { name: avx, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=OFF -DUSE_AVX=ON -DUSE_SSE=ON" }
-          - { name: sse, cmake_command: "-DUSE_BMI2=OFF -DUSE_AVX2=OFF -DUSE_AVX=OFF -DUSE_SSE=ON" }
+          - { name: sse, cmake_command: "-DUSE_AVX2=OFF" }
+          - { name: avx2, cmake_command: "-DUSE_AVX2=ON" }
+          - { name: avxvnni, cmake_command: "-DUSE_AVX2=ON -DUSE_VNNI=ON" }
+          - { name: avx512, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON" }
+          - { name: avx512vnni, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON -DUSE_VNNI=ON" }
 
     defaults:
       run:
@@ -71,18 +73,20 @@ jobs:
           fetch-depth: 0
           submodules: true
 
-      - name: Download required linux packages
-        if: runner.os == 'Linux'
+      - name: Download latest clang compiler on linux
+        if: matrix.target.name == 'linux-clang'
         run: |
-          sudo apt update
-          sudo apt install -y libtbb-dev
+          wget https://apt.llvm.org/llvm.sh
+          chmod u+x llvm.sh
+          echo | sudo ./llvm.sh 18
+          rm llvm.sh
 
       - name: Setup msys and install required packages
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{matrix.target.msys_sys}}
-          install: mingw-w64-${{matrix.target.msys_env}}-${{matrix.target.c_compiler}} mingw-w64-${{matrix.target.msys_env}}-tbb mingw-w64-${{matrix.target.msys_env}}-cmake make git
+          install: mingw-w64-${{matrix.target.msys_env}}-${{matrix.target.c_compiler}} mingw-w64-${{matrix.target.msys_env}}-cmake make git
 
       - name: Extract the bench hash from the commit history
         run: |

@@ -54,17 +54,13 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
 static Evaluation::WeightRegistry<Mix9LiteWeight> Mix9LiteWeightRegistry;
 
 constexpr int                   Alignment = 16;
-constexpr simd::InstructionType IT512     = getInstTypeOfWidth(simd::NativeInstType, 512);
 constexpr simd::InstructionType IT256     = getInstTypeOfWidth(simd::NativeInstType, 256);
 constexpr simd::InstructionType IT128     = getInstTypeOfWidth(simd::NativeInstType, 128);
 
 template <size_t Size, typename T>
-using Batch = std::conditional_t<
-    simd::detail::VecBatch<Size, T, IT512, true>::NumExtra == 0,
-    simd::detail::VecBatch<Size, T, IT512>,
-    std::conditional_t<simd::detail::VecBatch<Size, T, IT256, true>::NumExtra == 0,
-                       simd::detail::VecBatch<Size, T, IT256>,
-                       simd::detail::VecBatch<Size, T, IT128>>>;
+using Batch = std::conditional_t<simd::detail::VecBatch<Size, T, IT256, true>::NumExtra == 0,
+                                 simd::detail::VecBatch<Size, T, IT256>,
+                                 simd::detail::VecBatch<Size, T, IT128>>;
 
 template <typename FT, typename TT, typename Batch>
 using Convert = simd::detail::VecCvt<FT, TT, Batch::Inst>;

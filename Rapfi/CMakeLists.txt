@@ -332,7 +332,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
 	if(USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512bw")
         if(USE_VNNI)
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512vnni")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512vnni -mavx512vl")
         endif()
     elseif(USE_AVX2)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
