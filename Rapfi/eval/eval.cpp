@@ -14,12 +14,13 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "eval.h"
 
 #include "../game/board.h"
 #include "../search/searchthread.h"
+#include "../tuning/tunemap.h"
 #include "evaluator.h"
 
 #include <algorithm>
@@ -75,16 +76,23 @@ inline Value evaluateBasic(const StateInfo &st, Color self)
     return self == BLACK ? st.valueBlack : -st.valueBlack;
 }
 
+float MarginWinLossScale    = 1.05f;
+float MarginScale           = 342.0f;
+float MarginWinLossExponent = 2.95f;
+
 /// Finds a margin for switching to classical evaluation if
 /// it falls outside alpha-beta window with this margin.
 inline int classicalEvalMargin(Value bound)
 {
-    double winLossRate = 2 * (Config::valueToWinRate(bound) - 0.5);
-    double x           = Config::EvaluatorMarginWinLossScale * winLossRate;
-    double x2          = x * x;
-    return (int)(Config::EvaluatorMarginScale
-                 * std::exp(-std::pow(x2, Config::EvaluatorMarginWinLossExponent)));
+    float winLossRate = 2 * (Config::valueToWinRate(bound) - 0.5f);
+    float x           = MarginWinLossScale * winLossRate;
+    float x2          = x * x;
+    return (int)(MarginScale * std::exp(-std::pow(x2, MarginWinLossExponent)));
 }
+
+TUNE(MarginWinLossScale);
+TUNE(MarginScale);
+TUNE(MarginWinLossExponent);
 
 }  // namespace
 

@@ -404,11 +404,11 @@ void getOption()
     }
     else if (token == "EVALUATOR_DRAW_BLACK_WINRATE") {
         std::cin >> Config::EvaluatorDrawBlackWinRate;
-        Config::EvaluatorDrawBlackWinRate = std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0, 1.0);
+        Config::EvaluatorDrawBlackWinRate = std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
     }
     else if (token == "EVALUATOR_DRAW_RATIO") {
         std::cin >> Config::EvaluatorDrawRatio;
-        Config::EvaluatorDrawRatio = std::clamp(Config::EvaluatorDrawRatio, 0.0, 1.0);
+        Config::EvaluatorDrawRatio = std::clamp(Config::EvaluatorDrawRatio, 0.0f, 1.0f);
     }
     else {
         MESSAGEL("Unknown Info Parameter: " << token);

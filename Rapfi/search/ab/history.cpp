@@ -14,14 +14,34 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "history.h"
 
 #include "../../game/board.h"
+#include "../../tuning/tunemap.h"
 #include "../searchthread.h"
 #include "searcher.h"
 #include "searchstack.h"
+
+namespace {
+
+/// History and stats update bonus, based on depth
+inline int SB_D2  = 37;
+inline int SB_D1  = 141;
+inline int SB_D0  = -157;
+inline int SB_MAX = 10077;
+TUNE(SB_D2);
+TUNE(SB_D1);
+TUNE(SB_D0);
+TUNE(SB_MAX);
+
+inline int statBonus(Depth d)
+{
+    return std::min(static_cast<int>(SB_D2 * d * d + SB_D1 * d + SB_D0), SB_MAX);
+}
+
+}  // namespace
 
 namespace Search::AB {
 

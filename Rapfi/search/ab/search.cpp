@@ -1023,7 +1023,7 @@ moves_loop:
 
         // Singular response extension for opponent B4 attack
         if (oppo5)
-            extension = 1.25f;
+            extension = OPPO5_EXT;
 
         // Singular extension: only one move fails high while other moves fails low on a search of
         // (alpha-s, beta-s), then this move is singular and should be extended.
@@ -1033,8 +1033,9 @@ moves_loop:
                  && (ttBound & BOUND_LOWER)                    // ttMove failed high last time
                  && ttDepth >= depth - SE_TTE_DEPTH            // ttEntry has enough depth to trust
         ) {
-            bool  formerPv     = !PvNode && ss->ttPv;
-            Value singularBeta = std::max(ttValue - singularMargin<Rule>(depth, formerPv), -VALUE_MATE);
+            bool  formerPv = !PvNode && ss->ttPv;
+            Value singularBeta =
+                std::max(ttValue - singularMargin<Rule>(depth, formerPv), -VALUE_MATE);
 
             // Backup current P4
             // Pattern4 moveP4Backup[SIDE_NB] = {ss->moveP4[BLACK], ss->moveP4[WHITE]};
@@ -1067,17 +1068,17 @@ moves_loop:
                 return beta;
             // Reduce if we are likely to fail high.
             else if (ttValue >= beta)
-                extension = -1.67f;
+                extension = -SE_REDUCTION_FH;
         }
 
         // Extension for ttmove without singular extension
         else if (move == ttMove) {
             // Extension for ttmove
-            extension = PvNode ? 0.20f : 0.08f;
+            extension = PvNode ? TTMOVE_EXT_PV : TTMOVE_EXT_NONPV;
 
             // Additional extension for near B4 ttmove
             if (ss->moveP4[self] >= E_BLOCK4 && distSelf <= 6)
-                extension += (distSelf <= 4 ? 0.20f : 0.05f);
+                extension += (distSelf <= 4 ? NEARB4_EXT_DIST4 : NEARB4_EXT_DIST6);
         }
 
         // Fail high reduction
@@ -1137,7 +1138,7 @@ moves_loop:
 
             // Increase reduction for cut nodes if is not killer moves
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
-                r += 1.7f;
+                r += NOKILLER_CUTNODE_REDUCTION;
 
             // Increase reduction for useless defend move (~25 elo)
             if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
@@ -1146,7 +1147,7 @@ moves_loop:
             // Decrease reduction for continous attack
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
                 && (ss->moveP4[self] >= H_FLEX3 || distSelf <= 4 && ss->moveP4[self] >= J_FLEX2_2X))
-                r -= 0.75f;
+                r -= CONTINOUS_ATTACK_EXT;
 
             if constexpr (Rule == Rule::RENJU) {
                 // Decrease reduction for false forbidden move in Renju
@@ -1156,11 +1157,11 @@ moves_loop:
 
             // Update statScore of this node
             ss->statScore = searchData->mainHistory[self][move][HIST_ATTACK]
-                            + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 - 3391;
+                            + searchData->mainHistory[self][move][HIST_QUIET] * 4 / 5 + SS_BIAS;
 
             // Decrease/increase reduction for moves with a good/bad history
             // Use less stat score at higher depths
-            r -= ss->statScore * (1.0f / (12633 + 4055 * (depth > 7)));
+            r -= reductionFromStatScore(ss->statScore, depth);
 
             // Allow LMR to do deeper search in some circumstances
             int deeper = r < -1 && moveCount <= 4 ? 1 : 0;

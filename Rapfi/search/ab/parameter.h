@@ -19,6 +19,7 @@
 #pragma once
 
 #include "../../core/types.h"
+#include "../../tuning/tunemap.h"
 
 #include <array>
 #include <cmath>
@@ -46,6 +47,27 @@ constexpr Depth SE_TTE_DEPTH         = 1.96f;
 constexpr Depth SE_EXTRA_MAX_DEPTH   = 12.0f;
 constexpr Depth TRIVIAL_PRUN_DEPTH   = 4.5f;
 constexpr Depth LMR_EXTRA_MAX_DEPTH  = 5.0f;
+
+inline Depth OPPO5_EXT                  = 1.25f;
+inline Depth SE_REDUCTION_FH            = 1.67f;
+inline Depth TTMOVE_EXT_PV              = 0.20f;
+inline Depth TTMOVE_EXT_NONPV           = 0.08f;
+inline Depth NEARB4_EXT_DIST6           = 0.05f;
+inline Depth NEARB4_EXT_DIST4           = 0.20f;
+inline Depth NOKILLER_CUTNODE_REDUCTION = 1.7f;
+inline Depth CONTINOUS_ATTACK_EXT       = 0.75f;
+
+TUNE(OPPO5_EXT);
+TUNE(SE_REDUCTION_FH);
+TUNE(TTMOVE_EXT_PV);
+TUNE(TTMOVE_EXT_NONPV);
+TUNE(NEARB4_EXT_DIST6);
+TUNE(NEARB4_EXT_DIST4);
+TUNE(NOKILLER_CUTNODE_REDUCTION);
+TUNE(CONTINOUS_ATTACK_EXT);
+
+inline int SS_BIAS = -3391;
+TUNE(SS_BIAS);
 
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
@@ -256,7 +278,7 @@ constexpr Depth policyReduction(float normalizedPolicyScore)
 
 /// Policy pruning score at given depth. Moves lower than this are pruned at low depth.
 template <Rule R>
-inline int policyPruningScore(Depth d)
+constexpr int policyPruningScore(Depth d)
 {
     constexpr int PPBias[RULE_NB]  = {394, 370, 403};
     constexpr int PPScale[RULE_NB] = {46, 55, 60};
@@ -265,10 +287,22 @@ inline int policyPruningScore(Depth d)
 
 /// Policy reduction score at given depth. Moves lower than this will do lmr.
 template <Rule R>
-inline int policyReductionScore(Depth d)
+constexpr int policyReductionScore(Depth d)
 {
     constexpr int PRBias[RULE_NB] = {489, 535, 520};
     return PRBias[R];
+}
+
+inline int   SSR_BIAS        = 12633;
+inline int   SSR_BONUS       = 4055;
+inline Depth SSR_BONUS_DEPTH = 7;
+TUNE(SSR_BIAS);
+TUNE(SSR_BONUS);
+TUNE(SSR_BONUS_DEPTH);
+
+inline Depth reductionFromStatScore(int statScore, Depth depth)
+{
+    return statScore * (1.0f / (SSR_BIAS + SSR_BONUS * (depth > SSR_BONUS_DEPTH)));
 }
 
 }  // namespace Search::AB
