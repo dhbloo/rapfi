@@ -114,15 +114,6 @@ constexpr Value failHighMargin(Depth d, int oppo4)
     return Value(FHBias[R] + FHScale[R] * int(d) + FHOppo4[R] * bool(oppo4));
 }
 
-/// Fail low reduction margin
-template <Rule R>
-constexpr Value failLowMargin(Depth d)
-{
-    constexpr int FLBias[RULE_NB]  = {89, 82, 106};
-    constexpr int FLScale[RULE_NB] = {58, 54, 45};
-    return Value(FLBias[R] + int(FLScale[R] * d));
-}
-
 // Lookup tables used for move count based pruning, initialized at startup
 inline const auto FutilityMC = []() {
     std::array<int, MAX_MOVES + 1> MC {0};  // [depth]

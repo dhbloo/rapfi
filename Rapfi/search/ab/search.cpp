@@ -925,11 +925,6 @@ moves_loop:
     // Indicate cutNode that will probably fail high if current eval is far above beta
     bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin<Rule>(depth, oppo4);
 
-    // Indicate PvNodes that will probably fail low if node was searched with non-PV search
-    // at depth equal or greater to current depth and result of this search was far below alpha
-    bool likelyFailLow = PvNode && ttHit && (ttBound & BOUND_UPPER) && ttDepth >= depth
-                         && ttValue < alpha + failLowMargin<Rule>(depth);
-
     MovePicker mp(Rule,
                   board,
                   MovePicker::ExtraArgs<MovePicker::MAIN> {
@@ -1119,9 +1114,8 @@ moves_loop:
             // Dynamic reduction based on complexity
             r += complexity * complexityReduction<Rule>(trivialMove, importantMove, distract);
 
-            // Decrease reduction if position is or has been on the PV and
-            // the node is not likely to fail low.
-            if (ss->ttPv && !likelyFailLow)
+            // Decrease reduction if position is or has been on the PV
+            if (ss->ttPv)
                 r -= 1.0f;
 
             // Increase reduction for nodes that does not improve root alpha
