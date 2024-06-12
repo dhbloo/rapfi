@@ -18,8 +18,8 @@
 
 #pragma once
 
-#include "../database/dbstorage.h"
 #include "../database/dbclient.h"
+#include "../database/dbstorage.h"
 #include "../eval/evaluator.h"
 #include "../game/board.h"
 #include "searchcommon.h"
@@ -81,13 +81,14 @@ public:
     /// Search entry point. After entering main thread search function, all threads are
     /// waked up by the main thread, then this function is called to start the search.
     virtual void search();
+    /// Return if this thread is the main thread.
+    bool isMainThread() const { return id == 0; }
 
-    template <typename SD>
-    SD *searchDataAs() const
-    {
-        return static_cast<SD *>(searchData.get());
-    }
+    /// Get the search data as a specific type.
+    template <typename SearchDataType>
+    SearchDataType *searchDataAs() const;
 
+    /// Get the shared search options.
     SearchOptions &options() const;
 
     /// Reference to the thread pool that this thread belongs to.
@@ -222,7 +223,13 @@ public:
     ThreadPool();
 };
 
-inline SearchOptions &Search::SearchThread::options() const
+template <typename SearchDataType>
+inline SearchDataType *SearchThread::searchDataAs() const
+{
+    return static_cast<SearchDataType *>(searchData.get());
+}
+
+inline SearchOptions &SearchThread::options() const
 {
     assert(threads.main());
     return threads.main()->searchOptions;

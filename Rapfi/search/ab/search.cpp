@@ -665,7 +665,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     if (!RootNode) {
         // Step 2. Check for aborted search and immediate draw
         // Check if we reach the time limit
-        if (thisThread->id == 0)
+        if (thisThread->isMainThread())
             static_cast<MainSearchThread *>(thisThread)->checkExit();
 
         // Check if the board has been filled or we have reached the max game ply.
@@ -977,7 +977,7 @@ moves_loop:
             curNumNodes = thisThread->numNodes.load(std::memory_order_relaxed);
         }
 
-        if (RootNode && thisThread->id == 0)
+        if (RootNode && thisThread->isMainThread())
             searcher->printer.printEnteringMove(*static_cast<MainSearchThread *>(thisThread),
                                                 timectl,
                                                 searchData->pvIdx,
@@ -1033,8 +1033,9 @@ moves_loop:
                  && (ttBound & BOUND_LOWER)                    // ttMove failed high last time
                  && ttDepth >= depth - SE_TTE_DEPTH            // ttEntry has enough depth to trust
         ) {
-            bool  formerPv     = !PvNode && ss->ttPv;
-            Value singularBeta = std::max(ttValue - singularMargin<Rule>(depth, formerPv), -VALUE_MATE);
+            bool  formerPv = !PvNode && ss->ttPv;
+            Value singularBeta =
+                std::max(ttValue - singularMargin<Rule>(depth, formerPv), -VALUE_MATE);
 
             // Backup current P4
             // Pattern4 moveP4Backup[SIDE_NB] = {ss->moveP4[BLACK], ss->moveP4[WHITE]};
@@ -1210,7 +1211,7 @@ moves_loop:
         // Step 17. Undo move
         board.undo<Rule>();
 
-        if (RootNode && thisThread->id == 0)
+        if (RootNode && thisThread->isMainThread())
             searcher->printer.printLeavingMove(*static_cast<MainSearchThread *>(thisThread),
                                                timectl,
                                                searchData->pvIdx,
@@ -1315,7 +1316,7 @@ moves_loop:
             }
         }
 
-        if (RootNode && thisThread->id == 0)
+        if (RootNode && thisThread->isMainThread())
             searcher->printer.printMoveResult(*static_cast<MainSearchThread *>(thisThread),
                                               timectl,
                                               searchData->pvIdx,
@@ -1485,7 +1486,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
 
     // Step 2. Check for immediate draw and winning
     // Check if we reach the time limit
-    if (thisThread->id == 0)
+    if (thisThread->isMainThread())
         static_cast<MainSearchThread *>(thisThread)->checkExit();
 
     // Check if the board has been filled or we have reached the max game ply.
@@ -1522,10 +1523,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     bool    ttHit   = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
 
     // Check for an early TT cutoff (for all types of nodes)
-    if (ttHit && ttDepth >= depth
-#ifdef EMSCRIPTEN
-        && (!PvNode || thisThread->id != 0)  // Show full PV for wasm build
-#endif
+    if (ttHit && ttDepth >= depth && (!PvNode || !thisThread->isMainThread())  // Show full PV
     ) {
         if (ttBound & BOUND_LOWER)
             alpha = std::max(alpha, ttValue);
