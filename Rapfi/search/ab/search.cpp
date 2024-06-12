@@ -984,7 +984,7 @@ moves_loop:
                                                 searchData->rootDepth,
                                                 move);
 
-        // Initialize various heruistic information
+        // Initialize heruistic information
         ss->moveCount     = ++moveCount;
         ss->moveP4[BLACK] = board.cell(move).pattern4[BLACK];
         ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
@@ -1101,22 +1101,14 @@ moves_loop:
         board.move<Rule>(move);
         TT.prefetch(board.zobristKey());
 
-        bool doFullDepthSearch;
         // Step 15. Late move reduction (LMR). Moves are searched with a reduced
         // depth and will be re-searched at full depth if fail high.
-        if (depth > 2 && moveCount > 1 + 2 * RootNode
-            && (!importantMove  // do LMR for non important move
-                || distract     // do LMR for distract move
-                || cutNode      // do LMR for all moves in cut node
-                || moveCount >= lateMoveCount<Rule>(depth, improvement > 0)  // do LMR for late move
-                || mp.hasPolicyScore()  // do LMR for low policy
-                       && mp.curMoveScore() < policyReductionScore<Rule>(depth))) {
-            Value delta = beta - alpha;
-            Depth r     = reduction<Rule, PvNode>(searcher->reductions,
+        if (depth >= 2 && moveCount > 1 + RootNode) {
+            Depth r = reduction<Rule, PvNode>(searcher->reductions,
                                               depth,
                                               moveCount,
                                               improvement,
-                                              delta,
+                                              beta - alpha,
                                               searchData->rootDelta);
 
             // Policy based reduction
@@ -1164,10 +1156,8 @@ moves_loop:
             r -= ss->statScore * (1.0f / (12633 + 4055 * (depth > 7)));
 
             // Allow LMR to do deeper search in some circumstances
-            int deeper = r < -1 && moveCount <= 4 ? 1 : 0;
-
             // Clamp the LMR depth to newDepth (no depth less than one)
-            Depth d = std::max(std::min(newDepth - r, newDepth + deeper), 1.0f);
+            Depth d = std::max(std::min(newDepth - r, newDepth + 1), 1.0f);
 
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
 
@@ -1179,16 +1169,22 @@ moves_loop:
                 else
                     ss->extraExtension += std::max(ext - 1.0f, 0.0f);
                 newDepth += ext;
-            }
 
-            doFullDepthSearch = (value > alpha && d < newDepth);
+                if (d < newDepth)
+                    value = -search<Rule, NonPV>(board,
+                                                 ss + 1,
+                                                 -(alpha + 1),
+                                                 -alpha,
+                                                 newDepth,
+                                                 !cutNode);
+            }
         }
-        else
-            doFullDepthSearch = !PvNode || moveCount > 1;
 
         // Step 16. Full depth search when LMR is skipped or fails high
-        if (doFullDepthSearch)
+        else if (!PvNode || moveCount > 1) {
+            // If expected reduction is high, we reduce search depth by 1 here
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, newDepth, !cutNode);
+        }
 
         // For balance move mode, we also check if a move can trigger beta cut
         // (which is too good to be balanced), so we can safely discard this move.

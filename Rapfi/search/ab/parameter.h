@@ -173,19 +173,6 @@ constexpr Value qvcfDeltaMargin(Depth d)  // note: d <= 0
     return Value(std::max(QVCFBias[R] + QVCFScale[R] * int(d), 768));
 }
 
-/// LMR move count. For non-PV all node, moves that exceeds late move count
-/// will be searched will late move reduction even without other condition.
-template <Rule R>
-constexpr int lateMoveCount(Depth d, bool improving)
-{
-    constexpr float LMC[RULE_NB][2] = {
-        {0.82f, 1.48f},
-        {0.83f, 0.89f},
-        {0.70f, 1.65f},
-    };
-    return 1 + 2 * improving + int(LMC[R][improving] * d);
-}
-
 /// Extension for full-depth search when reduced LMR search fails high
 template <Rule R>
 constexpr int
@@ -261,14 +248,6 @@ inline int policyPruningScore(Depth d)
     constexpr int PPBias[RULE_NB]  = {394, 370, 403};
     constexpr int PPScale[RULE_NB] = {46, 55, 60};
     return PPBias[R] - int(d * PPScale[R]);
-}
-
-/// Policy reduction score at given depth. Moves lower than this will do lmr.
-template <Rule R>
-inline int policyReductionScore(Depth d)
-{
-    constexpr int PRBias[RULE_NB] = {489, 535, 520};
-    return PRBias[R];
 }
 
 }  // namespace Search::AB
