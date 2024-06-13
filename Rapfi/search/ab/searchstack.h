@@ -92,9 +92,13 @@ public:
         reserve(maxPly + plyBeforeRoot + plyAfterMax);
         for (int i = -plyBeforeRoot; i < maxPly + plyAfterMax; i++)
             push_back(SearchStack {nextTriPvIndex(i), i});
+
         // Initialize static evaluation for plies before root
-        for (int i = 0; i <= plyBeforeRoot; i++)
-            (*this)[i].staticEval = initStaticEval;
+        Value staticEval = initStaticEval;
+        for (int i = plyBeforeRoot; i >= 0; i--) {
+            (*this)[i].staticEval = staticEval;
+            staticEval            = -staticEval;
+        }
     }
     SearchStack *rootStack() { return &(*this)[plyBeforeRoot]; }
 
