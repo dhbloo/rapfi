@@ -657,8 +657,6 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     Value          bestValue = -VALUE_INFINITE, maxValue = VALUE_INFINITE, value;
     Pos            bestMove = Pos::NONE;
     HistoryTracker histTracker(board, ss);
-    (ss + 2)->killers[0] = (ss + 2)->killers[1] = Pos::NONE;  // Reset killer of grand-children
-    ss->statScore                               = 0;          // Reset statScore
 
     // Update selDepth (selDepth counts from 1, ply from 0)
     if (PvNode && thisThread->selDepth <= ss->ply)
@@ -793,8 +791,10 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     }
 
     // Step 6. Static evaluation
-    Value eval        = VALUE_NONE;
-    int   improvement = 0;  // Static eval change in the last two ply
+    Value eval           = VALUE_NONE;
+    int   improvement    = 0;  // Static eval change in the last two ply
+    (ss + 2)->killers[0] = (ss + 2)->killers[1] = Pos::NONE;  // Reset killer of grand-children
+    (ss + 2)->statScore                         = 0;          // Reset statScore of grand-children
 
     if (oppo4) {
         // Use static evaluation from previous ply if opponent makes a four/five attack
@@ -841,7 +841,8 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     // Step 8. Futility pruning: child node (~70 elo)
     if (!PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
         && beta > VALUE_MATED_IN_MAX_PLY         // Confirm non-losing move exists
-        && eval - futilityMargin<Rule>(depth - 1, cutNode && !ttHit, improvement > 0) >= beta
+        && eval - futilityMargin<Rule>(depth - 1, cutNode && !ttHit, improvement > 0)
+               >= beta + (ss - 1)->statScore / 256
         && !((ss - 2)->moveP4[self] >= E_BLOCK4 && (ss - 4)->moveP4[self] >= E_BLOCK4))
         return eval;
 
