@@ -657,6 +657,8 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     Value          bestValue = -VALUE_INFINITE, maxValue = VALUE_INFINITE, value;
     Pos            bestMove = Pos::NONE;
     HistoryTracker histTracker(board, ss);
+    (ss + 2)->killers[0] = (ss + 2)->killers[1] = Pos::NONE;  // Reset killer of grand-children
+    ss->statScore                               = 0;          // Reset statScore
 
     // Update selDepth (selDepth counts from 1, ply from 0)
     if (PvNode && thisThread->selDepth <= ss->ply)
@@ -690,12 +692,6 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         beta  = std::min(mate_in(ss->ply + 1), beta);
         if (alpha >= beta)
             return alpha;
-
-        // Initialize statScore to zero for the grandchildren of the current position.
-        // So statScore is shared between all grandchildren and only the first grandchild
-        // starts with statScore = 0. Later grandchildren start with the last calculated
-        // statScore of the previous grandchild.
-        (ss + 2)->statScore = 0;
     }
     else
         searchData->rootDelta = beta - alpha;
@@ -799,10 +795,6 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     // Step 6. Static evaluation
     Value eval        = VALUE_NONE;
     int   improvement = 0;  // Static eval change in the last two ply
-
-    // Reset killer of grand-children
-    (ss + 2)->killers[0] = Pos::NONE;
-    (ss + 2)->killers[1] = Pos::NONE;
 
     if (oppo4) {
         // Use static evaluation from previous ply if opponent makes a four/five attack
