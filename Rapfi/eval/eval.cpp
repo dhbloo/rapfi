@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "eval.h"
 
@@ -79,11 +79,11 @@ inline Value evaluateBasic(const StateInfo &st, Color self)
 /// it falls outside alpha-beta window with this margin.
 inline int classicalEvalMargin(Value bound)
 {
-    double winLossRate = 2 * (Config::valueToWinRate(bound) - 0.5);
-    double x           = Config::EvaluatorMarginWinLossScale * winLossRate;
-    double x2          = x * x;
+    float winLossRate = 2 * (Config::valueToWinRate(bound) - 0.5f);
+    float x           = Config::EvaluatorMarginWinLossScale * winLossRate;
+    float x2          = x * x;
     return (int)(Config::EvaluatorMarginScale
-                 * std::exp(-std::pow(x2, Config::EvaluatorMarginWinLossExponent)));
+                 * ::expf(-::powf(x2, Config::EvaluatorMarginWinLossExponent)));
 }
 
 }  // namespace

@@ -162,8 +162,8 @@ PlainTextDataWriter::~PlainTextDataWriter() {}
 void PlainTextDataWriter::writeEntry(const DataEntry &entry)
 {
     std::ostream &dst = dataStream->getStream();
-    dst << int(entry.boardsize) << ',' << entry.rule << ',' << MoveSeqText {entry.position} << ','
-        << int(entry.result) << ',' << entry.move;
+    dst << int(entry.boardsize) << ',' << entry.rule << ',' << MovesText {entry.position, false}
+        << ',' << int(entry.result) << ',' << entry.move;
     if (entry.eval != VALUE_NONE)
         dst << '(' << entry.eval << ')';
 

@@ -50,13 +50,13 @@ int outputCoordYConvert(Pos pos, int boardsize);
 // -------------------------------------------------
 // Formatters
 
-struct MoveSeqText
+struct MovesText
 {
     const std::vector<Pos> &moves;
-};
-struct PVText
-{
-    const std::vector<Pos> &moves;
+
+    bool withSpace = true;
+    bool rawCoords = false;
+    int  boardsize = 15;
 };
 
 std::ostream &operator<<(std::ostream &out, Pos pos);
@@ -65,8 +65,7 @@ std::ostream &operator<<(std::ostream &out, Pattern p);
 std::ostream &operator<<(std::ostream &out, Pattern4 p4);
 std::ostream &operator<<(std::ostream &out, Value value);
 std::ostream &operator<<(std::ostream &out, Rule rule);
-std::ostream &operator<<(std::ostream &out, MoveSeqText movesRef);
-std::ostream &operator<<(std::ostream &out, PVText movesRef);
+std::ostream &operator<<(std::ostream &out, MovesText movesRef);
 
 // -------------------------------------------------
 // Compression helper

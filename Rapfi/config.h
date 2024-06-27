@@ -72,7 +72,7 @@ struct Pattern4Score
     Score          scoreSelf() const { return (Score)_scoreSelf; }
     Score          scoreOppo() const { return (Score)_scoreOppo; }
     Pattern4Score &operator=(Pattern4 pattern4) { return _pattern4 = pattern4, *this; }
-                   operator Pattern4() const { return Pattern4(_pattern4); }
+    operator Pattern4() const { return Pattern4(_pattern4); }
 };
 static_assert(sizeof(Pattern4Score) == sizeof(int32_t));
 
@@ -87,22 +87,22 @@ extern const std::string InternalConfig;
 
 // -------------------------------------------------
 // Model configs
-extern double        ScalingFactor;
-extern double        InvScalingFactor;
-extern double        EvaluatorMarginWinLossScale;
-extern double        EvaluatorMarginWinLossExponent;
-extern double        EvaluatorMarginScale;
-extern double        EvaluatorDrawBlackWinRate;
-extern double        EvaluatorDrawRatio;
+extern float         ScalingFactor;
+extern float         InvScalingFactor;
+extern float         EvaluatorMarginWinLossScale;
+extern float         EvaluatorMarginWinLossExponent;
+extern float         EvaluatorMarginScale;
+extern float         EvaluatorDrawBlackWinRate;
+extern float         EvaluatorDrawRatio;
 extern Eval          EVALS[RULE_NB + 1][PCODE_NB];
 extern Eval          EVALS_THREAT[RULE_NB + 1][THREAT_NB];
 extern Pattern4Score P4SCORES[RULE_NB + 1][PCODE_NB];
 
 /// Set a new eval scaling factor. Only use this function to change scaling factor.
-inline void setScalingFactor(double sf)
+inline void setScalingFactor(float sf)
 {
     ScalingFactor    = sf;
-    InvScalingFactor = 1.0 / sf;
+    InvScalingFactor = 1.0f / sf;
 }
 
 // -------------------------------------------------
@@ -201,26 +201,21 @@ inline Pattern4Score getP4Score(Rule R, Color C, PatternCode pcode)
 
 /// Converts a evaluation value to winning rate (in [0, 1]) using current ScalingFactor.
 template <bool Strict = true>
-inline double valueToWinRate(Value eval)
+inline float valueToWinRate(Value eval)
 {
     if (eval >= (Strict ? VALUE_MATE_IN_MAX_PLY : VALUE_EVAL_MAX))
-        return 1.0;
+        return 1.0f;
     if (eval <= (Strict ? VALUE_MATED_IN_MAX_PLY : VALUE_EVAL_MIN))
-        return 0.0;
-    return 1.0 / (1.0 + std::exp(-double(eval) * InvScalingFactor));
+        return 0.0f;
+    return 1.0f / (1.0f + ::expf(-float(eval) * InvScalingFactor));
 }
 
 /// Converts a winning rate in [0, 1] to a evaluation value using current ScalingFactor.
-inline Value winRateToValue(double winRate)
+inline Value winRateToValue(float winRate)
 {
-    if (winRate > 0.999995f)
-        return VALUE_EVAL_MAX;
-    else if (winRate < 0.000005f)
-        return VALUE_EVAL_MIN;
-    else {
-        Value v = Value(ScalingFactor * std::log(winRate / (1.0f - winRate)));
-        return std::clamp(v, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
-    }
+    float valueF32 = ScalingFactor * ::logf(winRate / (1.0f - winRate));
+    valueF32       = std::clamp<float>(valueF32, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+    return Value(valueF32);
 }
 
 // -------------------------------------------------

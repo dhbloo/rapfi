@@ -404,11 +404,11 @@ void getOption()
     }
     else if (token == "EVALUATOR_DRAW_BLACK_WINRATE") {
         std::cin >> Config::EvaluatorDrawBlackWinRate;
-        Config::EvaluatorDrawBlackWinRate = std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0, 1.0);
+        Config::EvaluatorDrawBlackWinRate = std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
     }
     else if (token == "EVALUATOR_DRAW_RATIO") {
         std::cin >> Config::EvaluatorDrawRatio;
-        Config::EvaluatorDrawRatio = std::clamp(Config::EvaluatorDrawRatio, 0.0, 1.0);
+        Config::EvaluatorDrawRatio = std::clamp(Config::EvaluatorDrawRatio, 0.0f, 1.0f);
     }
     else {
         MESSAGEL("Unknown Info Parameter: " << token);
@@ -1182,16 +1182,16 @@ void traceSearch()
     std::vector<Pos>   moveList;
     while (Pos move = movePicker())
         moveList.push_back(move);
-    MESSAGEL("Legal Moves[" << moveList.size() << "]: " << PVText {moveList});
+    MESSAGEL("Legal Moves[" << moveList.size() << "]: " << MovesText {moveList});
 
     Opening::filterSymmetryMoves(board, moveList);
-    MESSAGEL("Root Moves(exclude symmetry)[" << moveList.size() << "]: " << PVText {moveList});
+    MESSAGEL("Root Moves(exclude symmetry)[" << moveList.size() << "]: " << MovesText {moveList});
 
     // Static evaluation (black point of view)
     Value eval    = Evaluation::evaluate(board, options.rule);
     Value evalPOB = board.sideToMove() == BLACK ? eval : -eval;
     MESSAGEL("Static Eval[Black]: " << evalPOB << " (WDL " << std::fixed << std::setprecision(2)
-                                    << (Config::valueToWinRate(evalPOB) * 100.0) << ", SF "
+                                    << (Config::valueToWinRate(evalPOB) * 100.0f) << ", SF "
                                     << std::setprecision(2) << Config::ScalingFactor << ")");
 
     if (board.evaluator()) {

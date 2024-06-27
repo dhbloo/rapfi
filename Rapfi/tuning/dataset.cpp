@@ -241,7 +241,7 @@ bool SimpleBinaryDataset::next(DataEntry *entry)
             else if (movedPos.find(pos) != movedPos.end()) {
                 std::stringstream ss;
                 ss << "duplicate move in sequence ([" << pos << "], current sequence ["
-                   << MoveSeqText {entry->position} << "])";
+                   << MovesText {entry->position, false} << "])";
                 throw std::runtime_error(ss.str());
             }
 
@@ -581,7 +581,7 @@ public:
         Compressor compressor(fileStream, Compressor::Type::ZIP_DEFAULT);
 
         auto openEntryThen = [&](std::string entryName,
-                                 bool (DataSource::*receiver)(std::istream & is)) {
+                                 bool        (DataSource::*receiver)(std::istream &is)) {
             std::istream *is = compressor.openInputStream(entryName);
             if (!is)
                 throw std::runtime_error("unable to open " + entryName + " in file "

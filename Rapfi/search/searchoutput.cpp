@@ -119,23 +119,23 @@ void SearchPrinter::printPvCompletes(MainSearchThread  &th,
             INFO("SPEED", speed);
             INFO("EVAL", curMove.value);
             INFO("WINRATE", Config::valueToWinRate(curMove.value));
-            INFO("BESTLINE", PVText {curMove.pv});
+            INFO("BESTLINE", MovesText {curMove.pv, true, true, th.board->size()});
             INFO("PV", "DONE");
         }
 
         if (numPv > 1 && Config::MessageMode == MsgMode::NORMAL)
             MESSAGEL("(" << pvIdx + 1 << ") " << curMove.value << " | " << rootDepth << "-"
-                         << curMove.selDepth << " | " << PVText {curMove.pv});
+                         << curMove.selDepth << " | " << MovesText {curMove.pv});
         else if (Config::MessageMode == MsgMode::UCILIKE) {
             if (numPv > 1)
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " multipv "
                                   << pvIdx + 1 << " ev " << curMove.value << " n "
                                   << nodesText(nodes) << " n/ms " << speed << " tm " << tc.elapsed()
-                                  << " pv " << PVText {curMove.pv});
+                                  << " pv " << MovesText {curMove.pv});
             else
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " ev " << curMove.value
                                   << " n " << nodesText(nodes) << " n/ms " << speed << " tm "
-                                  << tc.elapsed() << " pv " << PVText {curMove.pv});
+                                  << tc.elapsed() << " pv " << MovesText {curMove.pv});
         }
     }
 
@@ -153,7 +153,7 @@ void SearchPrinter::printDepthCompletes(MainSearchThread &th, const TimeControl 
         MESSAGEL((showPonder ? "[Pondering] " : "")
                  << "Depth " << rootDepth << "-" << th.rootMoves[0].selDepth << " | Eval "
                  << th.rootMoves[0].value << " | Time " << timeText(tc.elapsed()) << " | "
-                 << PVText {th.rootMoves[0].pv});
+                 << MovesText {th.rootMoves[0].pv});
     }
 }
 
@@ -177,9 +177,9 @@ void SearchPrinter::printSearchEnds(MainSearchThread  &th,
             // Select a longer PV for final output
             if (bestThread.rootMoves[0].pv.size() <= 2
                 && bestThread.rootMoves[0].previousPv.size() > 2)
-                MESSAGEL("Bestline " << PVText {bestThread.rootMoves[0].previousPv});
+                MESSAGEL("Bestline " << MovesText {bestThread.rootMoves[0].previousPv});
             else
-                MESSAGEL("Bestline " << PVText {bestThread.rootMoves[0].pv});
+                MESSAGEL("Bestline " << MovesText {bestThread.rootMoves[0].pv});
         }
     }
 }
@@ -193,7 +193,7 @@ void SearchPrinter::printBestmoveWithoutSearch(Pos               bestMove,
     if (Config::MessageMode == MsgMode::UCILIKE) {
         if (pv)
             MESSAGEL("depth " << rootDepth << "-" << 0 << " ev " << moveValue
-                              << " n 0 n/ms 0 tm 0 pv " << PVText {*pv});
+                              << " n 0 n/ms 0 tm 0 pv " << MovesText {*pv});
         else
             MESSAGEL("depth " << rootDepth << "-" << 0 << " ev " << moveValue
                               << " n 0 n/ms 0 tm 0 pv (NONE)");

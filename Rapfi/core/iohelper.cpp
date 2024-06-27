@@ -170,24 +170,17 @@ std::ostream &operator<<(std::ostream &out, Rule rule)
     return out << RuleName[rule];
 }
 
-static void outputMoveSequence(std::ostream &out, const std::vector<Pos> &moves, bool withSpace)
+std::ostream &operator<<(std::ostream &out, MovesText movesRef)
 {
-    for (size_t i = 0; i < moves.size(); i++) {
-        if (withSpace && i)
+    for (size_t i = 0; i < movesRef.moves.size(); i++) {
+        if (movesRef.withSpace && i)
             out << ' ';
-        out << moves[i];
+        if (movesRef.rawCoords)
+            out << outputCoordXConvert(movesRef.moves[i], movesRef.boardsize) << ','
+                << outputCoordYConvert(movesRef.moves[i], movesRef.boardsize);
+        else
+            out << movesRef.moves[i];
     }
-}
-
-std::ostream &operator<<(std::ostream &out, MoveSeqText movesRef)
-{
-    outputMoveSequence(out, movesRef.moves, false);
-    return out;
-}
-
-std::ostream &operator<<(std::ostream &out, PVText movesRef)
-{
-    outputMoveSequence(out, movesRef.moves, true);
     return out;
 }
 
