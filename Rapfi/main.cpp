@@ -27,6 +27,10 @@
 
 #include <stdexcept>
 
+#if defined(_WIN32) && defined(_MSC_VER)
+    #pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
+#endif
+
 int main(int argc, char *argv[])
 {
     Command::CommandLine::init(argc, argv);
