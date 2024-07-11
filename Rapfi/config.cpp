@@ -150,8 +150,8 @@ std::string DatabaseURL;
 /// Database storage factory function
 std::function<std::unique_ptr<::Database::DBStorage>(std::string)> DatabaseMaker;
 /// Database client cache sizes
-size_t DatabaseCacheSize       = 2048;
-size_t DatabaseRecordCacheSize = 16384;
+size_t DatabaseCacheSize       = 4096;
+size_t DatabaseRecordCacheSize = 32768;
 
 // Library import options
 
@@ -169,6 +169,8 @@ bool DatabaseLibIgnoreBoardText = false;
 
 /// Whether to write/update the database in search
 bool DatabaseReadonlyMode = false;
+/// Whether to always write parent node if any of the children are written
+bool DatabaseMandatoryParentWrite = true;
 
 /// Search before this ply is required to query the database
 int DatabaseQueryPly = 3;
@@ -693,8 +695,9 @@ void Config::readDatabase(const cpptoml::table &t)
     }
 
     if (auto s = t.get_table("search")) {
-        DatabaseReadonlyMode               = s->get_as<bool>("readonly_mode").value_or(false);
-        DatabaseQueryPly                   = s->get_as<int>("query_ply").value_or(DatabaseQueryPly);
+        DatabaseReadonlyMode         = s->get_as<bool>("readonly_mode").value_or(false);
+        DatabaseMandatoryParentWrite = s->get_as<bool>("mandatory_parent_write").value_or(true);
+        DatabaseQueryPly             = s->get_as<int>("query_ply").value_or(DatabaseQueryPly);
         DatabaseQueryPVIterPerPlyIncrement = s->get_as<int>("pv_iter_per_ply_increment")
                                                  .value_or(DatabaseQueryPVIterPerPlyIncrement);
         DatabaseQueryNonPVIterPerPlyIncrement =

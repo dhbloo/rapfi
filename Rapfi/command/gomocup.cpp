@@ -832,7 +832,7 @@ void queryDatabaseOne(bool getPosition)
     if (Search::Threads.dbStorage()) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
         DBRecord record;
-        if (dbClient.query(*board, options.rule, record) && !record.isNull())
+        if (dbClient.query(*board, options.rule, record))
             MESSAGEL("DATABASE ONE " << int(record.label) << ' ' << record.value << ' '
                                      << record.depth() << ' ' << int(record.bound()) << ' '
                                      << record.displayLabel());

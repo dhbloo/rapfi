@@ -696,6 +696,9 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         // starts with statScore = 0. Later grandchildren start with the last calculated
         // statScore of the previous grandchild.
         (ss + 2)->statScore = 0;
+
+        // Pass current number of null moves to next ply
+        (ss + 1)->numNullMoves = ss->numNullMoves;
     }
     else
         searchData->rootDelta = beta - alpha;
@@ -860,10 +863,12 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         Depth r         = nullMoveReduction<Rule>(depth);
         ss->currentMove = Pos::PASS;
 
+        (ss + 1)->numNullMoves++;
         board.doPassMove();
         TT.prefetch(board.zobristKey());
         value = -search<Rule, NonPV>(board, ss + 1, -beta, -beta + 1, depth - r, !cutNode);
         board.undoPassMove();
+        (ss + 1)->numNullMoves--;
 
         if (value >= beta) {
             // Do not return unproven mate scores
@@ -912,6 +917,7 @@ moves_loop:
     ABSearcher  *searcher    = static_cast<ABSearcher *>(thisThread->threads.searcher());
     TimeControl &timectl     = searcher->timectl;
     uint64_t     curNumNodes = 0;
+    ss->dbChildWritten       = false;
 
     // Calculate a complexity metric for current position
     uint16_t complexCount = 1;
@@ -1211,8 +1217,18 @@ moves_loop:
         // Step 18. Check for a new best move
         // Finished searching the move. If a stop occurred, the return value of the search cannot
         // be trusted, so we return immediately without updating best move, PV and TT.
-        if (thisThread->threads.isTerminating())
+        if (thisThread->threads.isTerminating()) {
+            if (thisThread->dbClient
+                && !dbHit  // Write when no dbHit, we never overwrite any existing record with null
+                && !Config::DatabaseReadonlyMode  // Never write in database readonly mode
+                && ss->dbChildWritten  // Write anyway if we have children that have already written
+            ) {
+                Database::DBRecord newRecord {Database::LABEL_NULL, 0, 0};
+                thisThread->dbClient->save(board, Rule, newRecord, Config::DatabaseOverwriteRule);
+                (ss - 1)->dbChildWritten = true;
+            }
             return VALUE_NONE;
+        }
         // This move is blocked from database record
         if (value == VALUE_BLOCKED)
             continue;
@@ -1351,7 +1367,11 @@ moves_loop:
 
     // Step 20. Update database record
     Bound bound = bestValue >= beta ? BOUND_LOWER : PvNode && bestMove ? BOUND_EXACT : BOUND_UPPER;
-    if (thisThread->dbClient && !Config::DatabaseReadonlyMode && !skipMove && !options.balanceMode
+    if (thisThread->dbClient
+        && !Config::DatabaseReadonlyMode      // Never write in database readonly mode
+        && !options.balanceMode               // Never write when we are doing balanced search
+        && (!skipMove || ss->dbChildWritten)  // Never write when in singular extension
+        && ss->numNullMoves == 0              // Never write when in null move search
         && !(RootNode && (searchData->pvIdx || options.blockMoves.size()))) {
         bool exact  = PvNode && bound == BOUND_EXACT;
         bool isWin  = bestValue > VALUE_MATE_IN_MAX_PLY && (bound & BOUND_LOWER);
@@ -1382,6 +1402,7 @@ moves_loop:
         }
 
         if (RootNode
+            || ss->dbChildWritten  // Write anyway if we have children that have already written
             || PvNode && ss->ply <= 1 + isLoss
                    && options.multiPV > 1   // Always add new record in multipv
             || ss->ply <= writePly - isWin  // Loss label are recorded one ply less
@@ -1406,8 +1427,15 @@ moves_loop:
 
             // Write if there is no db hit, or the new record satisfy the overwrite rule
             if (!dbHit
-                || Database::checkOverwrite(dbRecord, newRecord, Config::DatabaseOverwriteRule))
-                thisThread->dbClient->save(board, Rule, newRecord, Database::OverwriteRule::Always);
+                || Database::checkOverwrite(dbRecord, newRecord, Config::DatabaseOverwriteRule)) {
+                thisThread->dbClient->save(board,
+                                           Rule,
+                                           newRecord,
+                                           dbHit ? Database::OverwriteRule::Always
+                                                 : Config::DatabaseOverwriteRule);
+                if (Config::DatabaseMandatoryParentWrite)
+                    (ss - 1)->dbChildWritten = true;
+            }
         }
     }
 

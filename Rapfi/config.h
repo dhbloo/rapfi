@@ -157,6 +157,7 @@ extern bool DatabaseLibIgnoreBoardText;
 
 // Database search options
 extern bool                      DatabaseReadonlyMode;
+extern bool                      DatabaseMandatoryParentWrite;
 extern int                       DatabaseQueryPly;
 extern int                       DatabaseQueryPVIterPerPlyIncrement;
 extern int                       DatabaseQueryNonPVIterPerPlyIncrement;

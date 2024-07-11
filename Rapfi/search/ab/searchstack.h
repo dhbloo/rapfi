@@ -42,7 +42,9 @@ struct SearchStack
     Pos        skipMove;
     Pos        killers[2];
     Pattern4   moveP4[SIDE_NB];
+    int16_t    numNullMoves;
     bool       ttPv;
+    bool       dbChildWritten;
 
     /// Append current move and to the end of child PV.
     void updatePv(Pos move)
