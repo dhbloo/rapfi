@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "platform.h"
 
@@ -272,14 +272,18 @@ void *alignedLargePageAllocWindows(size_t size)
 void *alignedLargePageAlloc(size_t size)
 {
 #ifdef _WIN32
+    static bool printedLargePageMessage = false;
+
     // Try to allocate large pages
     void *mem = alignedLargePageAllocWindows(size);
 
     // Fall back to regular, page aligned, allocation if necessary
     if (!mem)
         mem = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    else
-        MESSAGEL("Transposition table: Windows Large-Page memory is used.");
+    else if (!printedLargePageMessage) {
+        MESSAGEL("Windows Large-Page memory is enabled.");
+        printedLargePageMessage = true;
+    }
 
     return mem;
 #else

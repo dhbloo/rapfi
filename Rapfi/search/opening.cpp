@@ -314,8 +314,6 @@ bool OpeningGenerator::next()
     int areaSize = std::uniform_int_distribution<>(config.localSizeMin, config.localSizeMax)(prng);
     int x0       = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
     int y0       = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
-    assert(numMoves > 0);
-    assert(areaSize >= 0);
 
     // Spare two moves for balanced position (if available)
     int numRandomMoves = std::max(numMoves - bool(config.balance1Nodes || config.balance2Nodes), 0);
@@ -354,7 +352,10 @@ bool OpeningGenerator::next()
 void OpeningGenerator::putRandomMoves(int numMoves, CandArea area)
 {
     std::vector<Pos> randomMoves;
-    FOR_EVERY_CANDAREA_POS(&board, pos, area) { randomMoves.push_back(pos); }
+    FOR_EVERY_CANDAREA_POS(&board, pos, area)
+    {
+        randomMoves.push_back(pos);
+    }
 
     std::shuffle(randomMoves.begin(), randomMoves.end(), prng);
 

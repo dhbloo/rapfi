@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "../core/iohelper.h"
 #include "../search/hashtable.h"
@@ -76,6 +76,8 @@ void Command::opengen(int argc, char *argv[])
         ("balance-window",
          "Eval in [-window, window] is considered as balanced",
          cxxopts::value<int>()->default_value(std::to_string(cfg.balanceWindow)))  //
+        ("a,append-to-output",
+         "Append results to the output file without overwritting it")  //
         ("q,no-search-message",
          "Disable message output during balance move search")  //
         ("report-interval",
@@ -93,8 +95,10 @@ void Command::opengen(int argc, char *argv[])
 
         if (args.count("output")) {
             // Open output file and change output stream
-            std::string filename = args["output"].as<std::string>();
-            outfile.open(filename);
+            std::string filename   = args["output"].as<std::string>();
+            bool        appendMode = args.count("append-to-output");
+
+            outfile.open(filename, appendMode ? std::ios::app : std::ios::out);
             if (!outfile.is_open())
                 throw std::invalid_argument("unable to open file " + filename);
             os = &outfile;
