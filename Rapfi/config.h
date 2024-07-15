@@ -88,7 +88,6 @@ extern const std::string InternalConfig;
 // -------------------------------------------------
 // Model configs
 extern float         ScalingFactor;
-extern float         InvScalingFactor;
 extern float         EvaluatorMarginWinLossScale;
 extern float         EvaluatorMarginWinLossExponent;
 extern float         EvaluatorMarginScale;
@@ -97,13 +96,6 @@ extern float         EvaluatorDrawRatio;
 extern Eval          EVALS[RULE_NB + 1][PCODE_NB];
 extern Eval          EVALS_THREAT[RULE_NB + 1][THREAT_NB];
 extern Pattern4Score P4SCORES[RULE_NB + 1][PCODE_NB];
-
-/// Set a new eval scaling factor. Only use this function to change scaling factor.
-inline void setScalingFactor(float sf)
-{
-    ScalingFactor    = sf;
-    InvScalingFactor = 1.0f / sf;
-}
 
 // -------------------------------------------------
 // General options
@@ -208,7 +200,7 @@ inline float valueToWinRate(Value eval)
         return 1.0f;
     if (eval <= (Strict ? VALUE_MATED_IN_MAX_PLY : VALUE_EVAL_MIN))
         return 0.0f;
-    return 1.0f / (1.0f + ::expf(-float(eval) * InvScalingFactor));
+    return 1.0f / (1.0f + ::expf(-float(eval) / ScalingFactor));
 }
 
 /// Converts a winning rate in [0, 1] to a evaluation value using current ScalingFactor.

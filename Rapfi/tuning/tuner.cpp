@@ -433,7 +433,7 @@ void Tuner::run(size_t epochs, std::function<void(TuningStatistic)> callback)
     std::cout << std::setprecision(std::min(std::numeric_limits<Float>::digits10, 7)) << std::fixed;
 
     // Search a new K or use previous K
-    Float K = Config::InvScalingFactor;
+    Float K = Float(1.0) / Config::ScalingFactor;
     if (config.usePreviousScalingFactor) {
         MESSAGEL("Use previous inv scaling factor = " << K);
     }

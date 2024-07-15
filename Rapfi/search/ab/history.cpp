@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "history.h"
 
@@ -22,6 +22,16 @@
 #include "../searchthread.h"
 #include "searcher.h"
 #include "searchstack.h"
+
+namespace {
+
+/// History and stats update bonus, based on depth
+constexpr int statBonus(Depth d)
+{
+    return std::min(static_cast<int>(25 * d * d + 105 * d - 157), 8927);
+}
+
+}  // namespace
 
 namespace Search::AB {
 

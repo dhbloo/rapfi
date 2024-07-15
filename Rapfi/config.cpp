@@ -60,13 +60,12 @@ namespace Config {
 
 /// Scaling Factor is used for conversion between eval value and win rate.
 /// Formula: win rate = sigmoid(eval / ScalingFactor)
-float ScalingFactor;
-float InvScalingFactor;
-float EvaluatorMarginWinLossScale;
-float EvaluatorMarginWinLossExponent;
-float EvaluatorMarginScale;
-float EvaluatorDrawBlackWinRate;
-float EvaluatorDrawRatio;
+float ScalingFactor                  = 200.0f;
+float EvaluatorMarginWinLossScale    = 1.18f;
+float EvaluatorMarginWinLossExponent = 3.07f;
+float EvaluatorMarginScale           = 395.0f;
+float EvaluatorDrawBlackWinRate      = 0.5f;
+float EvaluatorDrawRatio             = 1.0f;
 
 // Classical evaluation and score tables
 // Note that Renju has asymmetry eval and score
@@ -224,11 +223,6 @@ template <typename ValueType,
           ValueType MaxVal    = std::numeric_limits<ValueType>::max(),
           typename SetterType = void(PatternCode, ValueType)>
 void readValueModel(const cpptoml::table &t, SetterType setter);
-
-auto init = []() {
-    setScalingFactor(200.0);  // Default scaling factor
-    return true;
-}();
 
 }  // namespace Config
 
@@ -512,7 +506,7 @@ void Config::readModel(const cpptoml::table &t)
     }
 
     // Read scalingFactor
-    setScalingFactor(t.get_as<double>("scaling_factor").value_or(ScalingFactor));
+    ScalingFactor = (float)t.get_as<double>("scaling_factor").value_or(ScalingFactor);
 
     // Read evaluator
     if (auto evaluator = t.get_table("evaluator"))
@@ -631,13 +625,16 @@ void Config::readEvaluator(const cpptoml::table &t)
     }
 
     // Read classical/evaluator switching margin
-    EvaluatorMarginWinLossScale    = (float)t.get_as<double>("margin_winloss_scale").value_or(1.05);
-    EvaluatorMarginWinLossExponent = (float)t.get_as<double>("margin_winloss_exp").value_or(2.95);
-    EvaluatorMarginScale           = (float)t.get_as<double>("margin_scale").value_or(342);
-    EvaluatorDrawBlackWinRate      = (float)t.get_as<double>("draw_black_winrate").value_or(0.5);
-    EvaluatorDrawRatio             = (float)t.get_as<double>("draw_ratio").value_or(1.0);
-    EvaluatorDrawBlackWinRate      = std::clamp(EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
-    EvaluatorDrawRatio             = std::clamp(EvaluatorDrawRatio, 0.0f, 1.0f);
+    EvaluatorMarginWinLossScale =
+        (float)t.get_as<double>("margin_winloss_scale").value_or(EvaluatorMarginWinLossScale);
+    EvaluatorMarginWinLossExponent =
+        (float)t.get_as<double>("margin_winloss_exp").value_or(EvaluatorMarginWinLossExponent);
+    EvaluatorMarginScale = (float)t.get_as<double>("margin_scale").value_or(EvaluatorMarginScale);
+    EvaluatorDrawBlackWinRate =
+        (float)t.get_as<double>("draw_black_winrate").value_or(EvaluatorDrawBlackWinRate);
+    EvaluatorDrawRatio        = (float)t.get_as<double>("draw_ratio").value_or(EvaluatorDrawRatio);
+    EvaluatorDrawBlackWinRate = std::clamp(EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
+    EvaluatorDrawRatio        = std::clamp(EvaluatorDrawRatio, 0.0f, 1.0f);
 
     MESSAGEL("Evaluator set to " << *evaluatorType << ".");
 }
@@ -900,7 +897,7 @@ bool Config::loadModel(std::istream &inStream)
 
     double scalingFactorF64;
     in->read(reinterpret_cast<char *>(&scalingFactorF64), sizeof(scalingFactorF64));
-    setScalingFactor(scalingFactorF64);
+    ScalingFactor = scalingFactorF64;
 
     in->read(reinterpret_cast<char *>(EVALS), sizeof(EVALS));
     in->read(reinterpret_cast<char *>(EVALS_THREAT), sizeof(EVALS_THREAT));

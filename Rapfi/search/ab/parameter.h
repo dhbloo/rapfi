@@ -19,6 +19,7 @@
 #pragma once
 
 #include "../../core/types.h"
+#include "history.h"
 
 #include <array>
 #include <cmath>
@@ -34,18 +35,33 @@ constexpr int MAX_PLY   = 256;
 // -------------------------------------------------
 // Depth & Value Constants
 
-constexpr Value MARGIN_INFINITE      = Value(INT16_MAX);
-constexpr Depth ASPIRATION_DEPTH     = 5.0f;
-constexpr Depth IID_DEPTH            = 14.0f;
-constexpr Depth IIR_REDUCTION        = 0.65f;
-constexpr Depth IIR_REDUCTION_PV     = 0.30f;
-constexpr Depth IIR_REDUCTION_TT     = 0.31f;
-constexpr Depth IIR_REDUCTION_TT_MAX = 3.6f;
-constexpr Depth SE_DEPTH             = 7.0f;
-constexpr Depth SE_TTE_DEPTH         = 1.96f;
-constexpr Depth SE_EXTRA_MAX_DEPTH   = 12.0f;
-constexpr Depth TRIVIAL_PRUN_DEPTH   = 4.5f;
-constexpr Depth LMR_EXTRA_MAX_DEPTH  = 5.0f;
+// Search Constants
+constexpr Value MARGIN_INFINITE  = Value(INT16_MAX);
+constexpr Depth ASPIRATION_DEPTH = 5.0f;
+constexpr Depth IID_DEPTH        = 14.0f;
+
+// Reductions
+
+constexpr Depth IIR_REDUCTION              = 0.65f;
+constexpr Depth IIR_REDUCTION_PV           = 0.30f;
+constexpr Depth IIR_REDUCTION_TT           = 0.31f;
+constexpr Depth IIR_REDUCTION_TT_MAX       = 3.6f;
+constexpr Depth TRIVIAL_PRUN_DEPTH         = 4.5f;
+constexpr Depth LMR_EXTRA_MAX_DEPTH        = 5.0f;
+constexpr Depth NOKILLER_CUTNODE_REDUCTION = 1.73f;
+
+// Extensions
+
+constexpr Depth OPPO5_EXT             = 1.33f;
+constexpr Depth SE_DEPTH              = 7.0f;
+constexpr Depth SE_TTE_DEPTH          = 1.96f;
+constexpr Depth SE_EXTRA_MAX_DEPTH    = 12.0f;
+constexpr Depth SE_REDUCTION_FH       = 1.57f;
+constexpr Depth TTM_EXT_PV            = 0.24f;
+constexpr Depth TTM_EXT_NONPV         = 0.08f;
+constexpr Depth NEARB4_EXT_DIST4      = 0.23f;
+constexpr Depth NEARB4_EXT_DIST6      = 0.05f;
+constexpr Depth CONTINUOUS_ATTACK_EXT = 0.55f;
 
 // -------------------------------------------------
 // Dynamic margin & reduction functions/LUTs
@@ -234,11 +250,26 @@ constexpr Depth policyReduction(float normalizedPolicyScore)
 
 /// Policy pruning score at given depth. Moves lower than this are pruned at low depth.
 template <Rule R>
-inline int policyPruningScore(Depth d)
+constexpr int policyPruningScore(Depth d)
 {
     constexpr int PPBias[RULE_NB]  = {394, 370, 403};
     constexpr int PPScale[RULE_NB] = {46, 55, 60};
     return PPBias[R] - int(d * PPScale[R]);
+}
+
+/// Compute stat score of current move from history table.
+inline int statScore(const MainHistory &mainHistory, Color stm, Pos move)
+{
+    return mainHistory[stm][move][HIST_ATTACK]           // history attack score
+           + mainHistory[stm][move][HIST_QUIET] * 4 / 5  // history quiet score
+           - 3253;
+}
+
+/// Compute depth extension from statScore of current move.
+constexpr Depth extensionFromStatScore(int statScore, Depth depth)
+{
+    // Use less stat score at higher depths
+    return statScore * (1.0f / (12518 + 4088 * (depth > 5.55f)));
 }
 
 }  // namespace Search::AB

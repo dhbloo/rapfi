@@ -295,7 +295,7 @@ void Command::tuning(int argc, char *argv[])
 
                 // Save params and scaling factor to config
                 tuner.saveParams();
-                Config::setScalingFactor(stat.scalingFactor);
+                Config::ScalingFactor = stat.scalingFactor;
 
                 // Export model file
                 std::string   modelFileName = trainName + "-e" + epochStr + ".bin";
