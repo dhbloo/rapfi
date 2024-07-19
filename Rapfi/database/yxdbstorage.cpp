@@ -331,12 +331,13 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                 numRecordBytes > 2 ? *reinterpret_cast<DBValue *>(&byteBuffer[1]) : DBValue(0),
                 numRecordBytes > 4 ? *reinterpret_cast<DBDepthBound *>(&byteBuffer[3])
                                    : DBDepthBound(0),
-                numRecordBytes > 5
-                    ? (isUTF8 ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                             static_cast<size_t>(numRecordBytes - 5)}
-                              : ACPToUTF8(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                                       static_cast<size_t>(numRecordBytes - 5)}))
-                    : std::string {}}));
+                numRecordBytes > 5 ? (
+                    isUTF8
+                        ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                       static_cast<size_t>(numRecordBytes - 5)}
+                        : LegacyFileCPToUTF8(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                                          static_cast<size_t>(numRecordBytes - 5)}))
+                                   : std::string {}}));
 
     next_record:;
     }

@@ -21,61 +21,56 @@
 #include <filesystem>
 #include <string>
 
-namespace Database {
-class DBStorage;
-}
-
 namespace Command {
 
 namespace CommandLine {
+    /// Path to the binary executable directory.
     extern std::filesystem::path binaryDirectory;
-    void                         init(int argc, char *argv[]);
-    std::filesystem::path        getDefaultConfigPath();
+
+    /// Initialize the command line module with the startup arguments.
+    void init(int argc, char *argv[]);
+
+    /// Get the default config path, which is the "config.toml" under
+    /// the current working directory or the binary executable directory.
+    std::filesystem::path getDefaultConfigPath();
 }  // namespace CommandLine
 
 // -------------------------------------------------
 // Config loading
 
+/// Global path of the config file.
 extern std::filesystem::path configPath;
-extern bool                  allowInternalConfig;
 
-bool                  loadConfig();
+/// Whether to allow fallback to internal config if the specified file is not found.
+extern bool allowInternalConfig;
+
+/// loadConfig() trys to load config according to the following order:
+/// 1. Load from the current config path. If config file exists but fails to load,
+///    it will not continue to load other config.
+/// 2. Try to load from the default config path, which is the "config.toml" in the
+///    current working directory or the binary executable directory.
+/// 3. If the above two steps fail, and allowInternalConfig is true, it will
+///    try to load from the internal config string. Internal config is only available
+///    when the program is built with it.
+bool loadConfig();
+
+/// getModelFullPath() first trys to find the right model from the modelPath.
+/// Model path can be absolute, relative from current working directory or
+/// relative from config file directory.
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath);
-bool                  loadModelFromFile(std::filesystem::path modelPath);
+
+/// loadModelFromFile() trys to load model from modelPath.
+bool loadModelFromFile(std::filesystem::path modelPath);
 
 // -------------------------------------------------
-// Gomocup protocol
+// Command modules entry
 
 void gomocupLoop();
-
-// -------------------------------------------------
-// Benchmark
-
 void benchmark();
-
-// -------------------------------------------------
-// Opening generation
-
 void opengen(int argc, char *argv[]);
-
-// -------------------------------------------------
-// Tuning
-
 void tuning(int argc, char *argv[]);
-
-// -------------------------------------------------
-// Selfplay
-
 void selfplay(int argc, char *argv[]);
-
-// -------------------------------------------------
-// Data preparation
-
 void dataprep(int argc, char *argv[]);
-
-// -------------------------------------------------
-// Database operation
-
 void database(int argc, char *argv[]);
 
 }  // namespace Command

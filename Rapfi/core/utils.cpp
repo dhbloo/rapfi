@@ -18,6 +18,7 @@
 
 #include "utils.h"
 
+#include "../config.h"
 #include "iohelper.h"
 
 #include <algorithm>
@@ -29,9 +30,6 @@
     #endif
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
-    #if !defined(_MSC_VER)
-        #define USE_WINDOWS_CODECVT
-    #endif
 #endif
 
 Time now()
@@ -120,13 +118,64 @@ std::string nodesText(uint64_t nodes)
 
 // -------------------------------------------------
 
-std::string ACPToUTF8(std::string str)
+std::string LegacyFileCPToUTF8(std::string str)
 {
 #if defined(_WIN32)
     if (str.empty())
         return {};
 
-    int nCodePage = GetACP();
+    int nCodePage = Config::DatabaseLegacyFileCodePage;
+    // Use system's active code page if not specified
+    if (nCodePage == 0)
+        nCodePage = GetACP();
+    int wideSize = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
+    if (!wideSize)
+        return {};  // error
+
+    std::wstring wstr(wideSize + 1, '\0');
+    if (!MultiByteToWideChar(nCodePage,
+                             0,
+                             str.c_str(),
+                             (int)str.length(),
+                             wstr.data(),
+                             (int)wstr.size()))
+        return {};  // error
+
+    int utf8Size = WideCharToMultiByte(CP_UTF8,
+                                       0,
+                                       wstr.c_str(),
+                                       (int)wstr.length(),
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       nullptr);
+    if (!utf8Size)
+        return {};  // error
+
+    std::string utf8str(utf8Size, '\0');
+    if (!WideCharToMultiByte(CP_UTF8,
+                             0,
+                             wstr.c_str(),
+                             (int)wstr.length(),
+                             utf8str.data(),
+                             (int)utf8str.size(),
+                             nullptr,
+                             nullptr))
+        return {};  // error
+
+    return utf8str;
+#else
+    return str;
+#endif
+}
+
+std::string ConsoleCPToUTF8(std::string str)
+{
+#if defined(_WIN32)
+    if (str.empty())
+        return {};
+
+    int nCodePage = GetConsoleCP();
     int wideSize  = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
     if (!wideSize)
         return {};  // error
@@ -168,13 +217,13 @@ std::string ACPToUTF8(std::string str)
 #endif
 }
 
-std::string UTF8ToACP(std::string utf8str)
+std::string UTF8ToConsoleCP(std::string utf8str)
 {
 #if defined(_WIN32)
     if (utf8str.empty())
         return {};
 
-    int nCodePage = GetACP();
+    int nCodePage = GetConsoleOutputCP();
     int wideSize =
         MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), (int)utf8str.length(), nullptr, 0);
     if (!wideSize)
@@ -219,11 +268,11 @@ std::string UTF8ToACP(std::string utf8str)
 
 // -------------------------------------------------
 
-std::filesystem::path pathFromString(const std::string &path)
+std::filesystem::path pathFromConsoleString(const std::string &path)
 {
-#ifdef USE_WINDOWS_CODECVT
+#if defined(_WIN32)
     // Use windows string conversion api due to mingw64 limitations.
-    int nCodePage = GetACP();
+    int nCodePage = GetConsoleCP();
     int convertResult =
         MultiByteToWideChar(nCodePage, 0, path.c_str(), (int)path.length(), nullptr, 0);
 
@@ -247,13 +296,13 @@ std::filesystem::path pathFromString(const std::string &path)
 #endif
 }
 
-std::string pathToString(const std::filesystem::path &path)
+std::string pathToConsoleString(const std::filesystem::path &path)
 {
-#ifdef USE_WINDOWS_CODECVT
+#if defined(_WIN32)
     std::wstring widePath = path.wstring();
 
     // Use windows string conversion api due to mingw64 limitations.
-    int nCodePage     = GetACP();
+    int nCodePage     = GetConsoleOutputCP();
     int convertResult = WideCharToMultiByte(nCodePage,
                                             0,
                                             widePath.c_str(),
@@ -297,9 +346,9 @@ std::vector<std::string> listAllFilesInDirRecursively(const std::string         
     };
 
     std::vector<std::string> filenames;
-    for (auto &p : std::filesystem::recursive_directory_iterator(pathFromString(dirpath))) {
+    for (auto &p : std::filesystem::recursive_directory_iterator(pathFromConsoleString(dirpath))) {
         if (p.is_regular_file() && inExts(p.path().extension()))
-            filenames.push_back(pathToString(p.path()));
+            filenames.push_back(pathToConsoleString(p.path()));
     }
     return filenames;
 }
@@ -309,7 +358,7 @@ std::vector<std::string> makeFileListFromPathList(const std::vector<std::string>
 {
     std::vector<std::string> filenames;
     for (const auto &path : paths) {
-        if (std::filesystem::is_directory(pathFromString(path))) {
+        if (std::filesystem::is_directory(pathFromConsoleString(path))) {
             auto fn = listAllFilesInDirRecursively(path, extensions);
             filenames.insert(filenames.end(), fn.begin(), fn.end());
         }
@@ -322,7 +371,7 @@ std::vector<std::string> makeFileListFromPathList(const std::vector<std::string>
 
 bool ensureDir(std::string dirpath, bool raiseException)
 {
-    std::filesystem::path path = pathFromString(dirpath);
+    std::filesystem::path path = pathFromConsoleString(dirpath);
     std::error_code       ec;
     if (std::filesystem::exists(path, ec))
         return true;

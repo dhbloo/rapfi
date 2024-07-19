@@ -76,7 +76,7 @@ std::unique_ptr<DBStorage> createDBStorage(const cxxopts::ParseResult &args)
 
     if (databaseType == "yixindb") {
         auto yxdbStorage =
-            std::make_unique<YXDBStorage>(pathFromString(databaseURL),
+            std::make_unique<YXDBStorage>(pathFromConsoleString(databaseURL),
                                           args["yixindb-compressed-save"].as<bool>(),
                                           args["yixindb-save-on-close"].as<bool>(),
                                           args["yixindb-backup-on-save"].as<bool>(),
@@ -210,7 +210,7 @@ DBRecord parseDBRecord(std::istream &is, const DBRecord &defaultRecordValue)
             record.setDepthBound(record.depth(), bound);
         }
         else if (recordPartKey == "text")
-            record.text = ACPToUTF8(recordPartValue);
+            record.text = ConsoleCPToUTF8(recordPartValue);
         else
             throw std::invalid_argument("unknown record name " + recordPartKey);
     }
@@ -240,7 +240,7 @@ void printDBQuery(std::ostream &os, DBStorage &dbStorage, const DBKey &dbKey)
         case BOUND_UPPER: os << "upper"; break;
         default: os << "none"; break;
         }
-        os << " text " << std::quoted(UTF8ToACP(dbRecord.text)) << std::endl;
+        os << " text " << std::quoted(UTF8ToConsoleCP(dbRecord.text)) << std::endl;
     }
     else
         os << "(null)" << std::endl;

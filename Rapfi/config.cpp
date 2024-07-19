@@ -142,11 +142,14 @@ float BestmoveStablePrevReductionPow = 0.528f;
 
 /// Whether to enable database by default
 bool DatabaseDefaultEnabled;
+/// Legacy code page to use for early database files and imported library files.
+uint16_t DatabaseLegacyFileCodePage;
 /// The type of database storage
 std::string DatabaseType;
-/// The URL of database storage
+/// The URL of database storage (in utf-8 encoding)
 std::string DatabaseURL;
-/// Database storage factory function
+/// Database storage factory, which takes the url (in utf-8 encoding)
+/// and returns a unique pointer to an instance of DBStorage.
 std::function<std::unique_ptr<::Database::DBStorage>(std::string)> DatabaseMaker;
 /// Database client cache sizes
 size_t DatabaseCacheSize       = 4096;
@@ -525,8 +528,10 @@ void Config::readEvaluator(const cpptoml::table &t)
                 try {
                     for (auto weightCfg : *weights) {
                         std::filesystem::path weightPath;
-                        if (auto weightFile = weightCfg->get_as<std::string>("weight_file"))
-                            weightPath = Command::getModelFullPath(*weightFile);
+                        if (auto weightFile = weightCfg->get_as<std::string>("weight_file")) {
+                            weightPath = std::filesystem::u8path(*weightFile);
+                            weightPath = Command::getModelFullPath(weightPath);
+                        }
                         else if (!ignoreNoWeightFile)
                             throw std::runtime_error("must specify weight_file in weight configs.");
 
@@ -559,8 +564,11 @@ void Config::readEvaluator(const cpptoml::table &t)
             if (!weightFileBlack || !weightFileWhite)
                 throw std::runtime_error("must specify weight_file_black and "
                                          "weight_file_white in weight configs.");
-            blackWeightPath = Command::getModelFullPath(*weightFileBlack);
-            whiteWeightPath = Command::getModelFullPath(*weightFileWhite);
+
+            blackWeightPath = std::filesystem::u8path(*weightFileBlack);
+            whiteWeightPath = std::filesystem::u8path(*weightFileWhite);
+            blackWeightPath = Command::getModelFullPath(blackWeightPath);
+            whiteWeightPath = Command::getModelFullPath(whiteWeightPath);
         }
         else {
             blackWeightPath = weightPath;
@@ -640,12 +648,14 @@ void Config::readEvaluator(const cpptoml::table &t)
 /// Read database table in the config.
 void Config::readDatabase(const cpptoml::table &t)
 {
-    DatabaseDefaultEnabled = t.get_as<bool>("enable_by_default").value_or(false);
-    DatabaseType           = t.get_as<std::string>("type").value_or("");
-    DatabaseURL            = t.get_as<std::string>("url").value_or("");
+    DatabaseDefaultEnabled = t.get_as<bool>("enable_by_default").value_or(DatabaseDefaultEnabled);
+    DatabaseType           = t.get_as<std::string>("type").value_or(DatabaseType);
+    DatabaseURL            = t.get_as<std::string>("url").value_or(DatabaseURL);
     DatabaseCacheSize      = t.get_as<size_t>("cache_size").value_or(DatabaseCacheSize);
     DatabaseRecordCacheSize =
         t.get_as<size_t>("record_cache_size").value_or(DatabaseRecordCacheSize);
+    DatabaseLegacyFileCodePage =
+        t.get_as<int>("legacy_file_code_page").value_or(DatabaseLegacyFileCodePage);
     DatabaseMaker = nullptr;
 
     if (DatabaseType == "yixindb") {
@@ -663,12 +673,12 @@ void Config::readDatabase(const cpptoml::table &t)
             ignoreCorrupted  = args->get_as<bool>("ignore_corrupted").value_or(ignoreCorrupted);
         }
 
-        DatabaseMaker = [=](std::string path) -> std::unique_ptr<::Database::DBStorage> {
+        DatabaseMaker = [=](std::string utf8URL) -> std::unique_ptr<::Database::DBStorage> {
             try {
-                auto dbPath    = pathFromString(path);
+                auto dbPath    = std::filesystem::u8path(utf8URL);
                 bool existing  = std::filesystem::exists(dbPath);
                 auto startTime = now();
-                MESSAGEL("Opening yixin database at " << pathToString(dbPath) << " ...");
+                MESSAGEL("Opening yixin database at " << pathToConsoleString(dbPath) << " ...");
                 auto dbStorage = std::make_unique<::Database::YXDBStorage>(dbPath,
                                                                            compressedSave,
                                                                            saveOnClose,
@@ -937,7 +947,7 @@ void Config::exportModel(std::ostream &outStream)
     }
 }
 
-std::unique_ptr<::Database::DBStorage> Config::createDefaultDBStorage(std::string url)
+std::unique_ptr<::Database::DBStorage> Config::createDefaultDBStorage(std::string utf8URL)
 {
-    return DatabaseMaker ? DatabaseMaker(url.empty() ? DatabaseURL : url) : nullptr;
+    return DatabaseMaker ? DatabaseMaker(utf8URL.empty() ? DatabaseURL : utf8URL) : nullptr;
 }

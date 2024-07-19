@@ -383,14 +383,14 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     b.undo(rule);
                     {
                         DBClient dbClient(dbDst, RECORD_MASK_TEXT);
-                        dbClient.setBoardText(b, rule, lastMove, ACPToUTF8(t));
+                        dbClient.setBoardText(b, rule, lastMove, LegacyFileCPToUTF8(t));
                     }
                     b.move(rule, lastMove);
                 }
             }
 
             if (comment && !Config::DatabaseLibIgnoreComment) {
-                std::string newCmt = ACPToUTF8(*comment);
+                std::string newCmt = LegacyFileCPToUTF8(*comment);
                 replaceAll(newCmt, "\r\n", "\n");
 
                 if (hasOldRecord) {

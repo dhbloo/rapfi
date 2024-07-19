@@ -134,6 +134,7 @@ extern float BestmoveStablePrevReductionPow;
 // -------------------------------------------------
 // Database options
 extern bool        DatabaseDefaultEnabled;
+extern uint16_t    DatabaseLegacyFileCodePage;
 extern std::string DatabaseType;
 extern std::string DatabaseURL;
 extern size_t      DatabaseCacheSize;

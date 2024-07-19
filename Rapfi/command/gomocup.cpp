@@ -57,7 +57,7 @@ std::filesystem::path readPathFromInput(std::istream &in = std::cin)
     std::getline(in, path);
     trimInplace(path);
 
-    return pathFromString(path);
+    return pathFromConsoleString(path);
 }
 
 }  // namespace
@@ -435,10 +435,10 @@ void dumpHash()
     std::ofstream hashout(path, std::ios_base::binary);
     if (hashout.is_open()) {
         Search::TT.dump(hashout);
-        MESSAGEL("Transposition table dumped: " << pathToString(path));
+        MESSAGEL("Transposition table dumped: " << pathToConsoleString(path));
     }
     else
-        MESSAGEL("Failed to open file: " << pathToString(path));
+        MESSAGEL("Failed to open file: " << pathToConsoleString(path));
 }
 
 void loadHash()
@@ -446,7 +446,7 @@ void loadHash()
     auto          path = readPathFromInput();
     std::ifstream hashin(path, std::ios_base::binary);
     if (hashin.is_open() && Search::TT.load(hashin))
-        MESSAGEL("Transposition table loaded successfully from " << pathToString(path));
+        MESSAGEL("Transposition table loaded successfully from " << pathToConsoleString(path));
     else
         MESSAGEL("Transposition table loaded failed, "
                  "please check if the file is correct.");
@@ -465,9 +465,9 @@ void reloadConfig()
 
 void setDatabase()
 {
-    auto databaseURL = readPathFromInput();
-    if (!databaseURL.empty() && !Config::DatabaseType.empty()) {
-        Config::DatabaseURL     = pathToString(databaseURL);
+    auto databasePath = readPathFromInput();
+    if (!databasePath.empty() && !Config::DatabaseType.empty()) {
+        Config::DatabaseURL     = databasePath.u8string();
         auto newDatabaseStorage = Config::createDefaultDBStorage();
         if (newDatabaseStorage)
             Search::Threads.setupDatabase(std::move(newDatabaseStorage));
@@ -497,7 +497,7 @@ void databaseToTxt(bool currentBoardSizeAndRule)
             };
         ::Database::databaseToCSVFile(*Search::Threads.dbStorage(), txtout, filter);
         MESSAGEL("Wrote " << (currentBoardSizeAndRule ? "(current boardsize and rule)" : "(all)")
-                          << " database to csv-format text file " << pathToString(txtPath));
+                          << " database to csv-format text file " << pathToConsoleString(txtPath));
     }
 }
 
@@ -505,7 +505,7 @@ void libToDatabase()
 {
     auto libPath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        MESSAGEL("Importing from lib file " << pathToString(libPath)
+        MESSAGEL("Importing from lib file " << pathToConsoleString(libPath)
                                             << ", this might take a while...");
         auto          startTime = now();
         std::ifstream libStream(libPath, std::ios::binary);
@@ -809,7 +809,7 @@ void queryDatabaseAll(bool getPosition)
                                  << displayLabelValue << ' ' << record.value << ' '
                                  << record.depth() << ' ' << int(record.bound()) << ' '
                                  << int(!record.comment().empty()) << ' '
-                                 << UTF8ToACP(boardTextUTF8));
+                                 << UTF8ToConsoleCP(boardTextUTF8));
         }
 
         MESSAGEL("DATABASE DONE");
@@ -851,7 +851,7 @@ void queryDatabaseText(bool getPosition)
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
         DBRecord record;
         if (dbClient.query(*board, options.rule, record) && !record.isNull())
-            MESSAGEL("DATABASE TEXT " << std::quoted(UTF8ToACP(record.comment())));
+            MESSAGEL("DATABASE TEXT " << std::quoted(UTF8ToConsoleCP(record.comment())));
         else
             MESSAGEL("DATABASE TEXT \"\"");
     }
@@ -894,7 +894,7 @@ void editDatabaseText()
         DBRecord record;
         if (!dbClient.query(*board, options.rule, record))
             record = DBRecord {LABEL_NONE};
-        std::string newTextUTF8 = ACPToUTF8(trimInplace(newText));
+        std::string newTextUTF8 = ConsoleCPToUTF8(trimInplace(newText));
         record.setComment(newTextUTF8);
         dbClient.save(*board, options.rule, record, OverwriteRule::Always);
     }
@@ -927,7 +927,7 @@ void editDatabaseBoardLabel()
 
     if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         DBClient    dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
-        std::string newTextUTF8 = ACPToUTF8(trimInplace(newText));
+        std::string newTextUTF8 = ConsoleCPToUTF8(trimInplace(newText));
         dbClient.setBoardText(*board, options.rule, pos, newTextUTF8);
     }
 }
@@ -1091,9 +1091,9 @@ void searchDefend()
 
 void splitDatabase()
 {
-    auto databaseURL = readPathFromInput();
+    auto databasePath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToSplit = Config::createDefaultDBStorage(pathToString(databaseURL))) {
+        if (auto dbToSplit = Config::createDefaultDBStorage(databasePath.u8string())) {
             auto   startTime  = now();
             size_t writeCount = ::Database::splitDatabase(*Search::Threads.dbStorage(),
                                                           *dbToSplit,
@@ -1108,9 +1108,9 @@ void splitDatabase()
 
 void mergeDatabase()
 {
-    auto databaseURL = readPathFromInput();
+    auto databasePath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToMerge = Config::createDefaultDBStorage(pathToString(databaseURL))) {
+        if (auto dbToMerge = Config::createDefaultDBStorage(databasePath.u8string())) {
             size_t writeCount = mergeDatabase(*Search::Threads.dbStorage(),
                                               *dbToMerge,
                                               Config::DatabaseOverwriteRule);
@@ -1357,7 +1357,6 @@ void Command::gomocupLoop()
     // If there is any thread still running, wait until they exited.
     Search::Threads.waitForIdle();
 }
-
 
 #ifdef __EMSCRIPTEN__
     #include <emscripten.h>

@@ -27,6 +27,10 @@
 
 #include <stdexcept>
 
+#ifdef _WIN32
+    #include <Windows.h>
+#endif
+
 int main(int argc, char *argv[])
 {
     Command::CommandLine::init(argc, argv);
@@ -52,6 +56,8 @@ int main(int argc, char *argv[])
             ("config",
              "Path to the specified config file",
              cxxopts::value<std::string>())  //
+            ("force-utf8",
+             "Force to use utf-8 encoding for stdin and stdout (for Windows)")  //
             ("h,help", "Print usage");
         options.parse_positional("mode");
         options.positional_help("[mode]");
@@ -89,6 +95,13 @@ int main(int argc, char *argv[])
                 Command::configPath          = result["config"].as<std::string>();
                 Command::allowInternalConfig = false;
             }
+
+    #ifdef _WIN32
+            if (result.count("force-utf8")) {
+                SetConsoleCP(CP_UTF8);
+                SetConsoleOutputCP(CP_UTF8);
+            }
+    #endif
         }
         catch (const std::exception &e) {
             ERRORL("parsing argument: " << e.what());

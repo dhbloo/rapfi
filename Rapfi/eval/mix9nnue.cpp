@@ -838,7 +838,7 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
             throw UnsupportedBoardSizeError(boardSize);
 
         if (Config::MessageMode != MsgMode::NONE)
-            MESSAGEL("mix9nnue: load weight from " << currentWeightPath);
+            MESSAGEL("mix9nnue: load weight from " << pathToConsoleString(currentWeightPath));
         return true;
     });
 
@@ -849,7 +849,8 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
         currentWeightPath  = weightPath;
         weight[weightSide] = Mix9WeightRegistry.loadWeightFromFile(weightPath, loader);
         if (!weight[weightSide])
-            throw std::runtime_error("failed to load nnue weight from " + weightPath.string());
+            throw std::runtime_error("failed to load nnue weight from "
+                                     + pathToConsoleString(weightPath));
     }
 
     accumulator[BLACK] = std::make_unique<Mix9Accumulator>(boardSize);

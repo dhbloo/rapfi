@@ -154,20 +154,23 @@ private:
 // -------------------------------------------------
 // String encoding conversion
 
-/// Convert a string's encoding from active code page to utf-8.
-std::string ACPToUTF8(std::string str);
+/// Convert a string from the config's legacy file codepage to utf-8 encoding.
+std::string LegacyFileCPToUTF8(std::string str);
 
-/// Convert a string's encoding from utf-8 to active code page.
-std::string UTF8ToACP(std::string utf8str);
+/// Convert a string from the console input codepage to utf-8 encoding.
+std::string ConsoleCPToUTF8(std::string str);
+
+/// Convert a string from utf-8 encoding to the console output codepage.
+std::string UTF8ToConsoleCP(std::string utf8str);
 
 // -------------------------------------------------
 // File system-related helpers
 
-/// Convert a filesystem path from a multi-byte string using current code page encoding.
-std::filesystem::path pathFromString(const std::string &path);
+/// Convert a filesystem path from a multi-byte string using console input codepage.
+std::filesystem::path pathFromConsoleString(const std::string &path);
 
-/// Convert a path back to multi-byte string using current code page encoding.
-std::string pathToString(const std::filesystem::path &path);
+/// Convert a path back to multi-byte string using console output codepage.
+std::string pathToConsoleString(const std::filesystem::path &path);
 
 /// Make a file name list by iterating all files in a directory path (recursively).
 /// @param dirpath Directory path

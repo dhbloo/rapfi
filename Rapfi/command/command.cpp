@@ -51,6 +51,12 @@ namespace CommandLine {
     void init(int argc, char *argv[])
     {
         (void)argc;
+#ifdef _WIN32
+        wchar_t wpath[1024] = {0};
+        GetModuleFileNameW(NULL, wpath, MAX_PATH);
+        binaryDirectory = wpath;
+        binaryDirectory.remove_filename();
+#else
         std::string argv0;             // path+name of the executable binary, as given by argv[0]
         std::string binaryPath;        // path of the executable
         std::string workingDirectory;  // path of the working directory
@@ -65,13 +71,7 @@ namespace CommandLine {
         if (cwd)
             workingDirectory = cwd;
 
-#ifdef _WIN32
-        wchar_t wpath[1024] = {0};
-        GetModuleFileNameW(NULL, wpath, MAX_PATH);
-        binaryDirectory = wpath;
-        binaryDirectory.remove_filename();
-#else
-        std::string pathSeparator = "/";
+        const std::string pathSeparator = "/";
 
         // extract the binary directory path from argv0
         binaryPath = argv0;
@@ -101,22 +101,10 @@ namespace CommandLine {
 
 }  // namespace CommandLine
 
-/// The path to the config file
-/// ConfigPath must be absolute or relative to current working directory.
-/// Can be empty which means we will try to load from the default config path.
 std::filesystem::path configPath;
 
-/// Whether to allow fallback to internal config if the specified file is not found.
 bool allowInternalConfig = true;
 
-/// loadConfig() trys to load config according to the following order:
-/// 1. Load from the current config path. If config file exists but fails to load,
-///    it will not continue to load other config.
-/// 2. Try to load from the default config path, which is the "config.toml" in the
-///    current working directory or the binary executable directory.
-/// 3. If the above two steps fail, and allowInternalConfig is true, it will
-///    try to load from the internal config string. Internal config is only available
-///    when the program is built with it.
 bool loadConfig()
 {
     bool          success = false;
@@ -149,9 +137,6 @@ bool loadConfig()
     return success;
 }
 
-/// getModelFullPath() first trys to find the right model from the modelPath.
-/// Model path can be absolute, relative from current working directory or
-/// relative from config file directory.
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
 {
     // First try to open from cwd
@@ -169,7 +154,6 @@ std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
     return modelPath;
 }
 
-/// loadModelFromFile() trys to load model from modelPath.
 bool loadModelFromFile(std::filesystem::path modelPath)
 {
     modelPath = getModelFullPath(modelPath);
