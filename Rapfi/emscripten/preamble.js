@@ -1,43 +1,49 @@
 Module["sendCommand"] = Module["sendCommand"] || null;
-Module["receiveStdout"] = Module["receiveStdout"] || ((o) => console.log(o));
-Module["receiveStderr"] = Module["receiveStderr"] || ((o) => console.error(o));
-Module["onEngineReady"] = Module["onEngineReady"] || (() => {});
+Module["terminate"] = Module["terminate"] || null;
+Module["onReceiveStdout"] = Module["onReceiveStdout"] || ((o) => console.log(o));
+Module["onReceiveStderr"] = Module["onReceiveStderr"] || ((o) => console.error(o));
+Module["onExit"] = Module["onExit"] || ((code) => console.log("exited with code " + code));
+Module["noExitRuntime"] = true; // Only exit when we explicitly want to do so
 
 if (!Module["preRun"]) Module["preRun"] = [];
 Module["preRun"].push(function () {
-  let stdin_buffer = { buffer: "", index: 0 };
+  let stdin_buffer = { data: "", index: 0 };
   let stdout_buffer = "";
   let stderr_buffer = "";
 
   function stdin() {
-    if (stdin_buffer.index < stdin_buffer.buffer.length)
-      return stdin_buffer.buffer.charCodeAt(stdin_buffer.index++);
+    if (stdin_buffer.index < stdin_buffer.data.length)
+      return stdin_buffer.data.charCodeAt(stdin_buffer.index++);
     else return null;
   }
 
+  newline_charcode = "\n".charCodeAt(0)
+  stdout_fn = Module["onReceiveStdout"]
+  stderr_fn = Module["onReceiveStderr"]
+
   function stdout(char) {
-    if (!char || char == "\n".charCodeAt(0)) {
-      Module["receiveStdout"](stdout_buffer);
+    if (!char || char == newline_charcode) {
+      stdout_fn(stdout_buffer);
       stdout_buffer = "";
     } else stdout_buffer += String.fromCharCode(char);
   }
 
   function stderr(char) {
-    if (!char || char == "\n".charCodeAt(0)) {
-      Module["receiveStderr"](stderr_buffer);
+    if (!char || char == newline_charcode) {
+      stderr_fn(stderr_buffer);
       stderr_buffer = "";
     } else stderr_buffer += String.fromCharCode(char);
   }
 
   // Redirect stdin, stdout, stderr
   FS.init(stdin, stdout, stderr);
-  let execute_command = Module["cwrap"]("gomocupLoopOnce", "number", []);
+  const execute_command = Module["cwrap"]("gomocupLoopOnce", "number", []);
   Module["sendCommand"] = function (data) {
-    stdin_buffer.buffer = data + "\n";
+    stdin_buffer.data = data + "\n";
     stdin_buffer.index = 0;
     execute_command();
   };
+  Module["terminate"] = function () {
+    Module["_emscripten_force_exit"](0);
+  };
 });
-Module["onRuntimeInitialized"] = function () {
-  Module["onEngineReady"]();
-};

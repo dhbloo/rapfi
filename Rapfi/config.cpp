@@ -231,7 +231,7 @@ void readValueModel(const cpptoml::table &t, SetterType setter);
 /// @param skipModelLoading Whether to skip model loading. Can be useful when
 ///     model is loaded separately from a binary file.
 /// @return Returns true if loading succeeded, otherwise returns false.
-bool Config::loadConfig(std::istream &configStream, bool skipModelLoading)
+bool Config::loadConfig(std::istream &configStream)
 {
     Search::Threads.setupEvaluator(nullptr);
     Search::Threads.setupDatabase(nullptr);
@@ -251,10 +251,8 @@ bool Config::loadConfig(std::istream &configStream, bool skipModelLoading)
         if (auto database = c->get_table("database"))
             readDatabase(*database);
 
-        if (!skipModelLoading) {
-            if (auto model = c->get_table("model"))
-                readModel(*model);
-        }
+        if (auto model = c->get_table("model"))
+            readModel(*model);
     }
     catch (const std::exception &e) {
         ERRORL("Failed to load config: " << e.what());

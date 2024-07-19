@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "searchthread.h"
 
@@ -325,7 +325,10 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
             if (options.balanceMode == Search::SearchOptions::BALANCE_TWO) {
                 // Use candidates before first move
                 std::unordered_set<Pos> cands;
-                FOR_EVERY_CAND_POS(main()->board, pos) { cands.insert(pos); }
+                FOR_EVERY_CAND_POS(main()->board, pos)
+                {
+                    cands.insert(pos);
+                }
 
                 main()->board->move(options.rule, m);
 
@@ -399,6 +402,16 @@ ThreadPool::ThreadPool()
 {
     // Set default searcher to Alpha-beta searcher
     setupSearcher(std::make_unique<AB::ABSearcher>());
+}
+
+ThreadPool::~ThreadPool()
+{
+#ifdef MULTI_THREADING
+    // Stop if there are still some threads thinking
+    stopThinking();
+#endif
+    // Explicitly free all threads
+    setNumThreads(0);
 }
 
 }  // namespace Search

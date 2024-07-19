@@ -221,6 +221,7 @@ public:
     uint64_t             nodesSearched() const { return sum(&SearchThread::numNodes); }
 
     ThreadPool();
+    ~ThreadPool();
 };
 
 template <typename SearchDataType>

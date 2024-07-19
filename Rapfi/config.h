@@ -219,9 +219,9 @@ inline Value winRateToValue(float winRate)
 /// @param skipModelLoading Whether to skip model loading. This can be set when
 /// model is overrided in command line.
 /// @return True if config is loaded successfully.
-bool loadConfig(std::istream &configStream, bool skipModelLoading = false);
+bool loadConfig(std::istream &configStream);
 
-/// Load a LZ4 compressed classical model from a binary stream.
+/// Load a LZ4 compressed classical evaluation model from a binary stream.
 /// @return Returns true if loaded successfully, otherwise returns false.
 bool loadModel(std::istream &inStream);
 

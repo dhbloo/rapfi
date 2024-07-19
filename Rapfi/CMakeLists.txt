@@ -18,6 +18,8 @@ option(USE_BMI2 "Enable BMI2 instruction" OFF)
 option(USE_VNNI "Enable AVX512_VNNI/AVX_VNNI instruction" OFF)
 option(USE_NEON "Enable NEON instruction" OFF)
 option(USE_NEON_DOTPROD "Enable NEON dotprod instruction" OFF)
+option(USE_WASM_SIMD "Enable WebAssembly SIMD instruction" OFF)
+option(USE_WASM_SIMD_RELAXED "Enable WebAssembly Relaxed SIMD instruction" OFF)
 
 option(ENABLE_LTO "Enable link time optimization" OFF)
 option(FORCE_ASSERTION "Enable force assertion for all build type" OFF)
@@ -173,17 +175,12 @@ if(EMSCRIPTEN)
             "Command modules is not supported for wasm build. "
             "Must set option NO_COMMAND_MODULES to ON.")
     endif()
-    set(USE_AVX2 OFF)
-    set(USE_AVX512 OFF)
-    set(USE_BMI2 OFF)
-    set(USE_VNNI OFF)
+    if(USE_SSE OR USE_AVX2 OR USE_AVX512 OR USE_BMI2 OR USE_VNNI)
+        message(FATAL_ERROR
+			"SSE, AVX2, AVX512, BMI2, VNNI instruction set is not supported for wasm build.")
+    endif()
 
-    target_compile_options(rapfi
-        PRIVATE "-fexceptions"
-        PRIVATE "-flto"
-    #   PRIVATE "-msimd128"
-    #   PRIVATE "-msse"
-    )
+    target_compile_options(rapfi PRIVATE "-fexceptions" PRIVATE "-flto")
     string(CONCAT EMCC_FLAGS
         "-fexceptions "
         "-flto "
@@ -192,19 +189,19 @@ if(EMSCRIPTEN)
         "--closure=1 "
         "-s MODULARIZE=1 "
         "-s EXPORT_NAME=Rapfi "
-        "-s ENVIRONMENT='web,worker' "
-        "-s EXPORTED_FUNCTIONS=\"['_gomocupLoopOnce']\" "
+        "-s EXPORTED_FUNCTIONS=\"['_main','_gomocupLoopOnce','_emscripten_force_exit']\" "
         "-s EXPORTED_RUNTIME_METHODS=\"['cwrap']\" "
-        "-s DEMANGLE_SUPPORT=1 "
+        "-s EXIT_RUNTIME=1 "
         "-s ALLOW_MEMORY_GROWTH=1 "
-        "-s INITIAL_MEMORY=134217728 "
-        "-s MAXIMUM_MEMORY=1073741824 "
+        "-s IMPORTED_MEMORY=1 "
+        "-s STACK_SIZE=2MB "
     )
 
+    set(WASM_OUTPUT_NAME "rapfi")
     if(NO_MULTI_THREADING)
-        set_target_properties(rapfi PROPERTIES OUTPUT_NAME "rapfi-single")
+        string(CONCAT WASM_OUTPUT_NAME ${WASM_OUTPUT_NAME} "-single")
     else()
-        set_target_properties(rapfi PROPERTIES OUTPUT_NAME "rapfi-multi")
+        string(CONCAT WASM_OUTPUT_NAME ${WASM_OUTPUT_NAME} "-multi")
         target_compile_options(rapfi PRIVATE "-pthread")
         string(CONCAT EMCC_FLAGS ${EMCC_FLAGS}
             "-s USE_PTHREADS=1 "
@@ -212,11 +209,32 @@ if(EMSCRIPTEN)
         )
     endif()
 
+    if(USE_WASM_SIMD OR USE_WASM_SIMD_RELAXED)
+        string(CONCAT WASM_OUTPUT_NAME ${WASM_OUTPUT_NAME} "-simd128")
+        target_compile_options(rapfi PRIVATE "-msimd128")
+	    target_compile_definitions(rapfi PRIVATE USE_WASM_SIMD)
+        if(USE_WASM_SIMD_RELAXED)
+            string(CONCAT WASM_OUTPUT_NAME ${WASM_OUTPUT_NAME} "-relaxed")
+            target_compile_options(rapfi PRIVATE "-mrelaxed-simd")
+            target_compile_definitions(rapfi PRIVATE USE_WASM_SIMD_RELAXED)
+        endif()
+    endif()
+
     if(FORCE_ASSERTION)
         string(CONCAT EMCC_FLAGS ${EMCC_FLAGS} "-s ASSERTIONS=1 ")
     endif()
+    if(CMAKE_BUILD_TYPE EQUAL "DEBUG")
+        string(CONCAT EMCC_FLAGS ${EMCC_FLAGS}
+            "--emit-symbol-map "
+        )
+    endif()
 
-    set_target_properties(rapfi PROPERTIES LINK_FLAGS ${EMCC_FLAGS})
+    message(STATUS "WASM_OUTPUT_NAME: ${WASM_OUTPUT_NAME}")
+
+    set_target_properties(rapfi PROPERTIES
+        OUTPUT_NAME ${WASM_OUTPUT_NAME}
+        LINK_FLAGS ${EMCC_FLAGS}
+    )
 
 endif()
 

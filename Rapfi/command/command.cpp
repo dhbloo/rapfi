@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "command.h"
 
@@ -101,40 +101,46 @@ namespace CommandLine {
 
 }  // namespace CommandLine
 
+/// The path to the config file
+/// ConfigPath must be absolute or relative to current working directory.
+/// Can be empty which means we will try to load from the default config path.
 std::filesystem::path configPath;
-std::filesystem::path overrideModelPath;
-bool                  allowInternalConfigFallback = true;
 
-/// loadConfig() loads config from configPath and optional override
-/// model path. configPath must be absolute or relative to current
-/// working directory.
+/// Whether to allow fallback to internal config if the specified file is not found.
+bool allowInternalConfig = true;
+
+/// loadConfig() trys to load config according to the following order:
+/// 1. Load from the current config path. If config file exists but fails to load,
+///    it will not continue to load other config.
+/// 2. Try to load from the default config path, which is the "config.toml" in the
+///    current working directory or the binary executable directory.
+/// 3. If the above two steps fail, and allowInternalConfig is true, it will
+///    try to load from the internal config string. Internal config is only available
+///    when the program is built with it.
 bool loadConfig()
 {
-    bool          success           = false;
-    const bool    loadOverrideModel = !overrideModelPath.empty();
+    bool          success = false;
     std::ifstream configFile(configPath);
-
     if (configFile.is_open()) {
         MESSAGEL("Load config from " << configPath);
-        success = Config::loadConfig(configFile, loadOverrideModel);
-        if (!success)
-            return false;
-        if (loadOverrideModel)
-            success = loadModelFromFile(overrideModelPath);
+        success = Config::loadConfig(configFile);
     }
-    else if (!allowInternalConfigFallback) {
-        ERRORL("Unable to open config file: " << configPath);
-        return false;
-    }
-
-    if (!success) {
-        if (!Config::InternalConfig.empty()) {
-            std::istringstream internalConfig(Config::InternalConfig);
-            success = Config::loadConfig(internalConfig);
+    else {
+        std::filesystem::path defaultConfigPath = CommandLine::getDefaultConfigPath();
+        configFile.open(defaultConfigPath);
+        if (configFile.is_open()) {
+            MESSAGEL("Load config from " << defaultConfigPath);
+            success = Config::loadConfig(configFile);
         }
-        else
-            ERRORL("This version is not built with an internal config. "
-                   "Must specify an external config!");
+        else if (allowInternalConfig) {
+            if (!Config::InternalConfig.empty()) {
+                std::istringstream internalConfig(Config::InternalConfig);
+                success = Config::loadConfig(internalConfig);
+            }
+            else
+                ERRORL("This version is not built with an internal config. "
+                       "Must specify an external config!");
+        }
     }
 
     if (success && Config::ClearHashAfterConfigLoaded)
@@ -156,9 +162,8 @@ std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
     // If not succeeded, try to open from config directory if path is relative
     if (std::filesystem::path(modelPath).is_relative()) {
         std::filesystem::path configModelPath = configPath.remove_filename() / modelPath;
-        if (std::filesystem::exists(configModelPath)) {
+        if (std::filesystem::exists(configModelPath))
             return configModelPath;
-        }
     }
 
     return modelPath;

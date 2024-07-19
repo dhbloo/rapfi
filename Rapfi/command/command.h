@@ -37,8 +37,7 @@ namespace CommandLine {
 // Config loading
 
 extern std::filesystem::path configPath;
-extern std::filesystem::path overrideModelPath;
-extern bool                  allowInternalConfigFallback;
+extern bool                  allowInternalConfig;
 
 bool                  loadConfig();
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath);
@@ -46,10 +45,6 @@ bool                  loadModelFromFile(std::filesystem::path modelPath);
 
 // -------------------------------------------------
 // Gomocup protocol
-
-namespace GomocupProtocol {
-    extern "C" bool gomocupLoopOnce();
-}
 
 void gomocupLoop();
 

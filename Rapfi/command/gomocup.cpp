@@ -404,7 +404,8 @@ void getOption()
     }
     else if (token == "EVALUATOR_DRAW_BLACK_WINRATE") {
         std::cin >> Config::EvaluatorDrawBlackWinRate;
-        Config::EvaluatorDrawBlackWinRate = std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
+        Config::EvaluatorDrawBlackWinRate =
+            std::clamp(Config::EvaluatorDrawBlackWinRate, 0.0f, 1.0f);
     }
     else if (token == "EVALUATOR_DRAW_RATIO") {
         std::cin >> Config::EvaluatorDrawRatio;
@@ -453,10 +454,9 @@ void loadHash()
 
 void reloadConfig()
 {
-    configPath = readPathFromInput();
-    overrideModelPath.clear();
-    allowInternalConfigFallback = configPath.empty();
-    if (allowInternalConfigFallback)
+    configPath          = readPathFromInput();
+    allowInternalConfig = configPath.empty();
+    if (allowInternalConfig)
         MESSAGEL("No external config specified, reload internal config.");
 
     if (!loadConfig())
@@ -1242,7 +1242,7 @@ void loadModel()
 
 /// Enter protocol loop once and fetch and execute one command from stdin.
 /// @return True if program should exit now.
-extern "C" bool gomocupLoopOnce()
+bool runProtocol()
 {
     std::string cmd;
     std::cin >> cmd;
@@ -1261,9 +1261,10 @@ extern "C" bool gomocupLoopOnce()
     };
 
     // clang-format off
-    if (cmd == "STOP")                  { Search::Threads.stopThinking(); return false; }
-    else if (cmd == "YXSTOP")           { Search::Threads.stopThinking(); return false; }
-    else if (thinking)                  return false;
+    if (cmd == "END")          { Search::Threads.stopThinking(); return true; }
+    else if (cmd == "STOP")    { Search::Threads.stopThinking(); return false; }
+    else if (cmd == "YXSTOP")  { Search::Threads.stopThinking(); return false; }
+    else if (thinking)         return false;
 
 #ifdef MULTI_THREADING
     std::lock_guard<std::mutex> lock(mtx);
@@ -1278,8 +1279,7 @@ extern "C" bool gomocupLoopOnce()
      && cmd != "YXQUERYDATABASETEXT"
      && cmd != "YXQUERYDATABASEALLT")      Search::Threads.stopThinking();
 
-    if (cmd == "END")                      return true;
-    else if (cmd == "ABOUT")               std::cout << getEngineInfo() << std::endl;
+    if (cmd == "ABOUT")                    std::cout << getEngineInfo() << std::endl;
     else if (cmd == "START")               start();
     else if (cmd == "RECTSTART")           rectStart();
     else if (cmd == "INFO")                getOption();
@@ -1337,10 +1337,16 @@ extern "C" bool gomocupLoopOnce()
 /// This will only return after all searching threads have ended.
 void Command::gomocupLoop()
 {
+#ifdef __EMSCRIPTEN__
+    // We do not run infinite loop in wasm build, instead we manually call
+    // gomocupLoopOnce() for each command to avoid hanging the main thread.
+    return;
+#endif
+
     // Init tuning parameter table
     Tuning::TuneMap::init();
 
-    while (!GomocupProtocol::gomocupLoopOnce()) {
+    while (!GomocupProtocol::runProtocol()) {
 #ifdef MULTI_THREADING
         // For multi-threading build, yield before reading the next
         // command to avoid possible busy waiting.
@@ -1351,3 +1357,18 @@ void Command::gomocupLoop()
     // If there is any thread still running, wait until they exited.
     Search::Threads.waitForIdle();
 }
+
+
+#ifdef __EMSCRIPTEN__
+    #include <emscripten.h>
+
+extern "C" void gomocupLoopOnce()
+{
+    bool shouldExit = Command::GomocupProtocol::runProtocol();
+    if (shouldExit) {
+        // If there is any thread still running, wait until they exited.
+        Search::Threads.waitForIdle();
+        emscripten_force_exit(EXIT_SUCCESS);
+    }
+}
+#endif
