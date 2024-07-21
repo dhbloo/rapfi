@@ -139,16 +139,16 @@ bool loadConfig()
 
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
 {
-    // First try to open from cwd
+    // First try to open from current working directory
     if (std::filesystem::exists(modelPath)) {
         return modelPath;
     }
 
     // If not succeeded, try to open from config directory if path is relative
-    if (std::filesystem::path(modelPath).is_relative()) {
-        std::filesystem::path configModelPath = configPath.remove_filename() / modelPath;
-        if (std::filesystem::exists(configModelPath))
-            return configModelPath;
+    if (modelPath.is_relative()) {
+        auto modelPathinBinaryDir = CommandLine::binaryDirectory / modelPath;
+        if (std::filesystem::exists(modelPathinBinaryDir))
+            return modelPathinBinaryDir;
     }
 
     return modelPath;
