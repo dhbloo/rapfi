@@ -35,6 +35,7 @@ constexpr int hexToCoord(char hex)
 }
 
 constexpr char BoardTextHeader[] = "@BTXT@";
+constexpr int  HeaderLength      = sizeof(BoardTextHeader) - 1;
 
 }  // namespace
 
@@ -44,7 +45,7 @@ std::string DBRecord::comment() const
 {
     size_t start = 0;
     // Skip special board text segment at beginning
-    if (text.rfind(BoardTextHeader, 0) == 0) {
+    if (hasBoardText()) {
         start = text.find('\b');
         if (start == std::string::npos)
             return {};  // empty comment
@@ -52,13 +53,14 @@ std::string DBRecord::comment() const
     }
 
     std::string cmt = text.substr(start);
+    // Replace all '\b' in the comment with '\n' for display
     return replaceAll(cmt, "\b", "\n");
 }
 
-void DBRecord::setComment(const std::string &comment)
+void DBRecord::setComment(std::string comment)
 {
     // Delete all comments in text excluding special board text segment
-    if (text.rfind(BoardTextHeader, 0) == 0) {
+    if (hasBoardText()) {
         size_t start = text.find('\b');
         if (start != std::string::npos)
             text.erase(start, text.size() - start);
@@ -66,9 +68,15 @@ void DBRecord::setComment(const std::string &comment)
     else
         text.clear();
 
+    // Replace CRLF to LF in comment text for consistency
+    trimInplace(replaceAll(comment, "\r\n", "\n"));
+    if (comment.empty())
+        return;
+
     if (!text.empty())
         text.push_back('\b');
-    text.append(comment);
+    // Use null-terminated string here to remove extra '\0'
+    text.append(comment.c_str());
 }
 
 bool DBRecord::hasBoardText() const
@@ -82,14 +90,12 @@ std::string DBRecord::boardText(Pos canonicalPos)
         return {};  // No board text is recorded
 
     size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
-    std::string_view boardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
+    std::string_view boardTextSegment(text.data() + HeaderLength,
+                                      boardTextSegmentSize - HeaderLength);
 
     auto boardTextPairs = split(boardTextSegment, "\n");
     for (std::string_view boardTextPair : boardTextPairs) {
-        if (boardTextPair.size() < 2)
-            continue;
-
-        if (hexToCoord(boardTextPair[0]) == canonicalPos.x()
+        if (boardTextPair.size() > 2 && hexToCoord(boardTextPair[0]) == canonicalPos.x()
             && hexToCoord(boardTextPair[1]) == canonicalPos.y())
             return std::string(boardTextPair.substr(2));
     }
@@ -97,28 +103,57 @@ std::string DBRecord::boardText(Pos canonicalPos)
     return {};  // Did not find a board text
 }
 
+std::vector<std::pair<Pos, std::string_view>> DBRecord::getAllBoardTexts() const
+{
+    if (!hasBoardText())
+        return {};  // No board text is recorded
+
+    // A list of (Canonical Pos, Board Text) pairs
+    std::vector<std::pair<Pos, std::string_view>> boardTexts;
+
+    size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
+    std::string_view boardTextSegment(text.data() + HeaderLength,
+                                      boardTextSegmentSize - HeaderLength);
+
+    auto boardTextPairs = split(boardTextSegment, "\n");
+    for (std::string_view boardTextPair : boardTextPairs) {
+        if (boardTextPair.size() > 2) {
+            Pos canonicalPos {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
+            boardTexts.emplace_back(canonicalPos, boardTextPair.substr(2));
+        }
+    }
+
+    return boardTexts;
+}
+
 void DBRecord::setBoardText(Pos canonicalPos, std::string boardText)
 {
     // Make sure no newlines or '\b' characters or whitespaces are in the text
-    boardText.erase(
-        std::remove_if(boardText.begin(),
-                       boardText.end(),
-                       [](unsigned char c) { return c == '\n' || c == '\b' || std::isspace(c); }),
-        boardText.cend());
+    boardText.erase(std::remove_if(boardText.begin(),
+                                   boardText.end(),
+                                   [](unsigned char c) {
+                                       return c == '\n' || c == '\r' || c == '\b'
+                                              || std::isspace(c);
+                                   }),
+                    boardText.cend());
 
     std::string boardTextSegment = BoardTextHeader;
     size_t      boardTextCount   = 0;
 
     // Remove previous board text if it is recorded
-    if (text.rfind(BoardTextHeader, 0) == 0) {
+    if (hasBoardText()) {
         size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
-        std::string_view oldBoardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
+        std::string_view oldBoardTextSegment(text.data() + HeaderLength,
+                                             boardTextSegmentSize - HeaderLength);
 
         auto boardTextPairs = split(oldBoardTextSegment, "\n");
         for (std::string_view boardTextPair : boardTextPairs) {
             if (boardTextPair.size() > 2
                 && (hexToCoord(boardTextPair[0]) != canonicalPos.x()
                     || hexToCoord(boardTextPair[1]) != canonicalPos.y())) {
+                // Remove extra '\0' due to bug in early implementation
+                if (boardTextPair.back() == '\0')
+                    boardTextPair.remove_suffix(1);
                 boardTextSegment.append(boardTextPair);
                 boardTextSegment.push_back('\n');
                 boardTextCount++;
@@ -133,7 +168,8 @@ void DBRecord::setBoardText(Pos canonicalPos, std::string boardText)
     if (!boardText.empty()) {
         boardTextSegment.push_back(coordToHex(canonicalPos.x()));
         boardTextSegment.push_back(coordToHex(canonicalPos.y()));
-        boardTextSegment.append(boardText);
+        // Use null-terminated string here to remove extra '\0'
+        boardTextSegment.append(boardText.c_str());
         boardTextCount++;
     }
 
@@ -185,10 +221,16 @@ void DBRecord::copyBoardTextFrom(const DBRecord &rhs, bool overwrite)
     // Get all positions in rhs that have board text
     {
         size_t           boardTextSegmentSize = std::min(rhs.text.find('\b'), rhs.text.size());
-        std::string_view boardTextSegment(rhs.text.data() + 6, boardTextSegmentSize - 6);
+        std::string_view boardTextSegment(rhs.text.data() + HeaderLength,
+                                          boardTextSegmentSize - HeaderLength);
         for (std::string_view boardTextPair : split(boardTextSegment, "\n")) {
             if (boardTextPair.size() > 2) {
                 Pos p {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
+
+                // Remove extra '\0' due to bug in early implementation
+                if (boardTextPair.back() == '\0')
+                    boardTextPair.remove_suffix(1);
+
                 boardTextToMerge.emplace(p, boardTextPair);
             }
         }
@@ -199,24 +241,31 @@ void DBRecord::copyBoardTextFrom(const DBRecord &rhs, bool overwrite)
     // Get all positions in this and remove either one according to overwrite flag
     {
         size_t           boardTextSegmentSize = std::min(text.find('\b'), text.size());
-        std::string_view oldBoardTextSegment(text.data() + 6, boardTextSegmentSize - 6);
+        std::string_view oldBoardTextSegment(text.data() + HeaderLength,
+                                             boardTextSegmentSize - HeaderLength);
 
         for (std::string_view boardTextPair : split(oldBoardTextSegment, "\n")) {
-            if (boardTextPair.size() > 2) {
-                Pos p {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
-                if (auto it = boardTextToMerge.find(p); it != boardTextToMerge.end()) {
-                    if (overwrite)
-                        boardTextSegment.append(it->second);
-                    else
-                        boardTextSegment.append(boardTextPair);
-                    boardTextToMerge.erase(it);
-                }
-                else {
+            if (boardTextPair.size() <= 2)
+                continue;
+
+            Pos p {hexToCoord(boardTextPair[0]), hexToCoord(boardTextPair[1])};
+
+            // Remove extra '\0' due to bug in early implementation
+            if (boardTextPair.back() == '\0')
+                boardTextPair.remove_suffix(1);
+
+            if (auto it = boardTextToMerge.find(p); it != boardTextToMerge.end()) {
+                if (overwrite)
+                    boardTextSegment.append(it->second.c_str());
+                else
                     boardTextSegment.append(boardTextPair);
-                }
-                boardTextSegment.push_back('\n');
-                boardTextCount++;
+                boardTextToMerge.erase(it);
             }
+            else {
+                boardTextSegment.append(boardTextPair);
+            }
+            boardTextSegment.push_back('\n');
+            boardTextCount++;
         }
 
         if (boardTextSegmentSize < text.size())
@@ -226,7 +275,7 @@ void DBRecord::copyBoardTextFrom(const DBRecord &rhs, bool overwrite)
 
     // Add remaining board texts in rhs
     for (const auto &[p, boardText] : boardTextToMerge) {
-        boardTextSegment.append(boardText);
+        boardTextSegment.append(boardText.c_str());
         boardTextSegment.push_back('\n');
         boardTextCount++;
     }

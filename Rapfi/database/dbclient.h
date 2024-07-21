@@ -87,12 +87,13 @@ public:
 
     /// Query all existing children of the current position.
     /// @return The list of all children, in forms of (Pos, Record).
-    void queryChildren(const Board                           &board,
-                       Rule                                   rule,
-                       std::vector<std::pair<Pos, DBRecord>> &childRecords);
+    ///     The list is sorted by Pos's board traversal order (ascending order).
+    std::vector<std::pair<Pos, DBRecord>> queryChildren(const Board &board, Rule rule);
 
-    /// Query the utf-8 board text of an empty pos on board.
-    std::string queryBoardText(const Board &board, Rule rule, Pos pos);
+    /// Query the utf-8 board text of every legal empty pos on board.
+    /// @return The list of all children, in forms of (Pos, Text).
+    ///     The list is sorted by Pos's board traversal order (ascending order).
+    std::vector<std::pair<Pos, std::string>> queryBoardTexts(const Board &board, Rule rule);
 
     /// Update the utf-8 board text of an empty pos on board.
     void setBoardText(const Board &board, Rule rule, Pos pos, std::string text);

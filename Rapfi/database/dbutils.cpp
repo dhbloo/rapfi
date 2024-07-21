@@ -197,7 +197,8 @@ void databaseToCSVFile(::Database::DBStorage                               &dbSt
     csvStream << "index" << Sep << "key" << Sep << "label" << Sep << "value" << Sep << "depth"
               << Sep << "bound" << Sep << "text" << '\n';
 
-    size_t count = 0;
+    size_t            count = 0;
+    std::stringstream ss;
     do {
         dbKeyRecords.clear();
         cursor = dbStorage.scan(cursor, BatchSize, dbKeyRecords);
@@ -226,9 +227,18 @@ void databaseToCSVFile(::Database::DBStorage                               &dbSt
             default: csvStream << "none"; break;
             }
 
-            std::string escapedText = dbRecord.text;
+            std::stringstream ss;
+            ss << std::quoted(dbRecord.text);
+            std::string escapedText = ss.str();
+            // Esacpe all '\n' with "\\n" in text
+            // (\n is used to seperate different board texts and may appear in comments)
             replaceAll(escapedText, "\n", "\\n");
-            csvStream << Sep << std::quoted(escapedText) << '\n';
+            // Esacpe all '\b' with "\\b" in text
+            // (\b is used to seperate sub-sections in the text)
+            replaceAll(escapedText, "\b", "\\b");
+            // Remove all '\0' in text that may exist due to bug in early implementation
+            replaceAll(escapedText, std::string_view {"\0", 1}, "");
+            csvStream << Sep << escapedText << '\n';
             count++;
         }
 

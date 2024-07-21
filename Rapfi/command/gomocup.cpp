@@ -789,27 +789,49 @@ void queryDatabaseAll(bool getPosition)
 
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
 
-        std::vector<std::pair<Pos, DBRecord>> childRecords;
-        dbClient.queryChildren(*board, options.rule, childRecords);
+        // Get all child records and child board texts
+        auto childRecords     = dbClient.queryChildren(*board, options.rule);
+        auto boardPosAndTexts = dbClient.queryBoardTexts(*board, options.rule);
 
-        for (auto &[pos, record] : childRecords) {
-            std::string displayLabel      = record.displayLabel();
+        // Iterate all empty positions
+        auto childRecordIt      = childRecords.begin();
+        auto boardPosAndTextsIt = boardPosAndTexts.begin();
+        FOR_EVERY_EMPTY_POS(board, pos)
+        {
+            bool        printThisPos      = false;
             int         displayLabelValue = -1;
-            if (!displayLabel.empty()) {
-                displayLabelValue = 0;
-                if (displayLabel.length() > 4)
-                    displayLabel = displayLabel.substr(0, 4);
-                for (char c : displayLabel)
-                    displayLabelValue = (displayLabelValue << 8) | c;
+            std::string boardTextUTF8;
+            DBRecord    record {};  // init as null record
+
+            if (childRecordIt != childRecords.end() && childRecordIt->first == pos) {
+                record                   = childRecordIt->second;
+                std::string displayLabel = record.displayLabel();
+                if (!displayLabel.empty()) {
+                    // Encode the display label (maximum 4 chars) as an int32
+                    if (displayLabel.length() > 4)
+                        displayLabel = displayLabel.substr(0, 4);
+                    displayLabelValue = 0;
+                    for (char c : displayLabel)
+                        displayLabelValue = (displayLabelValue << 8) | c;
+                }
+                childRecordIt++;
+                printThisPos = true;
             }
 
-            std::string boardTextUTF8 = dbClient.queryBoardText(*board, options.rule, pos);
-            MESSAGEL("DATABASE " << outputCoordXConvert(pos, board->size()) << ' '
-                                 << outputCoordYConvert(pos, board->size()) << ' '
-                                 << displayLabelValue << ' ' << record.value << ' '
-                                 << record.depth() << ' ' << int(record.bound()) << ' '
-                                 << int(!record.comment().empty()) << ' '
-                                 << UTF8ToConsoleCP(boardTextUTF8));
+            if (boardPosAndTextsIt != boardPosAndTexts.end() && boardPosAndTextsIt->first == pos) {
+                boardTextUTF8 = std::move(boardPosAndTextsIt->second);
+                boardPosAndTextsIt++;
+                printThisPos = true;
+            }
+
+            // Print this position if it has DBRecord or board text
+            if (printThisPos)
+                MESSAGEL("DATABASE " << outputCoordXConvert(pos, board->size()) << ' '
+                                     << outputCoordYConvert(pos, board->size()) << ' '
+                                     << displayLabelValue << ' ' << record.value << ' '
+                                     << record.depth() << ' ' << int(record.bound()) << ' '
+                                     << int(!record.comment().empty()) << ' '
+                                     << UTF8ToConsoleCP(boardTextUTF8));
         }
 
         MESSAGEL("DATABASE DONE");
@@ -894,8 +916,8 @@ void editDatabaseText()
         DBRecord record;
         if (!dbClient.query(*board, options.rule, record))
             record = DBRecord {LABEL_NONE};
-        std::string newTextUTF8 = ConsoleCPToUTF8(trimInplace(newText));
-        record.setComment(newTextUTF8);
+
+        record.setComment(ConsoleCPToUTF8(newText));
         dbClient.save(*board, options.rule, record, OverwriteRule::Always);
     }
 }
@@ -926,9 +948,8 @@ void editDatabaseBoardLabel()
     }
 
     if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
-        DBClient    dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
-        std::string newTextUTF8 = ConsoleCPToUTF8(trimInplace(newText));
-        dbClient.setBoardText(*board, options.rule, pos, newTextUTF8);
+        DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
+        dbClient.setBoardText(*board, options.rule, pos, ConsoleCPToUTF8(newText));
     }
 }
 

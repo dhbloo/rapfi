@@ -149,8 +149,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
     Value dbWinValue = VALUE_NONE;
     int   dbWinDepth = 0;
     if (th.dbClient) {
-        std::vector<std::pair<Pos, Database::DBRecord>> childRecords;
-        th.dbClient->queryChildren(*th.board, opts.rule, childRecords);
+        auto childRecords = th.dbClient->queryChildren(*th.board, opts.rule);
 
         Pos   bestMove      = Pos::NONE;
         Value bestMoveValue = VALUE_NONE;

@@ -526,13 +526,12 @@ bool DBClient::query(const Board &board, Rule rule, DBRecord &record)
     return false;
 }
 
-void DBClient::queryChildren(const Board                           &board,
-                             Rule                                   rule,
-                             std::vector<std::pair<Pos, DBRecord>> &childRecords)
+std::vector<std::pair<Pos, DBRecord>> DBClient::queryChildren(const Board &board, Rule rule)
 {
     DBRecord record;
     Board   &b = const_cast<Board &>(board);
 
+    std::vector<std::pair<Pos, DBRecord>> childRecords;
     FOR_EVERY_EMPTY_POS(&b, pos)
     {
         if (rule == RENJU && board.sideToMove() == BLACK && board.checkForbiddenPoint(pos))
@@ -543,30 +542,69 @@ void DBClient::queryChildren(const Board                           &board,
             childRecords.emplace_back(pos, record);
         b.undo(rule);
     }
+    return childRecords;
 }
 
-std::string DBClient::queryBoardText(const Board &board, Rule rule, Pos pos)
+std::vector<std::pair<Pos, std::string>> DBClient::queryBoardTexts(const Board &board, Rule rule)
 {
-    if (!board.isEmpty(pos))
-        return {};
-
     DBRecord record;
     if (!query(board, rule, record))
         return {};
 
-    // Find the smallest canonical pos considering symmetries to query board text
-    TransformType parentTrans;
-    DBKey         parentKey    = constructDBKey(board, rule, &parentTrans);
-    Pos           canonicalPos = applyTransform(pos, board.size(), parentTrans);
-    for (int t = IDENTITY + 1; t < TRANS_NB; t++) {
-        TransformType trans = (TransformType)t;
-        if (isDBKeySymmetry(parentKey, trans)) {
-            Pos tPos     = applyTransform(canonicalPos, board.size(), trans);
-            canonicalPos = std::min(canonicalPos, tPos);
-        }
+    // Get the list of all canonical positions with board texts
+    auto canonicalPosAndTexts = record.getAllBoardTexts();
+    if (canonicalPosAndTexts.empty())
+        return {};
+
+    // Sort the list by canonical pos in ascending order
+    std::sort(canonicalPosAndTexts.begin(),
+              canonicalPosAndTexts.end(),
+              [](const auto &lhs, const auto &rhs) { return lhs.first._pos < rhs.first._pos; });
+
+    // Get the list of all empty positions
+    std::vector<Pos> emptyPosList;
+    FOR_EVERY_EMPTY_POS(&board, pos)
+    {
+        if (rule == RENJU && board.sideToMove() == BLACK && board.checkForbiddenPoint(pos))
+            continue;
+        emptyPosList.push_back(pos);
     }
 
-    return record.boardText(canonicalPos);
+    // Find the smallest canonical pos considering symmetries to query board text
+    TransformType parentTrans;
+    DBKey         parentKey = constructDBKey(board, rule, &parentTrans);
+    bool          isParentSymmetry[TRANS_NB];
+    for (int t = IDENTITY + 1; t < TRANS_NB; t++)
+        isParentSymmetry[t] = isDBKeySymmetry(parentKey, (TransformType)t);
+
+    // Map all empty pos into canonical pos, and get their board text
+    std::vector<std::pair<Pos, std::string>> childBoardTexts;
+    for (Pos pos : emptyPosList) {
+        // Find the smallest canonical considering all symmetries
+        Pos canonicalPos = applyTransform(pos, board.size(), parentTrans);
+        for (int t = IDENTITY + 1; t < TRANS_NB; t++) {
+            if (isParentSymmetry[t]) {
+                Pos transformedPos = applyTransform(canonicalPos, board.size(), (TransformType)t);
+                canonicalPos       = std::min(canonicalPos, transformedPos);
+            }
+        }
+
+        // Find the board text of this canonical pos
+        auto itBegin = std::lower_bound(
+            canonicalPosAndTexts.begin(),
+            canonicalPosAndTexts.end(),
+            canonicalPos,
+            [](const auto &lhs, const Pos &rhs) { return lhs.first._pos < rhs._pos; });
+        auto itEnd = std::upper_bound(
+            canonicalPosAndTexts.begin(),
+            canonicalPosAndTexts.end(),
+            canonicalPos,
+            [](const Pos &lhs, const auto &rhs) { return lhs._pos < rhs.first._pos; });
+        if (itBegin < itEnd)
+            childBoardTexts.emplace_back(pos, std::string {itBegin->second});
+    }
+
+    return childBoardTexts;
 }
 
 void DBClient::setBoardText(const Board &board, Rule rule, Pos pos, std::string text)

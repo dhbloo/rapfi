@@ -81,10 +81,14 @@ enum DBRecordMask {
 /// DBRecord contains all the information for one position.
 struct DBRecord
 {
-    DBLabel      label;       // label ('l' or 'w' or '\0', 1 byte)
-    DBValue      value;       // value (int16, 2 bytes, optional)
-    DBDepthBound depthbound;  // depth & bound (int16, 2 bytes, optional)
-    std::string  text;  // utf-8 text message (string ending with '\0', (n3 - 5) bytes, optional)
+    /// label ('l' or 'w' or '\0', 1 byte)
+    DBLabel label;
+    /// value (int16, 2 bytes, optional)
+    DBValue value;
+    /// depth & bound (int16, 2 bytes, optional)
+    DBDepthBound depthbound;
+    /// utf-8 text message (string ending with '\0', (n3 - 5) bytes, optional)
+    std::string text;
 
     /// Return the depth component of a depth bound.
     int depth() const { return int(depthbound) >> 2; }
@@ -116,11 +120,15 @@ struct DBRecord
     /// Extract utf-8 comment text from dbRecord.
     std::string comment() const;
     /// Set the utf-8 comment text of this dbRecord.
-    void setComment(const std::string &comment);
+    void setComment(std::string comment);
     /// Check if this record has any board text.
     bool hasBoardText() const;
     /// Query the utf-8 board text of a canonical pos of this dbRecord.
     std::string boardText(Pos canonicalPos);
+    /// Query all existing utf-8 board texts of this dbRecord.
+    /// @return The list of all board text views, in forms of (Canonical Pos, Text).
+    ///     Note that the returned list is not sorted.
+    std::vector<std::pair<Pos, std::string_view>> getAllBoardTexts() const;
     /// Set the utf-8 board text of a canonical pos of this dbRecord.
     void setBoardText(Pos canonicalPos, std::string boardText);
     /// Clear the board text segment of this dbRecord.
@@ -130,6 +138,7 @@ struct DBRecord
     ///     If not, all existing board texts will be kept and only new board texts are saved.
     void copyBoardTextFrom(const DBRecord &rhs, bool overwrite);
     /// Get the display label of this record.
+    /// @return The display label of this record, in ASCII characters.
     std::string displayLabel() const;
 };
 
