@@ -844,7 +844,9 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     }
 
     // Step 7. Razoring with VCF (~55 elo)
-    if (!PvNode && eval + razorMargin<Rule>(depth) < alpha) {
+    if (!PvNode
+        && (alpha < VALUE_MATE_IN_MAX_PLY || !ttHit)  // We are not searching for a short win
+        && eval + razorMargin<Rule>(depth) < alpha) {
         return vcfsearch<Rule, NonPV>(board, ss, alpha, alpha + 1);
     }
 
