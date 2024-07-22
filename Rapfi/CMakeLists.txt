@@ -168,7 +168,7 @@ endif()
 
 if(EMSCRIPTEN)
     message(STATUS "Setting up build for Emscripten.")
-    set(WEB_DIR "${CMAKE_SOURCE_DIR}/../Gomocalc")
+    set(NETWORKS_DIR "${CMAKE_SOURCE_DIR}/../Networks")
 
     if(NOT NO_COMMAND_MODULES)
         message(FATAL_ERROR
@@ -180,12 +180,12 @@ if(EMSCRIPTEN)
 			"SSE, AVX2, AVX512, BMI2, VNNI instruction set is not supported for wasm build.")
     endif()
 
+    # common flags for emscripten
     target_compile_options(rapfi PRIVATE "-fexceptions" PRIVATE "-flto")
     string(CONCAT EMCC_FLAGS
         "-fexceptions "
         "-flto "
         "--pre-js ${CMAKE_SOURCE_DIR}/emscripten/preamble.js "
-        "--preload-file ${WEB_DIR}/configs@/ "
         "--closure=1 "
         "-s MODULARIZE=1 "
         "-s EXPORT_NAME=Rapfi "
@@ -196,6 +196,14 @@ if(EMSCRIPTEN)
         "-s IMPORTED_MEMORY=1 "
         "-s STACK_SIZE=2MB "
     )
+
+    # get the list of files to preload
+    file(READ ${NETWORKS_DIR}/wasm_preloads.txt PRELOADS)
+    string(REGEX REPLACE "\n" ";" PRELOADS "${PRELOADS}")
+    foreach(PRELOAD ${PRELOADS})
+        message(STATUS "Preloading: ${NETWORKS_DIR}/${PRELOAD}")
+		string(CONCAT EMCC_FLAGS ${EMCC_FLAGS} "--preload-file \"${NETWORKS_DIR}/${PRELOAD}\" ")
+    endforeach()
 
     set(WASM_OUTPUT_NAME "rapfi")
     if(NO_MULTI_THREADING)
