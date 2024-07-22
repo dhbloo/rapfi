@@ -43,7 +43,7 @@
     #include <mutex>
     #include <thread>
 
-static std::mutex mtx;
+static std::mutex protocol_mutex;
 #endif
 
 using namespace Database;
@@ -134,7 +134,7 @@ void think(Board                             &board,
     std::thread waitThread([&, startTime]() {
         Search::Threads.waitForIdle();
 
-        std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(protocol_mutex);
         sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
                                  Search::Threads.main()->bestMove);
 
@@ -1265,6 +1265,7 @@ void loadModel()
 /// @return True if program should exit now.
 bool runProtocol()
 {
+    // Read the command from stdin in a blocking way
     std::string cmd;
     std::cin >> cmd;
 
@@ -1272,6 +1273,7 @@ bool runProtocol()
     if (std::cin.eof())
         return true;
 
+    // We assume the command is in uppercase, but also support lowercase
     upperInplace(cmd);
 
     auto CheckBoardOK = [&](auto f) {
@@ -1288,7 +1290,7 @@ bool runProtocol()
     else if (thinking)         return false;
 
 #ifdef MULTI_THREADING
-    std::lock_guard<std::mutex> lock(mtx);
+    std::lock_guard<std::mutex> lock(protocol_mutex);
 #endif
 
     // Stop pondering first for commands that may modify the board state
@@ -1354,41 +1356,63 @@ bool runProtocol()
 
 }  // namespace Command::GomocupProtocol
 
-/// Warp around gomocupLoopOnce(), looping until exit condition is met.
+#ifdef __EMSCRIPTEN__
+    #include <emscripten.h>
+
+    #ifdef MULTI_THREADING
+        #include <emscripten/atomic.h>
+static uint32_t loop_ready = 0;  // a dummy variable for atomic wait
+    #endif
+
+/// Entry point of one gomocup protocol iter for WASM build
+extern "C" void gomocupLoopOnce()
+{
+    #ifdef MULTI_THREADING
+    emscripten_atomic_store_u32(&loop_ready, 1);
+    emscripten_atomic_notify(&loop_ready, 1);
+    #else
+    if (Command::GomocupProtocol::runProtocol())
+        emscripten_force_exit(EXIT_SUCCESS);
+    #endif
+}
+#endif
+
+/// Warp around runProtocol(), looping until exit condition is met.
 /// This will only return after all searching threads have ended.
 void Command::gomocupLoop()
 {
-#ifdef __EMSCRIPTEN__
-    // We do not run infinite loop in wasm build, instead we manually call
-    // gomocupLoopOnce() for each command to avoid hanging the main thread.
-    return;
-#endif
-
     // Init tuning parameter table
     Tuning::TuneMap::init();
 
-    while (!GomocupProtocol::runProtocol()) {
+    for (;;) {
+#ifdef __EMSCRIPTEN__
+    #ifdef MULTI_THREADING
+        emscripten_atomic_wait_u32(&loop_ready, 0, -1);
+        emscripten_atomic_store_u32(&loop_ready, 0);
+    #else
+        // We do not run infinite loop in wasm build, instead we manually call
+        // gomocupLoopOnce() for each command to avoid hanging the main thread.
+        return;
+    #endif
+#endif
+
+        // Run the protocol loop for one iter
+        if (GomocupProtocol::runProtocol())
+            break;
+
 #ifdef MULTI_THREADING
         // For multi-threading build, yield before reading the next
-        // command to avoid possible busy waiting.
+        // command to avoid possible busy waiting. Most of time reading
+        // from std::cin would block so this may not necessary.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 #endif
     }
 
     // If there is any thread still running, wait until they exited.
     Search::Threads.waitForIdle();
-}
 
 #ifdef __EMSCRIPTEN__
-    #include <emscripten.h>
-
-extern "C" void gomocupLoopOnce()
-{
-    bool shouldExit = Command::GomocupProtocol::runProtocol();
-    if (shouldExit) {
-        // If there is any thread still running, wait until they exited.
-        Search::Threads.waitForIdle();
-        emscripten_force_exit(EXIT_SUCCESS);
-    }
-}
+    Search::Threads.setNumThreads(0);  // avoid hung
+    emscripten_force_exit(EXIT_SUCCESS);
 #endif
+}

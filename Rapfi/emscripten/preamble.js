@@ -17,9 +17,9 @@ Module["preRun"].push(function () {
     else return null;
   }
 
-  newline_charcode = "\n".charCodeAt(0)
-  stdout_fn = Module["onReceiveStdout"]
-  stderr_fn = Module["onReceiveStderr"]
+  const newline_charcode = "\n".charCodeAt(0)
+  const stdout_fn = Module["onReceiveStdout"]
+  const stderr_fn = Module["onReceiveStderr"]
 
   function stdout(char) {
     if (!char || char == newline_charcode) {
