@@ -34,6 +34,7 @@ enum InstructionType {
     AVX2,
     AVX512,
     NEON,
+    WASM_SIMD,
 };
 
 /// Get simd register width of the given instruction type.
@@ -45,6 +46,7 @@ constexpr size_t simdBitsOfInstType(InstructionType instType)
     case AVX2: return 256;
     case AVX512: return 512;
     case NEON: return 128;
+    case WASM_SIMD: return 128;
     }
 }
 
@@ -68,6 +70,9 @@ constexpr InstructionType NativeInstType  = SSE;
 #elif defined(USE_NEON)
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = NEON;
+#elif defined(USE_WASM_SIMD)
+constexpr size_t          NativeAlignment = 16;
+constexpr InstructionType NativeInstType  = WASM_SIMD;
 #else  // Delegate to SSE with simde's implementation
 constexpr size_t          NativeAlignment = 16;
 constexpr InstructionType NativeInstType  = SCALAR;
@@ -278,6 +283,19 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_WASM_SIMD
+    template <typename T, int Alignment>
+    struct VecLoadStore<T, Alignment, WASM_SIMD, std::enable_if_t<std::is_integral_v<T>>>
+    {
+        static FORCE_INLINE auto load(const void *addr) { return wasm_v128_load(addr); }
+
+        static FORCE_INLINE void store(void *addr, v128_t data)
+        {
+            return wasm_v128_store(addr, data);
+        }
+    };
+#endif
+
     template <int Alignment>
     struct VecLoadStore<float, Alignment, SSE>
     {
@@ -352,6 +370,19 @@ namespace detail {
         static FORCE_INLINE void store(void *addr, float32x4_t data)
         {
             vst1q_f32(reinterpret_cast<float *>(addr), data);
+        }
+    };
+#endif
+
+#ifdef USE_WASM_SIMD
+    template <int Alignment>
+    struct VecLoadStore<float, Alignment, WASM_SIMD>
+    {
+        static FORCE_INLINE auto load(const void *addr) { return wasm_v128_load(addr); }
+
+        static FORCE_INLINE void store(void *addr, v128_t data)
+        {
+            return wasm_v128_store(addr, data);
         }
     };
 #endif
@@ -610,6 +641,61 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_WASM_SIMD
+    template <typename FT, typename TT>
+    struct VecCvt<FT, TT, WASM_SIMD, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef v128_t FR;
+        typedef v128_t TR;
+
+        static FORCE_INLINE TR convert1(FR a)
+        {
+            if constexpr (std::is_same_v<FT, int8_t>) {
+                if constexpr (std::is_same_v<TT, int16_t>)
+                    return wasm_i16x8_extend_low_i8x16(a);
+                else if constexpr (std::is_same_v<TT, int32_t>)
+                    return wasm_i32x4_extend_low_i16x8(wasm_i16x8_extend_low_i8x16(a));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
+            }
+            else if constexpr (std::is_same_v<FT, int16_t>) {
+                if constexpr (std::is_same_v<TT, int32_t>)
+                    return wasm_i32x4_extend_low_i16x8(a);
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
+            }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
+        }
+
+        static FORCE_INLINE auto convert(FR a)
+        {
+            if constexpr (std::is_same_v<FT, int8_t>) {
+                if constexpr (std::is_same_v<TT, int16_t>)
+                    return std::tuple(wasm_i16x8_extend_low_i8x16(a),
+                                      wasm_i16x8_extend_high_i8x16(a));
+                else if constexpr (std::is_same_v<TT, int32_t>)
+                    return std::tuple(
+                        wasm_i32x4_extend_low_i16x8(wasm_i16x8_extend_low_i8x16(a)),
+                        wasm_i32x4_extend_high_i16x8(wasm_i16x8_extend_low_i8x16(a)),
+                        wasm_i32x4_extend_low_i16x8(wasm_i16x8_extend_high_i8x16(a)),
+                        wasm_i32x4_extend_high_i16x8(wasm_i16x8_extend_high_i8x16(a)));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int8_t");
+            }
+            else if constexpr (std::is_same_v<FT, int16_t>) {
+                if constexpr (std::is_same_v<TT, int32_t>)
+                    return std::tuple(wasm_i32x4_extend_low_i16x8(a),
+                                      wasm_i32x4_extend_high_i16x8(a));
+                else
+                    static_assert(always_false_v<TT>, "unsupported convert1 to type from int16_t");
+            }
+            else
+                static_assert(always_false_v<FT>, "unsupported convert1 from type");
+        }
+    };
+#endif
+
     template <>
     struct VecCvt<int32_t, float, SSE>
     {
@@ -647,6 +733,17 @@ namespace detail {
         typedef float32x4_t TR;
 
         static FORCE_INLINE TR convert1(FR a) { return vcvtq_f32_s32(a); }
+    };
+#endif
+
+#ifdef USE_WASM_SIMD
+    template <>
+    struct VecCvt<int32_t, float, WASM_SIMD>
+    {
+        typedef v128_t FR;
+        typedef v128_t TR;
+
+        static FORCE_INLINE TR convert1(FR a) { return wasm_f32x4_convert_i32x4(a); }
     };
 #endif
 
@@ -765,6 +862,31 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_WASM_SIMD
+    template <typename FT, typename TT>
+    struct VecPack<FT, TT, WASM_SIMD, std::enable_if_t<std::is_integral_v<TT>>>
+    {
+        typedef v128_t FR;
+        typedef v128_t TR;
+
+        static FORCE_INLINE TR packs(FR a, FR b)
+        {
+            if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, int8_t>)
+                return wasm_i8x16_narrow_i16x8(a, b);
+            else if constexpr (std::is_same_v<FT, int16_t> && std::is_same_v<TT, uint8_t>)
+                return wasm_u8x16_narrow_i16x8(a, b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, int16_t>)
+                return wasm_i16x8_narrow_i32x4(a, b);
+            else if constexpr (std::is_same_v<FT, int32_t> && std::is_same_v<TT, uint16_t>)
+                return wasm_u16x8_narrow_i32x4(a, b);
+            else
+                static_assert(always_false_v<FT, TT>, "unsupported packs type");
+        }
+
+        static FORCE_INLINE TR packs_permuted(FR a, FR b) { return packs(a, b); }
+    };
+#endif
+
     template <typename FT, typename TT>
     struct VecPack<FT, TT, SCALAR, std::enable_if_t<std::is_integral_v<TT>>> : VecPack<FT, TT, SSE>
     {};
@@ -802,6 +924,17 @@ namespace detail {
         static FORCE_INLINE R bitwiseor(R a, R b) { return _mm512_or_si512(a, b); }
         static FORCE_INLINE R bitwiseand(R a, R b) { return _mm512_and_si512(a, b); }
         static FORCE_INLINE R bitwisexor(R a, R b) { return _mm512_xor_si512(a, b); }
+    };
+#endif
+
+#ifdef USE_WASM_SIMD
+    struct VecOpSIWASM_SIMD
+    {
+        typedef v128_t        R;
+        static FORCE_INLINE R setzero() { return wasm_i32x4_splat(0); }
+        static FORCE_INLINE R bitwiseor(R a, R b) { return wasm_v128_or(a, b); }
+        static FORCE_INLINE R bitwiseand(R a, R b) { return wasm_v128_and(a, b); }
+        static FORCE_INLINE R bitwisexor(R a, R b) { return wasm_v128_xor(a, b); }
     };
 #endif
 
@@ -1047,6 +1180,122 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_WASM_SIMD
+    template <>
+    struct VecOp<int8_t, WASM_SIMD> : VecOpSIWASM_SIMD
+    {
+        typedef int8_t        T;
+        static FORCE_INLINE R set1(T a) { return wasm_i8x16_splat(a); }
+        static FORCE_INLINE R add(R a, R b) { return wasm_i8x16_add(a, b); }
+        static FORCE_INLINE R adds(R a, R b) { return wasm_i8x16_add_sat(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return wasm_i8x16_sub(a, b); }
+        static FORCE_INLINE R subs(R a, R b) { return wasm_i8x16_sub_sat(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return wasm_i8x16_min(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return wasm_i8x16_max(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return wasm_u8x16_avgr(a, b); }
+
+        static FORCE_INLINE R dot2_u7i8(R a, R b)
+        {
+    #ifdef USE_WASM_SIMD_RELAXED
+            return wasm_i16x8_relaxed_dot_i8x16_i7x16(b, a);
+    #else
+            const R prod_low  = wasm_i16x8_extmul_low_i8x16(a, b);
+            const R prod_high = wasm_i16x8_extmul_high_i8x16(a, b);
+            const R prod_even = wasm_i16x8_shuffle(prod_low, prod_high, 0, 2, 4, 6, 8, 10, 12, 14);
+            const R prod_odd  = wasm_i16x8_shuffle(prod_low, prod_high, 1, 3, 5, 7, 9, 11, 13, 15);
+            return wasm_i16x8_add(prod_even, prod_odd);
+    #endif
+        }
+
+        /// Compute 4-element dot product of [u7x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
+        {
+    #ifdef USE_WASM_SIMD_RELAXED
+            acc = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(b, a, acc);
+    #else
+            const R prod_low  = wasm_i16x8_extmul_low_i8x16(a, b);
+            const R prod_high = wasm_i16x8_extmul_high_i8x16(a, b);
+            const R psum_low  = wasm_i32x4_extadd_pairwise_i16x8(prod_low);
+            const R psum_high = wasm_i32x4_extadd_pairwise_i16x8(prod_high);
+            const R psum_even = wasm_i32x4_shuffle(psum_low, psum_high, 0, 2, 4, 6);
+            const R psum_odd  = wasm_i32x4_shuffle(psum_low, psum_high, 1, 3, 5, 7);
+            const R psum      = wasm_i32x4_add(psum_even, psum_odd);
+            acc               = wasm_i32x4_add(acc, psum);
+    #endif
+        }
+
+        /// Compute 4-element dot product of [i8x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b)
+        {
+    #ifdef USE_WASM_SIMD_RELAXED
+            const R highest_bit = wasm_i8x16_splat(0x80);
+            R       low7        = wasm_v128_andnot(a, highest_bit);
+            R       msb         = wasm_v128_and(a, highest_bit);
+
+            acc = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(b, low7, acc);
+            msb = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(b, msb, wasm_i32x4_splat(0));
+
+            // Place value of the MSB was negative
+            acc = simde_mm_sub_epi32(acc, msb);
+    #else
+            const R prod_low  = wasm_i16x8_extmul_low_i8x16(a, b);
+            const R prod_high = wasm_i16x8_extmul_high_i8x16(a, b);
+            const R psum_low  = wasm_i32x4_extadd_pairwise_i16x8(prod_low);
+            const R psum_high = wasm_i32x4_extadd_pairwise_i16x8(prod_high);
+            const R psum_even = wasm_i32x4_shuffle(psum_low, psum_high, 0, 2, 4, 6);
+            const R psum_odd  = wasm_i32x4_shuffle(psum_low, psum_high, 1, 3, 5, 7);
+            const R psum      = wasm_i32x4_add(psum_even, psum_odd);
+            acc               = wasm_i32x4_add(acc, psum);
+    #endif
+        }
+    };
+#endif
+
+    template <>
+    struct VecOp<int8_t, SCALAR> : VecOp<int8_t, SSE>
+    {
+        static FORCE_INLINE R dot2_u7i8(R a, R b)
+        {
+            simde__m128i_private r_;
+            simde__m128i_private a_ = simde__m128i_to_private(a), b_ = simde__m128i_to_private(b);
+
+            r_.i16[0] = a_.i8[0] * b_.i8[0] + a_.i8[1] * b_.i8[1];
+            r_.i16[1] = a_.i8[2] * b_.i8[2] + a_.i8[3] * b_.i8[3];
+            r_.i16[2] = a_.i8[4] * b_.i8[4] + a_.i8[5] * b_.i8[5];
+            r_.i16[3] = a_.i8[6] * b_.i8[6] + a_.i8[7] * b_.i8[7];
+            r_.i16[4] = a_.i8[8] * b_.i8[8] + a_.i8[9] * b_.i8[9];
+            r_.i16[5] = a_.i8[10] * b_.i8[10] + a_.i8[11] * b_.i8[11];
+            r_.i16[6] = a_.i8[12] * b_.i8[12] + a_.i8[13] * b_.i8[13];
+            r_.i16[7] = a_.i8[14] * b_.i8[14] + a_.i8[15] * b_.i8[15];
+
+            return simde__m128i_from_private(r_);
+        }
+
+        /// Compute 4-element dot product of [u7x16] and [i8x16] then accumulate into [i32x4].
+        static FORCE_INLINE void dot4_u7i8_accum(R &acc, R a, R b)
+        {
+            simde__m128i_private r_ = simde__m128i_to_private(acc);
+            simde__m128i_private a_ = simde__m128i_to_private(a), b_ = simde__m128i_to_private(b);
+
+            r_.i32[0] +=
+                +(int32_t)a_.i8[0] * (int32_t)b_.i8[0] + (int32_t)a_.i8[1] * (int32_t)b_.i8[1]
+                + (int32_t)a_.i8[2] * (int32_t)b_.i8[2] + (int32_t)a_.i8[3] * (int32_t)b_.i8[3];
+            r_.i32[1] +=
+                +(int32_t)a_.i8[4] * (int32_t)b_.i8[4] + (int32_t)a_.i8[5] * (int32_t)b_.i8[5]
+                + (int32_t)a_.i8[6] * (int32_t)b_.i8[6] + (int32_t)a_.i8[7] * (int32_t)b_.i8[7];
+            r_.i32[2] +=
+                +(int32_t)a_.i8[8] * (int32_t)b_.i8[8] + (int32_t)a_.i8[9] * (int32_t)b_.i8[9]
+                + (int32_t)a_.i8[10] * (int32_t)b_.i8[10] + (int32_t)a_.i8[11] * (int32_t)b_.i8[11];
+            r_.i32[3] +=
+                +(int32_t)a_.i8[12] * (int32_t)b_.i8[12] + (int32_t)a_.i8[13] * (int32_t)b_.i8[13]
+                + (int32_t)a_.i8[14] * (int32_t)b_.i8[14] + (int32_t)a_.i8[15] * (int32_t)b_.i8[15];
+
+            acc = simde__m128i_from_private(r_);
+        }
+
+        static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b) { dot4_u7i8_accum(acc, a, b); }
+    };
+
     template <>
     struct VecOp<int16_t, SSE> : VecOpSISSE
     {
@@ -1228,6 +1477,60 @@ namespace detail {
         }
     };
 #endif
+
+#ifdef USE_WASM_SIMD
+    template <>
+    struct VecOp<int16_t, WASM_SIMD> : VecOpSIWASM_SIMD
+    {
+        typedef int16_t       T;
+        static FORCE_INLINE R set1(T a) { return wasm_i16x8_splat(a); }
+        static FORCE_INLINE R add(R a, R b) { return wasm_i16x8_add(a, b); }
+        static FORCE_INLINE R adds(R a, R b) { return wasm_i16x8_add_sat(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return wasm_i16x8_sub(a, b); }
+        static FORCE_INLINE R subs(R a, R b) { return wasm_i16x8_sub_sat(a, b); }
+        static FORCE_INLINE R mullo(R a, R b) { return wasm_i16x8_mul(a, b); }
+        static FORCE_INLINE R mulhi(R a, R b)
+        {
+            const R lo = wasm_i32x4_extmul_low_i16x8(a, b);
+            const R hi = wasm_i32x4_extmul_high_i16x8(a, b);
+            return wasm_i16x8_shuffle(lo, hi, 1, 3, 5, 7, 9, 11, 13, 15);
+        }
+        static FORCE_INLINE R mulhrs(R a, R b)
+        {
+            R lo = wasm_i32x4_mul(wasm_i32x4_extend_low_i16x8(a), wasm_i32x4_extend_low_i16x8(b));
+            R hi = wasm_i32x4_mul(wasm_i32x4_extend_high_i16x8(a), wasm_i32x4_extend_high_i16x8(b));
+            const R inc = wasm_i32x4_splat(0x4000);
+            lo          = wasm_i32x4_add(lo, inc);
+            hi          = wasm_i32x4_add(hi, inc);
+            lo          = wasm_i32x4_add(lo, lo);
+            hi          = wasm_i32x4_add(hi, hi);
+            return wasm_i16x8_shuffle(lo, hi, 1, 3, 5, 7, 9, 11, 13, 15);
+        }
+        static FORCE_INLINE R min(R a, R b) { return wasm_i16x8_min(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return wasm_i16x8_max(a, b); }
+        static FORCE_INLINE R avg(R a, R b) { return wasm_u16x8_avgr(a, b); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return wasm_i16x8_shr(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return wasm_u16x8_shr(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return wasm_i16x8_shl(a, i);
+        }
+        static FORCE_INLINE R dot2(R a, R b) { return wasm_i32x4_dot_i16x8(a, b); }
+    };
+#endif
+
+    template <>
+    struct VecOp<int16_t, SCALAR> : VecOp<int16_t, SSE>
+    {};
 
     template <>
     struct VecOp<int32_t, SSE> : VecOpSISSE
@@ -1415,6 +1718,81 @@ namespace detail {
     };
 #endif
 
+#ifdef USE_WASM_SIMD
+    template <>
+    struct VecOp<int32_t, WASM_SIMD> : VecOpSIWASM_SIMD
+    {
+        typedef int32_t       T;
+        static FORCE_INLINE R set1(T a) { return wasm_i32x4_splat(a); }
+        static FORCE_INLINE R add(R a, R b) { return wasm_i32x4_add(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return wasm_i32x4_sub(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return wasm_i32x4_min(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return wasm_i32x4_max(a, b); }
+        template <int i>
+        static FORCE_INLINE R srai(R a)
+        {
+            return wasm_i32x4_shr(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R srli(R a)
+        {
+            return wasm_u32x4_shr(a, i);
+        }
+        template <int i>
+        static FORCE_INLINE R slli(R a)
+        {
+            return wasm_i32x4_shl(a, i);
+        }
+        static FORCE_INLINE T reduceadd(R a)
+        {
+            auto hi64  = wasm_i32x4_shuffle(a, a, 2, 3, 0, 1);
+            auto sum64 = wasm_i32x4_add(a, hi64);
+            auto hi32  = wasm_i32x4_shuffle(sum64, sum64, 1, 0, 3, 2);
+            auto sum32 = wasm_i32x4_add(sum64, hi32);
+            return wasm_i32x4_extract_lane(sum32, 0);
+        }
+
+        /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
+        static FORCE_INLINE R hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            sum0 = wasm_i32x4_add(wasm_i32x4_shuffle(sum0, sum1, 0, 2, 4, 6),
+                                  wasm_i32x4_shuffle(sum0, sum1, 1, 3, 5, 7));
+            sum2 = wasm_i32x4_add(wasm_i32x4_shuffle(sum2, sum3, 0, 2, 4, 6),
+                                  wasm_i32x4_shuffle(sum2, sum3, 1, 3, 5, 7));
+            sum0 = wasm_i32x4_add(wasm_i32x4_shuffle(sum0, sum2, 0, 2, 4, 6),
+                                  wasm_i32x4_shuffle(sum0, sum2, 1, 3, 5, 7));
+            return sum0;
+        }
+    };
+#endif
+
+    template <>
+    struct VecOp<int32_t, SCALAR> : VecOp<int32_t, SSE>
+    {
+        static FORCE_INLINE T reduceadd(R a)
+        {
+            simde__m128i_private a_ = simde__m128i_to_private(a);
+            return a_.i32[0] + a_.i32[1] + a_.i32[2] + a_.i32[3];
+        }
+
+        /// Horizontal sum [i32x4] of 4 groups into one [i32x4].
+        static FORCE_INLINE R hsum4(R sum0, R sum1, R sum2, R sum3)
+        {
+            simde__m128i_private r_;
+            simde__m128i_private sum0_ = simde__m128i_to_private(sum0);
+            simde__m128i_private sum1_ = simde__m128i_to_private(sum1);
+            simde__m128i_private sum2_ = simde__m128i_to_private(sum2);
+            simde__m128i_private sum3_ = simde__m128i_to_private(sum3);
+
+            r_.i32[0] = sum0_.i32[0] + sum0_.i32[1] + sum0_.i32[2] + sum0_.i32[3];
+            r_.i32[1] = sum1_.i32[0] + sum1_.i32[1] + sum1_.i32[2] + sum1_.i32[3];
+            r_.i32[2] = sum2_.i32[0] + sum2_.i32[1] + sum2_.i32[2] + sum2_.i32[3];
+            r_.i32[3] = sum3_.i32[0] + sum3_.i32[1] + sum3_.i32[2] + sum3_.i32[3];
+
+            return simde__m128i_from_private(r_);
+        }
+    };
+
     template <>
     struct VecOp<float, SSE>
     {
@@ -1507,9 +1885,48 @@ namespace detail {
     };
 #endif
 
-    template <typename T>
-    struct VecOp<T, SCALAR> : VecOp<T, SSE>
-    {};
+#ifdef USE_WASM_SIMD
+    template <>
+    struct VecOp<float, WASM_SIMD>
+    {
+        typedef float         T;
+        typedef v128_t        R;
+        static FORCE_INLINE R setzero() { return wasm_f32x4_const(0.f, 0.f, 0.f, 0.f); }
+        static FORCE_INLINE R set1(T a) { return wasm_f32x4_splat(a); }
+        static FORCE_INLINE R add(R a, R b) { return wasm_f32x4_add(a, b); }
+        static FORCE_INLINE R sub(R a, R b) { return wasm_f32x4_sub(a, b); }
+        static FORCE_INLINE R mul(R a, R b) { return wasm_f32x4_mul(a, b); }
+        static FORCE_INLINE R div(R a, R b) { return wasm_f32x4_div(a, b); }
+        static FORCE_INLINE R min(R a, R b) { return wasm_f32x4_min(a, b); }
+        static FORCE_INLINE R max(R a, R b) { return wasm_f32x4_max(a, b); }
+        static FORCE_INLINE R fmadd(R a, R b, R c)
+        {
+    #ifdef USE_WASM_SIMD_RELAXED
+            return wasm_f32x4_relaxed_madd(a, b, c);
+    #else
+            return wasm_f32x4_add(wasm_f32x4_mul(a, b), c);
+    #endif
+        }
+        static FORCE_INLINE T reduceadd(R a)
+        {
+            R shuf = wasm_i32x4_shuffle(a, a, 1, 1, 3, 3);  // broadcast elements 3,1 to 2,0
+            R sums = wasm_f32x4_add(a, shuf);
+            shuf   = wasm_i32x4_shuffle(sums, sums, 2, 3, 2, 3);  // high half -> low half
+            sums   = wasm_f32x4_add(sums, shuf);
+            return wasm_f32x4_extract_lane(sums, 0);
+        }
+    };
+#endif
+
+    template <>
+    struct VecOp<float, SCALAR> : VecOp<float, SSE>
+    {
+        static FORCE_INLINE T reduceadd(R a)
+        {
+            simde__m128_private a_ = simde__m128_to_private(a);
+            return (a_.f32[0] + a_.f32[1]) + (a_.f32[2] + a_.f32[3]);
+        }
+    };
 
     // ------------------------------------------------------------------------
     // Affine transform operation (y = Ax + b) template

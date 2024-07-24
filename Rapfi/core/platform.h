@@ -26,6 +26,10 @@
     #include <arm_neon.h>  // NEON
 #endif
 
+#if defined(USE_WASM_SIMD)
+    #include <wasm_simd128.h>  // WASM SIMD128
+#endif
+
 #if defined(_MSC_VER)
     #include <cstdlib>   // for _rotr64
     #include <intrin.h>  // for __umulh, _mm_prefetch, __prefetch
