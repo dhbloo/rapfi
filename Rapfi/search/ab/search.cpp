@@ -646,7 +646,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     uint16_t oppo5 = board.p4Count(oppo, A_FIVE);           // opponent five
     uint16_t oppo4 = oppo5 + board.p4Count(oppo, B_FLEX4);  // opponent straight four and five
 
-    // Return eval directly or dive into vcf search when the depth reaches zero
+    // Dive into vcf search when the depth reaches zero (~17 elo)
     if (depth <= 0.0f) {
         return oppo5 ? vcfdefend<Rule, NT>(board, ss, alpha, beta)
                      : vcfsearch<Rule, NT>(board, ss, alpha, beta);
@@ -843,21 +843,21 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         improvement = ss->staticEval - (ss - 2)->staticEval;
     }
 
-    // Step 7. Razoring with VCF (~55 elo)
+    // Step 7. Razoring with VCF (~68 elo)
     if (!PvNode
         && (alpha < VALUE_MATE_IN_MAX_PLY || !ttHit)  // We are not searching for a short win
         && eval + razorMargin<Rule>(depth) < alpha) {
         return vcfsearch<Rule, NonPV>(board, ss, alpha, alpha + 1);
     }
 
-    // Step 8. Futility pruning: child node (~70 elo)
+    // Step 8. Futility pruning: child node (~121 elo)
     if (!PvNode && eval < VALUE_MATE_IN_MAX_PLY  // Do not return unproven wins
         && beta > VALUE_MATED_IN_MAX_PLY         // Confirm non-losing move exists
         && eval - futilityMargin<Rule>(depth - 1, cutNode && !ttHit, improvement > 0) >= beta
         && !((ss - 2)->moveP4[self] >= E_BLOCK4 && (ss - 4)->moveP4[self] >= E_BLOCK4))
         return eval;
 
-    // Step 9. Null move pruning (~35 elo)
+    // Step 9. Null move pruning (~3 elo)
     if (!PvNode && !oppo4 && !skipMove && eval >= beta
         && board.getLastMove() != Pos::PASS  // No consecutive pass moves
         && ss->staticEval >= beta + nullMoveMargin<Rule>(depth)) {
@@ -887,11 +887,11 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         }
     }
 
-    // Step 10. Internal iterative deepening (reduction)
+    // Step 10. Internal iterative reduction (~3 elo)
     if (!RootNode && PvNode && !ttMove)
         depth -= IIR_REDUCTION_PV;
 
-    // Reduce for pv ttMove that has not been chosen for a few iterations
+    // Reduce for pv ttMove that has not been chosen for a few iterations (~32 elo)
     if (PvNode && depth > 1 && ttMove)
         depth -= std::clamp((depth - ttDepth) * IIR_REDUCTION_TT, 0.0f, IIR_REDUCTION_TT_MAX);
 
@@ -899,6 +899,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     if (depth <= 0)
         return vcfsearch<Rule, NT>(board, ss, alpha, beta);
 
+    // Internal iterative deepening on higher depth (~1 elo)
     if (depth >= IID_DEPTH && !ttMove) {
         depth -= IIR_REDUCTION;
 
@@ -1003,19 +1004,19 @@ moves_loop:
         // Step 12. Pruning at shallow depth
         // Do pruning only when we have non-losing moves, otherwise we may have a false mate.
         if (!RootNode && bestValue > VALUE_MATED_IN_MAX_PLY) {
-            // Move count pruning: skip move if movecount is above threshold (~155 elo)
+            // Move count pruning: skip move if movecount is above threshold (~107 elo)
             if (moveCount >= futilityMoveCount(depth, improvement > 0))
                 continue;
 
-            // Skip trivial moves at lower depth (~10 elo)
+            // Skip trivial moves at lower depth (~2 elo at LTC)
             if (trivialMove && depth < TRIVIAL_PRUN_DEPTH)
                 continue;
 
-            // Policy based pruning
+            // Policy based pruning (~10 elo)
             if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth))
                 continue;
 
-            // Prun distract defence move (which is likely to drastically delay a winning)
+            // Prun distract defence move which is likely to delay a winning (~2 elo)
             if (oppo4 && depth < TRIVIAL_PRUN_DEPTH && ss->moveP4[oppo] < E_BLOCK4 && distract)
                 continue;
         }
@@ -1023,12 +1024,12 @@ moves_loop:
         // Step 13. Extensions
         Depth extension = 0;
 
-        // Singular response extension for opponent B4 attack
+        // Singular response extension for opponent B4 attack (~77 elo)
         if (oppo5)
             extension = OPPO5_EXT;
 
         // Singular extension: only one move fails high while other moves fails low on a search of
-        // (alpha-s, beta-s), then this move is singular and should be extended.
+        // (alpha-s, beta-s), then this move is singular and should be extended. (~52 elo)
         else if (!RootNode && depth >= SE_DEPTH && move == ttMove
                  && !skipMove                                  // No recursive singular search
                  && std::abs(ttValue) < VALUE_MATE_IN_MAX_PLY  // ttmove value is not a mate
@@ -1073,7 +1074,7 @@ moves_loop:
                 extension = -SE_REDUCTION_FH;
         }
 
-        // Extension for ttmove without singular extension
+        // Extension for ttmove without singular extension (~12 elo)
         else if (move == ttMove) {
             // Extension for ttmove
             extension = PvNode ? TTM_EXT_PV : TTM_EXT_NONPV;
@@ -1083,7 +1084,7 @@ moves_loop:
                 extension += (distSelf <= 4 ? NEARB4_EXT_DIST4 : NEARB4_EXT_DIST6);
         }
 
-        // Fail high reduction
+        // Fail high reduction (~8 elo)
         if (likelyFailHigh) {
             if (ss->moveP4[self] >= E_BLOCK4) {
                 // If we failed high for two continous E_BLOCK4 moves, extend rather than reduce
@@ -1113,37 +1114,37 @@ moves_loop:
                                               beta - alpha,
                                               searchData->rootDelta);
 
-            // Policy based reduction
+            // Policy based reduction (~59 elo)
             if (mp.hasPolicyScore())
                 r += policyReduction<Rule>(mp.curMoveScore()
                                            * (0.1f / Evaluation::PolicyBuffer::ScoreScale));
 
-            // Dynamic reduction based on complexity
+            // Dynamic reduction based on complexity (~2 elo)
             r += complexity * complexityReduction<Rule>(trivialMove, importantMove, distract);
 
-            // Decrease reduction if position is or has been on the PV
+            // Decrease reduction if position is or has been on the PV (~10 elo)
             if (ss->ttPv)
                 r -= 1.0f;
 
-            // Increase reduction for nodes that does not improve root alpha
+            // Increase reduction for nodes that does not improve root alpha (~0 elo)
             if (!RootNode && (ss->ply & 1) && bestValue >= -searchData->rootAlpha)
                 r += 1.0f;
 
-            // Increase reduction for cut nodes if is not killer moves
+            // Increase reduction for cut nodes if is not killer moves (~5 elo)
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
                 r += NOKILLER_CUTNODE_REDUCTION;
 
-            // Increase reduction for useless defend move (~25 elo)
+            // Increase reduction for useless defend move (~6 elo)
             if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
                 r += (distOppo > 4) * 2 + (distSelf > 4);
 
-            // Decrease reduction for continuous attack
+            // Decrease reduction for continuous attack (~5 elo)
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
                 && (ss->moveP4[self] >= H_FLEX3 || distSelf <= 4 && ss->moveP4[self] >= J_FLEX2_2X))
                 r -= CONTINUOUS_ATTACK_EXT;
 
             if constexpr (Rule == Rule::RENJU) {
-                // Decrease reduction for false forbidden move in Renju
+                // Decrease reduction for false forbidden move in Renju (~6 elo)
                 if (ss->moveP4[BLACK] == FORBID)
                     r -= 1.0f;
             }
@@ -1151,7 +1152,7 @@ moves_loop:
             // Update statScore of this node
             ss->statScore = statScore(searchData->mainHistory, self, move);
 
-            // Decrease/increase reduction for moves with a good/bad history
+            // Decrease/increase reduction for moves with a good/bad history (~9 elo)
             r -= extensionFromStatScore(ss->statScore, depth);
 
             // Allow LMR to do deeper search in some circumstances
@@ -1161,6 +1162,7 @@ moves_loop:
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
 
             if (value > alpha && d < newDepth) {
+                // Extra extension in lmr (~13 elo)
                 Depth ext = lmrExtension<Rule>(newDepth, d, value, alpha, bestValue);
                 // Do not allow more extension if extra extension is already high
                 if (ss->extraExtension >= LMR_EXTRA_MAX_DEPTH)
@@ -1300,7 +1302,7 @@ moves_loop:
                     if (RootNode)
                         searchData->rootAlpha = alpha;
 
-                    // Reduce other moves if we have found at least one score improvement
+                    // Reduce other moves if we have found at least one score improvement (~26 elo)
                     if (depth > 2 && depth < 12 && beta < 2000 && value > -2000)
                         depth -= 1;
 
