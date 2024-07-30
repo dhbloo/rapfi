@@ -53,28 +53,28 @@ constexpr GenType operator|(GenType a, GenType b)
     return GenType(int(a) | int(b));
 }
 
-/// Move struct contains a pos and its score, used for move sorting.
-struct Move
+/// ScoredMove struct contains a pos and its score, used for move sorting.
+struct ScoredMove
 {
     Pos   pos;
     Score score;     /// Score with history and other heruistics that is used for sorting
     Score rawScore;  /// Raw score from score table or evaluator
 
-         operator Pos() const { return pos; }
-         operator float() const = delete;  // Inhibit unwanted implicit conversions
-    void operator               =(Pos p) { pos = p; }
-    bool operator<(const Move &o) const { return score < o.score; }
-    bool operator>(const Move &o) const { return score > o.score; }
+    operator Pos() const { return pos; }
+    operator float() const = delete;  // Inhibit unwanted implicit conversions
+    void operator=(Pos p) { pos = p; }
+    bool operator<(const ScoredMove &o) const { return score < o.score; }
+    bool operator>(const ScoredMove &o) const { return score > o.score; }
 };
 
 /// Generate moves satisfying the given GenType, and stores them
 /// in the move list. Scores of generated moves are all set to zero.
 /// @param board The current board state to generate moves.
 /// @param moveList The begin cursor of an empty move list.
-/// @tparam Type Move generation type.
+/// @tparam Type ScoredMove generation type.
 /// @return The end cursor of move list (next of the last element).
 template <GenType Type>
-Move *generate(const Board &board, Move *moveList);
+ScoredMove *generate(const Board &board, ScoredMove *moveList);
 
 /// Generate moves satisfying the given GenType, while only generate
 /// neighbor moves around the last move of the current side.
@@ -83,14 +83,14 @@ Move *generate(const Board &board, Move *moveList);
 /// @param center The center pos on board to generate moves.
 /// @param neighbors A pointer to an array of pos offsets.
 /// @param numNeighbors The length of pos offsets array.
-/// @tparam Type Move generation type.
+/// @tparam Type ScoredMove generation type.
 /// @return The end cursor of move list (next of the last element).
 template <GenType Type>
-Move *generateNeighbors(const Board     &board,
-                        Move            *moveList,
-                        Pos              center,
-                        const Direction *neighbors,
-                        size_t           numNeighbors);
+ScoredMove *generateNeighbors(const Board     &board,
+                              ScoredMove      *moveList,
+                              Pos              center,
+                              const Direction *neighbors,
+                              size_t           numNeighbors);
 
 /// Validate opponent C_BLOCK4_FLEX3 type move is real threat in Renju.
 /// @return True if threat is real, otherwise false.

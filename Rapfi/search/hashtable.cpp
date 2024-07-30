@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "hashtable.h"
 
@@ -143,7 +143,7 @@ bool HashTable::probe(HashKey hashKey,
             ttEval  = Value(tte.eval16);
             ttIsPv  = bool(tte.pvBoundBest16 >> 15);
             ttBound = Bound((tte.pvBoundBest16 >> 13) & 0x3);
-            ttMove  = Pos(tte.pvBoundBest16 & 0x3ff);
+            ttMove  = Pos((tte.pvBoundBest16 & 0x3ff) - 1);
             ttDepth = int(tte.depth8) + (int)DEPTH_LOWER_BOUND;
 
             return true;
@@ -192,13 +192,14 @@ void HashTable::store(HashKey hashKey,
 
     // Use previous stored best move if we do not have a best move this time
     if (move == Pos::NONE && newKey32 == oldKey32)
-        move = Pos(replace->pvBoundBest16 & 0x3ff);
+        move = Pos((replace->pvBoundBest16 & 0x3ff) - 1);
 
     // Construct the new tt entry on stack first, then copy it to shared memory
+    // Note that best move is stored by adding 1 to offset the Pos::PASS.
     TTEntry newEntry;
     newEntry.value16       = int16_t(searchValueToStoredValue(value, ply));
     newEntry.eval16        = int16_t(eval);
-    newEntry.pvBoundBest16 = uint16_t(isPv) << 15 | uint16_t(bound) << 13 | uint16_t(move);
+    newEntry.pvBoundBest16 = uint16_t(isPv) << 15 | uint16_t(bound) << 13 | uint16_t((int)move + 1);
     newEntry.depth8        = uint8_t(depth - (int)DEPTH_LOWER_BOUND);
     newEntry.generation8   = uint8_t(generation);
     newEntry.key32         = newKey32 ^ newEntry.data[0] ^ newEntry.data[1];

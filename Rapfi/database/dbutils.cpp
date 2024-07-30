@@ -41,10 +41,7 @@ void copyDatabasePathToRoot(DBStorage &dbSrc, DBStorage &dbDst, Board &board, Ru
     while (board.ply() > 0) {
         Pos move = board.getLastMove();
         path.push_back(move);
-        if (move == Pos::PASS)
-            board.undoPassMove();
-        else
-            board.undo(rule);
+        board.undo(rule);
     }
 
     DBRecord record, tempRecord;
@@ -53,11 +50,7 @@ void copyDatabasePathToRoot(DBStorage &dbSrc, DBStorage &dbDst, Board &board, Ru
         Pos pos = path.back();
         path.pop_back();
 
-        if (board.getLastMove() == Pos::PASS)
-            board.doPassMove();
-        else
-            board.move(rule, pos);
-
+        board.move(rule, pos);
         key = constructDBKey(board, rule);
 
         if (dbSrc.get(key, record, RECORD_MASK_ALL)
@@ -458,7 +451,7 @@ size_t RenlibReader::traverse(int boardSize, Rule rule, std::function<CallbackFu
         nodeCount++;
 
         // remove "ROOT" move for old Renlib format
-        if (rootNode.move == Pos::NONE)
+        if (rootNode.move == Pos::PASS)
             rootNode = readNode();
 
         auto board = std::make_unique<Board>(boardSize);
@@ -519,7 +512,7 @@ RenlibReader::LibNode RenlibReader::readNode()
     uint8_t move = popByte();
     uint8_t flag = popByte();
     LibNode node {
-        move ? Pos {(move & 0x0f) - 1, (move & 0xf0) >> 4} : Pos::NONE,
+        move ? Pos {(move & 0x0f) - 1, (move & 0xf0) >> 4} : Pos::PASS,
         NodeFlag(flag),
     };
 
@@ -571,10 +564,10 @@ size_t RenlibReader::processNode(Board                       &board,
 
     do {
         bool ignoreChildren = false;
-        if (node->move == Pos::NONE) {
+        if (node->move == Pos::PASS) {
             if (board.passMoveCount() >= board.cellCount())
                 throw std::runtime_error("too many pass move");
-            board.doPassMove();
+            board.move(rule, Pos::PASS);
         }
         else if (board.isInBoard(node->move)) {
             if (board.isEmpty(node->move)) {
@@ -613,12 +606,8 @@ size_t RenlibReader::processNode(Board                       &board,
         }
 
         // Undo the move
-        if (!ignoreChildren) {
-            if (board.getLastMove() == Pos::PASS)
-                board.undoPassMove();
-            else
-                board.undo(rule);
-        }
+        if (!ignoreChildren)
+            board.undo(rule);
 
         // Process next sibling node
         if (node->hasSibling()) {

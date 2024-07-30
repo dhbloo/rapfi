@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "movepick.h"
 
@@ -45,7 +45,7 @@ enum Stages {
 
 /// Partial sort the move list up to the score limit. It dynamiclly decides
 /// which sorting algorithm to use based on how many moves are in the list.
-void fastPartialSort(Move *begin, Move *end, Score limit)
+void fastPartialSort(ScoredMove *begin, ScoredMove *end, Score limit)
 {
     // heruistic values
     constexpr size_t InsertionSortLimit = MAX_MOVES / 4;
@@ -55,10 +55,10 @@ void fastPartialSort(Move *begin, Move *end, Score limit)
     if (nMoves <= InsertionSortLimit) {
         // Sorts moves in descending order up to and including a given limit.
         // The order of moves smaller than the limit is left unspecified.
-        for (Move *sortedEnd = begin, *p = begin + 1; p < end; ++p)
+        for (ScoredMove *sortedEnd = begin, *p = begin + 1; p < end; ++p)
             if (p->score >= limit) {
-                Move tmp = *p, *q;
-                *p       = *++sortedEnd;
+                ScoredMove tmp = *p, *q;
+                *p             = *++sortedEnd;
                 for (q = sortedEnd; q != begin && *(q - 1) < tmp; --q)
                     *q = *(q - 1);
                 *q = tmp;
@@ -155,7 +155,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     }
 
     // check legality for defence ttmove
-    ttmValid = ttmValid && board.isEmpty(args.ttMove);
+    ttmValid = ttmValid && board.isLegal(args.ttMove);
 
     stage += !ttmValid;
     ttMove = ttmValid ? args.ttMove : Pos::NONE;
@@ -185,7 +185,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
     }
 
     // check legality for defence ttmove
-    ttmValid = ttmValid && board.isEmpty(args.ttMove);
+    ttmValid = ttmValid && board.isLegal(args.ttMove);
 
     stage += !ttmValid;
     ttMove = ttmValid ? args.ttMove : Pos::NONE;
@@ -218,7 +218,7 @@ Pos MovePicker::pickNextMove(Pred filter)
 
 /// Score all remaining moves according to score type.
 template <MovePicker::ScoreType Type>
-void MovePicker::scoreMoves()
+void MovePicker::scoreAllMoves()
 {
     using Evaluation::Evaluator;
     using Evaluation::PolicyBuffer;
@@ -298,7 +298,7 @@ top:
         curMove = moves;
         endMove = generate<ALL>(board, curMove);
 
-        scoreMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY | COUNTER_MOVE)>();
+        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY | COUNTER_MOVE)>();
         fastPartialSort(curMove, endMove, 0);
 
         stage = ALLMOVES;
@@ -320,7 +320,7 @@ top:
         endMove = generate<DEFEND_FOUR>(board, curMove);
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
-        scoreMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
+        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
         fastPartialSort(curMove, endMove, 0);
 
         stage = ALLMOVES;
@@ -344,7 +344,7 @@ top:
 
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
-        scoreMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
+        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
         fastPartialSort(curMove, endMove, 0);
 
         stage = ALLMOVES;
@@ -363,7 +363,7 @@ top:
                                                                     arraySize(RANGE_SQUARE2_LINE4));
         }
 
-        scoreMoves<BALANCED>();
+        scoreAllMoves<BALANCED>();
         fastPartialSort(curMove, endMove, 0);
 
         stage = ALLMOVES;

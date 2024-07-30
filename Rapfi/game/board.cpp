@@ -203,6 +203,23 @@ template void Board::newGame<RENJU>();
 template <Rule R, Board::MoveType MT>
 void Board::move(Pos pos)
 {
+    // handle the case when the pos is a PASS move
+    if (UNLIKELY(pos == Pos::PASS)) {
+        assert(passMoveCount() < cellCount());
+
+        StateInfo &st = stateInfos[++moveCount];
+        st            = stateInfos[moveCount - 1];
+        st.lastMove   = Pos::PASS;
+
+        passCount[currentSide]++;
+        currentSide = ~currentSide;
+
+        // after move evaluator update
+        if (MT == MoveType::NORMAL && evaluator_)
+            evaluator_->afterPass(*this);
+        return;
+    }
+
     assert(pos.valid());
     assert(isEmpty(pos));
 
@@ -321,6 +338,19 @@ void Board::undo()
     assert(moveCount > 0);
     Pos lastPos = getLastMove();
 
+    // handle the case when the last move is a PASS
+    if (UNLIKELY(lastPos == Pos::PASS)) {
+        currentSide = ~currentSide;
+        assert(passCount[currentSide] > 0);
+        passCount[currentSide]--;
+        moveCount--;
+
+        // after undo evaluator update
+        if (MT == MoveType::NORMAL && evaluator_)
+            evaluator_->afterUndoPass(*this);
+        return;
+    }
+
     // before undo evaluator update
     if (MT == MoveType::NORMAL && evaluator_)
         evaluator_->beforeUndo(*this, lastPos);
@@ -389,26 +419,6 @@ template void Board::undo<STANDARD, Board::MoveType::NORMAL>();
 template void Board::undo<STANDARD, Board::MoveType::NO_EVAL>();
 template void Board::undo<RENJU, Board::MoveType::NORMAL>();
 template void Board::undo<RENJU, Board::MoveType::NO_EVAL>();
-
-void Board::doPassMove()
-{
-    assert(passMoveCount() < cellCount());
-
-    StateInfo &st = stateInfos[++moveCount];
-    st            = stateInfos[moveCount - 1];
-    st.lastMove   = Pos::PASS;
-
-    passCount[currentSide]++;
-    currentSide = ~currentSide;
-}
-
-void Board::undoPassMove()
-{
-    currentSide = ~currentSide;
-    assert(passCount[currentSide] > 0);
-    passCount[currentSide]--;
-    moveCount--;
-}
 
 bool Board::checkForbiddenPoint(Pos pos) const
 {

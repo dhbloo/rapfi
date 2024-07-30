@@ -173,13 +173,16 @@ public:
     void newGame();
 
     /// Make move and incremental update the board state.
-    /// @param pos Pos to put the next stone.
+    /// @param pos Pos to put the next stone. A Pass move is allowed.
     /// @tparam R Game rule to use.
     /// @tparam MT Type of this move. There are four types of move:
     ///     1. NORMAL: Updates cell, pattern, score, eval and external evaluator.
     ///     2. NO_EVALUATOR: Updates cell, pattern, score, eval.
     ///     3. NO_EVAL: Updates cell, pattern, score.
     ///     4. NO_EVAL_MULTI: Updates cell, pattern, score. Side to move is not swapped.
+    /// @note Recursive pass move is allowed, but the total number of null moves
+    ///     must be not greater than MAX_PASS_MOVES. As long as consecutive pass
+    ///     moves are not allowed, this condition should be met.
     template <Rule R, MoveType MT = MoveType::NORMAL>
     void move(Pos pos);
 
@@ -197,23 +200,12 @@ public:
     void undo(Rule rule);
 
     // ------------------------------------------------------------------------
-    // pass move & multi move
+    // special helper function
 
     /// Flip current side to move without recording in state info.
-    void flipSide()
-    {
-        currentSide       = ~currentSide;
-        currentZobristKey = ~currentZobristKey;  // Invert zobrist key in case of tt conflict
-    }
-
-    /// Make a pass move.
-    /// @note Recursive pass move is allowed, but the total number of null moves
-    ///     must be not greater than MAX_PASS_MOVES. As long as consecutive pass
-    ///     moves are not allowed, this condition should be met.
-    void doPassMove();
-
-    /// Undo a pass move.
-    void undoPassMove();
+    /// This is only served for some special board checking proecess. It must be
+    /// used in pair locally. If a pass is desired, use move(Pos::PASS) instead.
+    void flipSide() { currentSide = ~currentSide; }
 
     // ------------------------------------------------------------------------
     // pos-specific info queries
@@ -232,11 +224,15 @@ public:
         return cells[pos].piece;
     }
 
-    /// Check if the pos is in side the board.
+    /// Check if the pos is in the region of current board size.
     bool isInBoard(Pos pos) const { return pos.isInBoard(boardSize, boardSize); }
 
-    /// Check if the pos is an empty cell.
+    /// Check if the pos is on an empty cell.
+    /// @pos The pos to query, which is assumed to meet 'pos.valid() == true'.
     bool isEmpty(Pos pos) const { return get(pos) == EMPTY; }
+
+    /// Check if the pos is legal (on an empty cell or is a pass move).
+    bool isLegal(Pos pos) const { return pos.valid() && (isEmpty(pos) || pos == Pos::PASS); }
 
     /// Check if a pos on board is forbidden point in Renju rule.
     /// @param pos Pos to check forbidden. Should be an empty cell.

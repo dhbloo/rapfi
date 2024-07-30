@@ -126,13 +126,11 @@ void Evaluator::syncWithBoard(const Board &board)
     for (int i = 0; i < board.ply(); i++) {
         Pos pos = board.getHistoryMove(i);
 
-        if (pos == Pos::PASS)
-            boardClone.doPassMove();
+        if (pos == Pos::PASS) {
+            boardClone.move(rule, Pos::PASS);
+            afterPass(boardClone);
+        }
         else {
-            // Ensure side to move is the same as the stone on the original board
-            if (boardClone.sideToMove() != board.get(pos))
-                boardClone.flipSide();
-
             beforeMove(boardClone, pos);
             boardClone.move(rule, pos);
             afterMove(boardClone, pos);

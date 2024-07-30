@@ -124,14 +124,18 @@ public:
 
     /// Resets the evaluator state to empty board.
     virtual void initEmptyBoard() = 0;
-    /// Update hook called before board.move().
+    /// Update hook called before board.move(). Pos is empty and not a pass.
     virtual void beforeMove(const Board &board, Pos pos) {};
-    /// Update hook called after board.move().
+    /// Update hook called after board.move(). Pos is empty and not a pass.
     virtual void afterMove(const Board &board, Pos pos) {};
-    /// Update hook called before board.undo().
+    /// Update hook called before board.undo(). Pos is empty and not a pass.
     virtual void beforeUndo(const Board &board, Pos pos) {};
-    /// Update hook called after board.undo().
+    /// Update hook called after board.undo(). Pos is empty and not a pass.
     virtual void afterUndo(const Board &board, Pos pos) {};
+    /// Update hook called after board.move(Pos::PASS).
+    virtual void afterPass(const Board &board) {};
+    /// Update hook called after board.undo() and the last move is a pass.
+    virtual void afterUndoPass(const Board &board) {};
 
     /// @brief Sync evaluator state with the given board state.
     /// This is implemented as initEmptyBoard() as well as a sequence of beforeMove()

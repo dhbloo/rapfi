@@ -865,10 +865,10 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         ss->currentMove = Pos::PASS;
 
         (ss + 1)->numNullMoves++;
-        board.doPassMove();
+        board.move<Rule>(Pos::PASS);
         TT.prefetch(board.zobristKey());
         value = -search<Rule, NonPV>(board, ss + 1, -beta, -beta + 1, depth - r, !cutNode);
-        board.undoPassMove();
+        board.undo<Rule>();
         (ss + 1)->numNullMoves--;
 
         if (value >= beta) {
@@ -944,7 +944,7 @@ moves_loop:
     // Step 11. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
     while (Pos move = mp()) {
-        assert(board.isEmpty(move));
+        assert(board.isLegal(move));
 
         // Skip excluded move when in Singular extension search
         if (!RootNode && move == skipMove)
@@ -1615,7 +1615,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
                                                  {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]}});
 
     while (Pos move = mp()) {
-        assert(board.isEmpty(move));
+        assert(board.isLegal(move));
 
         ss->currentMove   = move;
         ss->moveCount     = ++moveCount;

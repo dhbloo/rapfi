@@ -60,6 +60,36 @@ std::filesystem::path readPathFromInput(std::istream &in = std::cin)
     return pathFromConsoleString(path);
 }
 
+bool checkLastMoveIsNotPass(Board &board)
+{
+    if (board.passMoveCount() > 0 && board.getLastMove() == Pos::PASS) {
+        ERRORL("Consecutive pass is not supported. "
+               "There must be one non-pass move between two pass moves.");
+        return true;
+    }
+    return false;
+}
+
+/// Parse a coord in form 'x,y' from in stream and check if the pos is legal.
+/// Legal means the pos must be an empty cell or an non-consecutive pass move.
+std::optional<Pos> parseLegalCoord(std::istream &is, Board &board)
+{
+    int  x = -2, y = -2;
+    char comma;
+    is >> x >> comma >> y;
+
+    Pos pos = inputCoordConvert(x, y, board.size());
+    if (board.isLegal(pos)) {
+        if (checkLastMoveIsNotPass(board))
+            return std::nullopt;
+        return pos;
+    }
+    else {
+        ERRORL("Coord is not valid or empty.");
+        return std::nullopt;
+    }
+}
+
 }  // namespace
 
 namespace Command::GomocupProtocol {
@@ -578,22 +608,13 @@ void begin()
 
 void turn()
 {
-    int  x, y;
-    char comma;
-    std::cin >> x >> comma >> y;
+    auto pos = parseLegalCoord(std::cin, *board);
+    if (!pos.has_value())
+        return;
 
     options.multiPV     = 1;
     options.balanceMode = Search::SearchOptions::BALANCE_NONE;
-    Pos pos             = inputCoordConvert(x, y, board->size());
-    if (pos == Pos::PASS)
-        board->doPassMove();
-    else if (pos.valid() && board->isEmpty(pos))
-        board->move(options.rule, pos);
-    else {
-        ERRORL("Coord is not valid or empty.");
-        return;
-    }
-
+    board->move(options.rule, *pos);
     think(*board);
 }
 
@@ -606,42 +627,31 @@ void getPosition(bool startThink)
     // Read position sequence
     enum SideFlag { SELF = 1, OPPO = 2, WALL = 3 };
     std::vector<std::pair<Pos, SideFlag>> position;
-    bool                                  lastMoveIsPass = false;
+
     while (true) {
         std::string coordStr;
         std::cin >> coordStr;
         upperInplace(coordStr);
 
-        if (coordStr == "DONE")
+        if (coordStr == "DONE" || std::cin.eof())
             break;
 
-        int x = -1, y = -1, color = -1;
+        std::optional<Pos> pos;
+        int                color = -1;
         {
-            char              comma;
             std::stringstream ss;
+            char              comma;
             ss << coordStr;
-            ss >> x >> comma >> y >> comma >> color;
+            pos = parseLegalCoord(ss, *board);
+            ss >> comma >> color;
         }
 
-        Pos      pos  = inputCoordConvert(x, y, board->size());
-        SideFlag side = (SideFlag)color;
-
-        if ((pos == Pos::PASS && (side == SELF || side == OPPO))
-            || (pos.valid() && board->isEmpty(pos)
-                && (side == SELF || side == OPPO || side == WALL))) {
-            if (pos == Pos::PASS && lastMoveIsPass) {
-                ERRORL("Consecutive pass is not supported. "
-                       "There must be one non-pass move between two passes.");
-                continue;
-            }
-
-            position.emplace_back(pos, side);
-
-            if (side != WALL)
-                lastMoveIsPass = pos == Pos::PASS;
+        if (pos.has_value()) {
+            if (color == SELF || color == OPPO || color == WALL && *pos != Pos::NONE)
+                position.emplace_back(*pos, static_cast<SideFlag>(color));
+            else
+                ERRORL("Color is not a valid value, must be one of [1, 2, 3].");
         }
-        else
-            ERRORL("Coord is not valid or empty, or color is not valid.");
     }
 
     // The first move (either real move or pass) is always considered as BLACK
@@ -659,20 +669,20 @@ void getPosition(bool startThink)
             continue;
 
         // Make sure current side to move correspond to the input side
-        // This will not record pass move in board history
+        // If not, we add an extra PASS move to flip the side
         if (side == SELF && board->sideToMove() != selfColor
-            || side == OPPO && board->sideToMove() != ~selfColor)
-            board->flipSide();
+            || side == OPPO && board->sideToMove() != ~selfColor) {
+            if (checkLastMoveIsNotPass(*board))
+                return;
 
-        if (pos == Pos::PASS)
-            board->doPassMove();
-        else
-            board->move(options.rule, pos);
+            board->move(options.rule, Pos::PASS);
+        }
+
+        if (pos == Pos::PASS && checkLastMoveIsNotPass(*board))
+            return;
+
+        board->move(options.rule, pos);
     }
-
-    // Make sure the side to move is correct
-    if (board->sideToMove() != selfColor)
-        board->flipSide();
 
     // Start thinking if needed
     if (startThink)
@@ -681,7 +691,7 @@ void getPosition(bool startThink)
 
 void getBlock(bool remove = false)
 {
-    int               x, y, color;
+    int               x, y;
     char              comma;
     std::string       coordStr;
     std::stringstream ss;
@@ -695,10 +705,10 @@ void getBlock(bool remove = false)
 
         ss.clear();
         ss << coordStr;
-        ss >> x >> comma >> y >> comma >> color;
+        ss >> x >> comma >> y;
 
         Pos pos = inputCoordConvert(x, y, board->size());
-        if (!pos.valid() || pos == Pos::PASS)
+        if (!board->isInBoard(pos) || pos == Pos::PASS)
             ERRORL("Block coord is a pass or invalid.");
 
         bool alreadyInList = std::count(options.blockMoves.begin(), options.blockMoves.end(), pos);
@@ -762,19 +772,12 @@ void getDatabasePosition()
         if (coordStr == "DONE")
             break;
 
-        int x = -1, y = -1;
-        {
-            char              comma;
-            std::stringstream ss;
-            ss << coordStr;
-            ss >> x >> comma >> y;
-        }
+        std::stringstream ss;
+        ss << coordStr;
+        auto pos = parseLegalCoord(ss, *board);
 
-        Pos pos = inputCoordConvert(x, y, board->size());
-        if (pos.valid() && board->isEmpty(pos))
-            board->move(options.rule, pos);
-        else
-            ERRORL("Coord is not valid or empty.");
+        if (pos.has_value())
+            board->move(options.rule, *pos);
     }
 }
 
@@ -931,25 +934,15 @@ void editDatabaseBoardLabel()
     std::getline(std::cin, newText);
     getDatabasePosition();
 
-    // Parse coord into pos
-    Pos pos = Pos::NONE;
-    {
-        int               x = -1, y = -1;
-        char              comma;
-        std::stringstream ss;
-        ss << coordStr;
-        ss >> x >> comma >> y;
-        pos = inputCoordConvert(x, y, board->size());
-    }
-
-    if (!pos.valid() || !board->isEmpty(pos)) {
-        ERRORL("Coord is not valid or empty.");
+    std::stringstream ss;
+    ss << coordStr;
+    auto pos = parseLegalCoord(ss, *board);
+    if (!pos.has_value())
         return;
-    }
 
     if (Search::Threads.dbStorage() && !Config::DatabaseReadonlyMode) {
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_TEXT);
-        dbClient.setBoardText(*board, options.rule, pos, ConsoleCPToUTF8(newText));
+        dbClient.setBoardText(*board, options.rule, *pos, ConsoleCPToUTF8(newText));
     }
 }
 

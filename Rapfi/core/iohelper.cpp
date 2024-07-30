@@ -31,7 +31,7 @@
     #include <zip.h>
 #endif
 
-constexpr int PASS_COORD_X = 0;
+constexpr int PASS_COORD_X = -1;
 constexpr int PASS_COORD_Y = -1;
 
 std::ostream &operator<<(std::ostream &os, SyncFlag f)

@@ -121,7 +121,7 @@ Pos findFirstPattern4Pos(const Board &board, Color side, Pattern4 p4)
 
 /// Find all pseudo defence pos of FOUR pattern4.
 /// @param side Color of side with a FOUR pattern4.
-Move *findAllPseudoFourDefendPos(const Board &board, Color side, Move *moveList)
+ScoredMove *findAllPseudoFourDefendPos(const Board &board, Color side, ScoredMove *moveList)
 {
     FOR_EVERY_CAND_POS(&board, pos)
     {
@@ -148,16 +148,16 @@ Move *findAllPseudoFourDefendPos(const Board &board, Color side, Move *moveList)
 
 /// Find all exact defence pos of opponent FOUR pattern4.
 template <bool IncludeLosingMoves>
-Move *findFourDefence(const Board &board, Move *const moveList)
+ScoredMove *findFourDefence(const Board &board, ScoredMove *const moveList)
 {
-    Color oppo = ~board.sideToMove();
-    Move *last = moveList;
+    Color       oppo = ~board.sideToMove();
+    ScoredMove *last = moveList;
 
     assert(board.p4Count(oppo, A_FIVE) == 0);
     assert(board.p4Count(oppo, B_FLEX4) > 0);
 
     // Find all defend pos for F3 attack line pattern (_*OOO*_, X*OOO**X, _*O*OO*_, _O*O*O*O_)
-    auto findF3LineDefence = [=, &board](Pos f4Pos, int dir, Move *const list) {
+    auto findF3LineDefence = [=, &board](Pos f4Pos, int dir, ScoredMove *const list) {
         const Cell &f4Cell = board.cell(f4Pos);
         assert(f4Cell.pattern(oppo, dir) == F4);
 
@@ -199,7 +199,7 @@ Move *findFourDefence(const Board &board, Move *const moveList)
     };
 
     // Find all defend pos for double B3 attack line pattern (XOOO**_ + XOOO**_)
-    auto findB3Defence = [=, &board](Pos f4Pos, int dir, Move *list) {
+    auto findB3Defence = [=, &board](Pos f4Pos, int dir, ScoredMove *list) {
         const Cell &f4Cell = board.cell(f4Pos);
         assert(f4Cell.pattern(oppo, dir) == B4);
 
@@ -351,7 +351,7 @@ Move *findFourDefence(const Board &board, Move *const moveList)
 /// Find all exact defence pos of opponent B4F3 pattern4.
 /// @note If no direct defence is needed, empty move list is returned.
 template <Rule R>
-Move *findB4F3Defence(const Board &board, Move *const moveList)
+ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
 {
     Color oppo = ~board.sideToMove();
 
@@ -359,7 +359,7 @@ Move *findB4F3Defence(const Board &board, Move *const moveList)
     assert(board.p4Count(oppo, C_BLOCK4_FLEX3) > 0);
 
     // Find all valid defence move for a F3 line through a LUT
-    auto findF3LineDefence = [=, &board](Pos f3Pos, int dir, Move *list) {
+    auto findF3LineDefence = [=, &board](Pos f3Pos, int dir, ScoredMove *list) {
         assert(board.cell(f3Pos).pattern(oppo, dir) == F3
                || board.cell(f3Pos).pattern(oppo, dir) == F3S);
 
@@ -485,7 +485,7 @@ Move *findB4F3Defence(const Board &board, Move *const moveList)
         return Pos::NONE;
     };
 
-    auto findAllB3CounterDefence = [=, &board](Pos b4Pos, int dir, Move *list) {
+    auto findAllB3CounterDefence = [=, &board](Pos b4Pos, int dir, ScoredMove *list) {
         Color      self = ~oppo;
         const bool isPseudoForbiddenB4 =
             R == RENJU && self == BLACK && board.cell(b4Pos).pattern4[self] == FORBID;
@@ -532,8 +532,8 @@ Move *findB4F3Defence(const Board &board, Move *const moveList)
     assert(B4F3Cell.piece == EMPTY);
     assert(B4F3Cell.pattern4[oppo] == C_BLOCK4_FLEX3);
 
-    Move *last = moveList;
-    *last++    = B4F3Pos;
+    ScoredMove *last = moveList;
+    *last++          = B4F3Pos;
 
     // Iterate all directions to find F3 pattern line and B4 pattern line.
     for (int dir = 0; dir < 4; dir++) {
@@ -565,15 +565,15 @@ Move *findB4F3Defence(const Board &board, Move *const moveList)
 /// by other generator.
 /// @note Board state must satisfy `board.p4Count(oppo, B_FLEX4) > 0`.
 template <bool IncludeLosingMoves>
-Move *generateFourDefence(const Board &board, Move *moveList)
+ScoredMove *generateFourDefence(const Board &board, ScoredMove *moveList)
 {
     assert(board.p4Count(~board.sideToMove(), B_FLEX4));
-    Move *last = findFourDefence<IncludeLosingMoves>(board, moveList);
+    ScoredMove *last = findFourDefence<IncludeLosingMoves>(board, moveList);
 
-    std::sort(moveList, last, [](Move m, Move n) { return m.pos < n.pos; });
-    last = std::unique(moveList, last, [](Move m, Move n) { return m.pos == n.pos; });
+    std::sort(moveList, last, [](ScoredMove m, ScoredMove n) { return m.pos < n.pos; });
+    last = std::unique(moveList, last, [](ScoredMove m, ScoredMove n) { return m.pos == n.pos; });
 
-    return std::remove_if(moveList, last, [&](Move move) {
+    return std::remove_if(moveList, last, [&](ScoredMove move) {
         assert(board.isEmpty(move));
         assert(board.cell(move).pattern4[~board.sideToMove()] >= E_BLOCK4
                || board.cell(move).pattern4[~board.sideToMove()] == FORBID);
@@ -589,19 +589,19 @@ Move *generateFourDefence(const Board &board, Move *moveList)
 /// have some B4 counter defence move, empty move list is returned.
 /// @note Board state must satisfy `board.p4Count(oppo, C_BLOCK4_FLEX3) > 0`.
 template <Rule R>
-Move *generateB4F3Defence(const Board &board, Move *moveList)
+ScoredMove *generateB4F3Defence(const Board &board, ScoredMove *moveList)
 {
     assert(board.p4Count(~board.sideToMove(), C_BLOCK4_FLEX3));
-    Move *last = findB4F3Defence<R>(board, moveList);
+    ScoredMove *last = findB4F3Defence<R>(board, moveList);
 
     // If direct defence is not needed, we simply return empty move list.
     if (last == moveList)
         return moveList;
 
-    std::sort(moveList, last, [](Move m, Move n) { return m.pos < n.pos; });
-    last = std::unique(moveList, last, [](Move m, Move n) { return m.pos == n.pos; });
+    std::sort(moveList, last, [](ScoredMove m, ScoredMove n) { return m.pos < n.pos; });
+    last = std::unique(moveList, last, [](ScoredMove m, ScoredMove n) { return m.pos == n.pos; });
 
-    return std::remove_if(moveList, last, [&](Move move) {
+    return std::remove_if(moveList, last, [&](ScoredMove move) {
         assert(board.isEmpty(move));
         return board.cell(move).pattern4[board.sideToMove()] >= E_BLOCK4;
     });
@@ -610,7 +610,7 @@ Move *generateB4F3Defence(const Board &board, Move *moveList)
 }  // namespace
 
 template <GenType Type>
-Move *generate(const Board &board, Move *moveList)
+ScoredMove *generate(const Board &board, ScoredMove *moveList)
 {
     Color self = board.sideToMove();
 
@@ -624,16 +624,16 @@ Move *generate(const Board &board, Move *moveList)
     return moveList;
 }
 
-template Move *generate<VCF>(const Board &, Move *);
-template Move *generate<VCF | RULE_RENJU>(const Board &, Move *);
-template Move *generate<ALL>(const Board &, Move *);
+template ScoredMove *generate<VCF>(const Board &, ScoredMove *);
+template ScoredMove *generate<VCF | RULE_RENJU>(const Board &, ScoredMove *);
+template ScoredMove *generate<ALL>(const Board &, ScoredMove *);
 
 template <GenType Type>
-Move *generateNeighbors(const Board     &board,
-                        Move            *moveList,
-                        Pos              center,
-                        const Direction *neighbors,
-                        size_t           numNeighbors)
+ScoredMove *generateNeighbors(const Board     &board,
+                              ScoredMove      *moveList,
+                              Pos              center,
+                              const Direction *neighbors,
+                              size_t           numNeighbors)
 {
     Color self = board.sideToMove();
 
@@ -651,14 +651,16 @@ Move *generateNeighbors(const Board     &board,
     return moveList;
 }
 
-template Move *generateNeighbors<VCF>(const Board &, Move *, Pos, const Direction *, size_t);
-template Move *generateNeighbors<VCF | COMB>(const Board &, Move *, Pos, const Direction *, size_t);
+template ScoredMove *
+generateNeighbors<VCF>(const Board &, ScoredMove *, Pos, const Direction *, size_t);
+template ScoredMove *
+generateNeighbors<VCF | COMB>(const Board &, ScoredMove *, Pos, const Direction *, size_t);
 
 /// Generate direct winning moves for current side to move.
 /// @return The first found winning pos.
 /// @note Board state must satisfy `p4Count(self, A_FIVE) + p4Count(self, B_FLEX4) > 0`.
 template <>
-Move *generate<WINNING>(const Board &board, Move *moveList)
+ScoredMove *generate<WINNING>(const Board &board, ScoredMove *moveList)
 {
     Color self = board.sideToMove();
 
@@ -679,7 +681,7 @@ Move *generate<WINNING>(const Board &board, Move *moveList)
 /// @return The first found FIVE pattern4 pos.
 /// @note Board state must satisfy `board.p4Count(oppo, A_FIVE) > 0`.
 template <>
-Move *generate<DEFEND_FIVE>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_FIVE>(const Board &board, ScoredMove *moveList)
 {
     Color oppo = ~board.sideToMove();
     assert(board.p4Count(oppo, A_FIVE) > 0);
@@ -706,7 +708,7 @@ Move *generate<DEFEND_FIVE>(const Board &board, Move *moveList)
 /// by other generator.
 /// @note Board state must satisfy `board.p4Count(oppo, B_FLEX4) > 0`.
 template <>
-Move *generate<DEFEND_FOUR>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_FOUR>(const Board &board, ScoredMove *moveList)
 {
     return generateFourDefence<false>(board, moveList);
 }
@@ -714,25 +716,25 @@ Move *generate<DEFEND_FOUR>(const Board &board, Move *moveList)
 /// Generates defence moves for opponent B_FLEX4 pattern4.
 /// This version also generates all losing moves.
 template <>
-Move *generate<DEFEND_FOUR | ALL>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_FOUR | ALL>(const Board &board, ScoredMove *moveList)
 {
     return generateFourDefence<true>(board, moveList);
 }
 
 template <>
-Move *generate<DEFEND_B4F3 | RULE_FREESTYLE>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_B4F3 | RULE_FREESTYLE>(const Board &board, ScoredMove *moveList)
 {
     return generateB4F3Defence<FREESTYLE>(board, moveList);
 }
 
 template <>
-Move *generate<DEFEND_B4F3 | RULE_STANDARD>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_B4F3 | RULE_STANDARD>(const Board &board, ScoredMove *moveList)
 {
     return generateB4F3Defence<STANDARD>(board, moveList);
 }
 
 template <>
-Move *generate<DEFEND_B4F3 | RULE_RENJU>(const Board &board, Move *moveList)
+ScoredMove *generate<DEFEND_B4F3 | RULE_RENJU>(const Board &board, ScoredMove *moveList)
 {
     return generateB4F3Defence<RENJU>(board, moveList);
 }

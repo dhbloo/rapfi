@@ -609,7 +609,7 @@ std::vector<std::pair<Pos, std::string>> DBClient::queryBoardTexts(const Board &
 
 void DBClient::setBoardText(const Board &board, Rule rule, Pos pos, std::string text)
 {
-    if (!board.isEmpty(pos))
+    if (!board.isLegal(pos))
         return;
 
     DBRecord record, childRecord;

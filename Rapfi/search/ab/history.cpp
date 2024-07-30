@@ -83,21 +83,22 @@ void HistoryTracker::updateBestmoveStats(Depth depth, Pos bestMove, Value bestVa
 void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, Value beta)
 {
     // Validate ttMove first
-    if (ttMove.valid() && board.isEmpty(ttMove)) {
-        Color    self = board.sideToMove(), oppo = ~self;
-        bool     oppo5  = board.p4Count(oppo, A_FIVE);
-        bool     oppo4  = oppo5 || board.p4Count(oppo, B_FLEX4);
-        Pattern4 selfP4 = board.cell(ttMove).pattern4[self];
-        int      bonus  = statBonus(depth);
+    if (!board.isLegal(ttMove))
+        return;
 
-        if (!oppo4 && selfP4 < H_FLEX3) {
-            // Bonus for a quiet ttMove that fails high
-            if (ttValue >= beta)
-                updateQuietStats(ttMove, bonus);
-            // Penalty for a quiet ttMove that fails low
-            else
-                searchData->mainHistory[self][ttMove][HIST_QUIET] << -bonus;
-        }
+    Color    self = board.sideToMove(), oppo = ~self;
+    bool     oppo5  = board.p4Count(oppo, A_FIVE);
+    bool     oppo4  = oppo5 || board.p4Count(oppo, B_FLEX4);
+    Pattern4 selfP4 = board.cell(ttMove).pattern4[self];
+    int      bonus  = statBonus(depth);
+
+    if (!oppo4 && selfP4 < H_FLEX3) {
+        // Bonus for a quiet ttMove that fails high
+        if (ttValue >= beta)
+            updateQuietStats(ttMove, bonus);
+        // Penalty for a quiet ttMove that fails low
+        else
+            searchData->mainHistory[self][ttMove][HIST_QUIET] << -bonus;
     }
 }
 

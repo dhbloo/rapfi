@@ -38,7 +38,7 @@ public:
     /// generation phase to set and provide information for move ordering.
     template <SearchType ST>
     MovePicker(Rule rule, const Board &board, ExtraArgs<ST> args);
-    MovePicker(const MovePicker &) = delete;
+    MovePicker(const MovePicker &)            = delete;
     MovePicker &operator=(const MovePicker &) = delete;
 
     [[nodiscard]] Pos operator()();
@@ -63,9 +63,9 @@ private:
     template <PickType T, typename Pred>
     Pos pickNextMove(Pred);
     template <ScoreType T>
-    void  scoreMoves();
-    Move *begin() { return curMove; }
-    Move *end() { return endMove; }
+    void        scoreAllMoves();
+    ScoredMove *begin() { return curMove; }
+    ScoredMove *end() { return endMove; }
 
     const Board              &board;
     const MainHistory        *mainHistory;
@@ -76,8 +76,8 @@ private:
     bool                      allowPlainB4InVCF;
     bool                      hasPolicy;
     Score                     curScore, curPolicyScore, maxPolicyScore;
-    Move                     *curMove, *endMove;
-    Move                      moves[MAX_MOVES];
+    ScoredMove               *curMove, *endMove;
+    ScoredMove                moves[MAX_MOVES];
 };
 
 template <>
