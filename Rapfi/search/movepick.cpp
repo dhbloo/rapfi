@@ -359,8 +359,8 @@ top:
                                    : generateNeighbors<VCF | COMB>)(board,
                                                                     curMove,
                                                                     selfLast,
-                                                                    RANGE_SQUARE2_LINE4,
-                                                                    arraySize(RANGE_SQUARE2_LINE4));
+                                                                    RANGE_SQUARE3_LINE4,
+                                                                    arraySize(RANGE_SQUARE3_LINE4));
         }
 
         scoreAllMoves<BALANCED>();

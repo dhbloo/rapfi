@@ -144,7 +144,7 @@ struct TuningConfig
 
     bool     tuneRule[RULE_NB] = {};
     uint8_t  boardSizeMin      = 5;
-    uint8_t  boardSizeMax      = ACTUAL_BOARD_SIZE;
+    uint8_t  boardSizeMax      = MAX_BOARD_SIZE;
     uint16_t minPly            = 1;
     uint16_t minPlyBeforeFull  = 50;
 

@@ -155,7 +155,7 @@ public:
     enum class MoveType { NORMAL, NO_EVALUATOR, NO_EVAL, NO_EVAL_MULTI };
 
     /// Creates a board with board size and condidate range.
-    /// @param boardSize Size of the board, in range [0,ACTUAL_BOARD_SIZE].
+    /// @param boardSize Size of the board, in range [1, MAX_BOARD_SIZE].
     explicit Board(int boardSize, CandidateRange candRange = Config::DefaultCandidateRange);
     /// Clone a board object from other board and bind a search thread to it.
     /// @param other Board object to clone from.

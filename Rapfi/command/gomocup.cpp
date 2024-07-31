@@ -560,7 +560,7 @@ void start()
 {
     int boardSize;
     std::cin >> boardSize;
-    if (boardSize < 5 || boardSize > ACTUAL_BOARD_SIZE) {
+    if (boardSize < 5 || boardSize > MAX_BOARD_SIZE) {
         ERRORL("Unsupported board size!");
         return;
     }

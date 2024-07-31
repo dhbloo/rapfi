@@ -247,7 +247,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
         }
 
         int boardXLen = byteBuffer[1], boardYLen = byteBuffer[2];
-        if ((unsigned)boardXLen > ACTUAL_BOARD_SIZE || (unsigned)boardYLen > ACTUAL_BOARD_SIZE) {
+        if ((unsigned)boardXLen > MAX_BOARD_SIZE || (unsigned)boardYLen > MAX_BOARD_SIZE) {
             if (ignoreCorrupted)
                 continue;
             throw DBStorageCorruptedRecordError(filePath.string(),

@@ -25,11 +25,16 @@
 // -------------------------------------------------
 // Board size & limits
 
-constexpr int FULL_BOARD_SIZE       = 32;
-constexpr int BOARD_BOUNDARY        = 5;
+/// Full board size. We use uint64_t bitboard and each cell takes 2 bits.
+constexpr int FULL_BOARD_SIZE = 32;
+/// Full board array size. This also counts all boundary cells.
 constexpr int FULL_BOARD_CELL_COUNT = FULL_BOARD_SIZE * FULL_BOARD_SIZE;
-constexpr int ACTUAL_BOARD_SIZE     = FULL_BOARD_SIZE - 2 * BOARD_BOUNDARY;
-constexpr int MAX_MOVES             = ACTUAL_BOARD_SIZE * ACTUAL_BOARD_SIZE;
+/// Reserved boundary for branchless query in Board class implementation.
+constexpr int BOARD_BOUNDARY = 5;
+/// The actual maximum board size we can use.
+constexpr int MAX_BOARD_SIZE = FULL_BOARD_SIZE - 2 * BOARD_BOUNDARY;
+/// The maximum possible moves on an empty board (including a PASS).
+constexpr int MAX_MOVES = MAX_BOARD_SIZE * MAX_BOARD_SIZE + 1;
 
 // -------------------------------------------------
 
@@ -46,7 +51,7 @@ public:
     constexpr int y() const { return (_pos >> 5) - BOARD_BOUNDARY; }
     constexpr     operator int() const { return _pos; }
     inline bool   valid() const { return _pos >= PASS._pos && _pos < FULL_BOARD_END._pos; }
-    inline int    moveIndex() const { return y() * ACTUAL_BOARD_SIZE + x(); }
+    inline int    moveIndex() const { return y() * MAX_BOARD_SIZE + x(); }
     inline bool   isInBoard(int boardWidth, int boardHeight) const;
 
     static int distance(Pos p1, Pos p2);

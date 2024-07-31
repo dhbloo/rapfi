@@ -310,9 +310,9 @@ void Command::database(int argc, char *argv[])
             is >> ruleStr >> boardWidth >> boardHeight >> posStr;
 
             try {
-                if (boardWidth < 5 || boardWidth > ACTUAL_BOARD_SIZE)
+                if (boardWidth < 5 || boardWidth > MAX_BOARD_SIZE)
                     throw std::invalid_argument("board width out of range [5,22]");
-                if (boardHeight < 5 || boardHeight > ACTUAL_BOARD_SIZE)
+                if (boardHeight < 5 || boardHeight > MAX_BOARD_SIZE)
                     throw std::invalid_argument("board height out of range [5,22]");
                 if (boardWidth != boardHeight)
                     throw std::invalid_argument(
