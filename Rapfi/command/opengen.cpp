@@ -115,7 +115,7 @@ void Command::opengen(int argc, char *argv[])
 
         if (numOpenings < 1)
             throw std::invalid_argument("there must be at least one opening to generate");
-        if (boardsize < 5 || boardsize > ACTUAL_BOARD_SIZE)
+        if (boardsize < 5 || boardsize > MAX_BOARD_SIZE)
             throw std::invalid_argument("boardsize must be in range [5,22]");
     }
     catch (const std::exception &e) {

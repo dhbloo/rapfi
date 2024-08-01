@@ -63,7 +63,7 @@ Board::Board(int boardSize, CandidateRange candRange)
     , evaluator_(nullptr)
     , thisThread_(nullptr)
 {
-    assert(0 < boardSize && boardSize <= ACTUAL_BOARD_SIZE);
+    assert(0 < boardSize && boardSize <= MAX_BOARD_SIZE);
     stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
     updateCache = new UpdateCache[1 + boardCellCount * 2];
 

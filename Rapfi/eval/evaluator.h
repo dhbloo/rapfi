@@ -96,10 +96,14 @@ public:
 private:
     inline size_t posToIndex(Pos pos) const
     {
-        size_t index = boardWidth * pos.y() + pos.x();
-        assert(0 <= pos.x() && pos.x() < boardWidth);
-        assert(index < bufferSize);
-        return index;
+        if (pos == Pos::PASS)
+            return MAX_MOVES - 1;
+        else {
+            size_t index = boardWidth * pos.y() + pos.x();
+            assert(0 <= pos.x() && pos.x() < boardWidth);
+            assert(index < bufferSize);
+            return index;
+        }
     }
 
     int        boardWidth;
