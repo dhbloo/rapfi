@@ -70,6 +70,8 @@ struct SearchPrinter
                           int                numPv);
     /// Print when one iterative depth completes.
     void printDepthCompletes(MainSearchThread &th, const TimeControl &tc, int rootDepth);
+    /// Print root moves after some visits completed. (MCTS)
+    void printRootMoves(MainSearchThread &th, const TimeControl &tc, size_t numRootMovesToDisplay);
     /// Print when search finishes.
     void printSearchEnds(MainSearchThread  &th,
                          const TimeControl &tc,

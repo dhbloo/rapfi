@@ -31,7 +31,7 @@ struct SearchData
     virtual ~SearchData() = default;
 
     /// Clear the states of search data for a new search.
-    virtual void clearData() = 0;
+    virtual void clearData(SearchThread &th) = 0;
 };
 
 /// Searcher is the base class for implementation of all search algorithms.
@@ -42,6 +42,13 @@ public:
 
     /// Creates a instance of search data for one search thread.
     virtual std::unique_ptr<SearchData> makeSearchData(SearchThread &th) = 0;
+
+    /// Set the memory size limit of the search.
+    /// @param memorySizeKB Maximum memory size in KiB. Should be greater than zero.
+    virtual void setMemoryLimit(size_t memorySizeKB) = 0;
+    /// Get the current memory size limit of the search.
+    /// @return Maximum memory size in KiB.
+    virtual size_t getMemoryLimit() const = 0;
 
     /// Clear all searcher states between different games.
     /// @param pool The thread pool that holds all the search threads.

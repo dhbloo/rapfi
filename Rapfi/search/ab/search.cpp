@@ -62,12 +62,10 @@ template <Rule Rule, NodeType NT>
 Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
 template <Rule Rule, NodeType NT>
 Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
-Value getDrawValue(const Board &board, const SearchOptions &options, int ply);
 
 }  // namespace
 
-/// Clear all search states between two search.
-void ABSearchData::clearData()
+void ABSearchData::clearData(SearchThread &th)
 {
     multiPv         = 1;
     pvIdx           = 0;
@@ -79,7 +77,16 @@ void ABSearchData::clearData()
     counterMoveHistory.init(std::make_pair(Pos::NONE, NONE));
 }
 
-/// Clear main thread states (and TT) between different games.
+void ABSearcher::setMemoryLimit(size_t memorySizeKB)
+{
+    TT.resize(memorySizeKB);
+}
+
+size_t ABSearcher::getMemoryLimit() const
+{
+    return TT.hashSizeKB();
+}
+
 void ABSearcher::clear(ThreadPool &pool, bool clearAllMemory)
 {
     // Clear time control variables for one game
@@ -92,8 +99,6 @@ void ABSearcher::clear(ThreadPool &pool, bool clearAllMemory)
         TT.clear();
 }
 
-/// The thinking entry point. When program receives search command, main
-/// thread is started first and other threads are launched by main thread.
 void ABSearcher::searchMain(MainSearchThread &th)
 {
     SearchOptions &opts = th.options();
@@ -105,43 +110,37 @@ void ABSearcher::searchMain(MainSearchThread &th)
         return;
     }
 
-    // Check for immediate/forced move (eg. opponent five)
+    // Check for immediate move
     if (th.rootMoves.empty()) {
-        // Check if no legal move exists
-        if (th.board->movesLeft() == 0) {
-            return;  // abnormal case: GUI might have a bug
-        }
-        else {
-            // If there is no stones on board, it is possible that the opponent played a pass
-            // move at the start of one game. We just choose the center location to play.
-            if (th.board->nonPassMoveCount() == 0) {
-                th.bestMove = th.board->centerPos();
-                return;
-            }
-
-            // Return the first empty position if we might find a forced forbidden
-            // point mate in Renju, or all legal points have been blocked.
-            FOR_EVERY_EMPTY_POS(th.board, pos)
-            {
-                th.bestMove = pos;
-                printer.printBestmoveWithoutSearch(pos, mated_in(0), 0, nullptr);
-                return;
-            }
-        }
-    }
-    // If there is only one forced move, returns directly (except for pondering)
-    else if (th.rootMoves.size() == 1 && !th.inPonder) {
-        // Still do pondering unless it is the end of the game
-        if (th.board->cell(th.rootMoves[0].pv[0]).pattern4[th.board->sideToMove()] == A_FIVE) {
-            th.rootMoves[0].value = mate_in(1);
-            th.bestMove           = th.rootMoves[0].pv[0];
-
-            printer.printBestmoveWithoutSearch(th.rootMoves[0].pv[0],
-                                               th.rootMoves[0].value,
-                                               1,
-                                               &th.rootMoves[0].pv);
+        // If there is no stones on board, it is possible that the opponent played a pass
+        // move at the start of one game. We just choose the center location to play.
+        if (th.board->nonPassMoveCount() == 0) {
+            th.bestMove = th.board->centerPos();
             return;
         }
+
+        // Return the first empty position if we might find a forced forbidden
+        // point mate in Renju, or all legal points have been blocked.
+        FOR_EVERY_EMPTY_POS(th.board, pos)
+        {
+            th.bestMove = pos;
+            printer.printBestmoveWithoutSearch(pos, mated_in(0), 0, nullptr);
+            return;
+        }
+
+        return;  // abnormal case: GUI might have a bug
+    }
+    // If we are winning, return directly
+    else if (th.board->p4Count(th.board->sideToMove(), A_FIVE)) {
+        assert(th.board->cell(th.rootMoves[0].pv[0]).pattern4[th.board->sideToMove()] == A_FIVE);
+        th.rootMoves[0].value = mate_in(1);
+        th.bestMove           = th.rootMoves[0].pv[0];
+
+        printer.printBestmoveWithoutSearch(th.rootMoves[0].pv[0],
+                                           th.rootMoves[0].value,
+                                           1,
+                                           &th.rootMoves[0].pv);
+        return;
     }
 
     // Check for forced database move
@@ -233,8 +232,6 @@ void ABSearcher::searchMain(MainSearchThread &th)
         th.resultAction = ActionType::Move;
 }
 
-/// The main iterative deeping search loop. It calls search() repeatedly with increasing depth
-/// until the stop condition is reached. Results are updated to thread bounded with the board.
 void ABSearcher::search(SearchThread &th)
 {
     ABSearchData     &sd        = *th.searchDataAs<ABSearchData>();
@@ -388,15 +385,11 @@ void ABSearcher::search(SearchThread &th)
     }
 }
 
-/// Checks if current search reaches timeup condition.
 bool ABSearcher::checkTimeupCondition()
 {
     return timectl.elapsed() >= timectl.maximum();
 }
 
-/// Choose the next search depth by checking completed depth of all other
-/// threads and selecting the next depth with least working threads to
-/// avoid repeated searching.
 int ABSearcher::pickNextDepth(ThreadPool &threads, uint32_t thisId, int lastDepth) const
 {
     if (thisId == 0 || threads.size() < 3)
@@ -420,7 +413,6 @@ int ABSearcher::pickNextDepth(ThreadPool &threads, uint32_t thisId, int lastDept
     }
 }
 
-/// Pick thread with the best result according to eval and completed depth.
 SearchThread *ABSearcher::pickBestThread(ThreadPool &threads) const
 {
     SearchThread *bestThread = threads.main();
@@ -1740,21 +1732,6 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     assert(value > -VALUE_INFINITE && value < VALUE_INFINITE
            || thisThread->threads.isTerminating());
     return value;
-}
-
-/// Get the return value after reaching the max game ply.
-Value getDrawValue(const Board &board, const SearchOptions &options, int ply)
-{
-    int pliesUntilMaxPly = std::max(options.maxMoves - board.nonPassMoveCount(), 0);
-    int matePly          = ply + pliesUntilMaxPly;
-
-    switch (options.drawResult) {
-    default: return VALUE_DRAW;
-    case SearchOptions::RES_BLACK_WIN:
-        return board.sideToMove() == BLACK ? mate_in(matePly) : mated_in(matePly);
-    case SearchOptions::RES_WHITE_WIN:
-        return board.sideToMove() == WHITE ? mate_in(matePly) : mated_in(matePly);
-    }
 }
 
 }  // namespace

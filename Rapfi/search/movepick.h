@@ -29,7 +29,7 @@ namespace Search {
 class MovePicker
 {
 public:
-    enum SearchType { ROOT, MAIN, QVCF };
+    enum SearchType { ROOT, MAIN, QVCF,  };
     template <SearchType ST>
     struct ExtraArgs
     {};
@@ -43,6 +43,8 @@ public:
 
     [[nodiscard]] Pos operator()();
     bool              hasPolicyScore() const { return hasPolicy; }
+    void              enableNormalizedPolicy() { useNormalizedPolicy = true; }
+    float             curMoveNormalizePolicy() const { return curPolicy; }
     Score             maxMovePolicy() const { return maxPolicyScore; }
     Score             curMovePolicy() const { return curPolicyScore; }
     Score             curMoveScore() const { return curScore; }
@@ -75,14 +77,18 @@ private:
     Pos                       ttMove;
     bool                      allowPlainB4InVCF;
     bool                      hasPolicy;
+    bool                      useNormalizedPolicy;
     Score                     curScore, curPolicyScore, maxPolicyScore;
+    float                     curPolicy;
     ScoredMove               *curMove, *endMove;
     ScoredMove                moves[MAX_MOVES];
 };
 
 template <>
 struct MovePicker::ExtraArgs<MovePicker::ROOT>
-{};
+{
+    bool evalateNormalizedPolicy = false;
+};
 
 template <>
 struct MovePicker::ExtraArgs<MovePicker::MAIN>

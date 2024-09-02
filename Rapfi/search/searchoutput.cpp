@@ -20,6 +20,7 @@
 
 #include "../config.h"
 #include "../core/iohelper.h"
+#include "../game/board.h"
 #include "searchthread.h"
 #include "timecontrol.h"
 
@@ -82,13 +83,13 @@ void SearchPrinter::printMoveResult(MainSearchThread  &th,
     }
 }
 
-void Search::SearchPrinter::printOutOfWindowResult(MainSearchThread  &th,
-                                                   const TimeControl &tc,
-                                                   int                rootDepth,
-                                                   int                pvIdx,
-                                                   int                numPv,
-                                                   Value              alpha,
-                                                   Value              beta)
+void SearchPrinter::printOutOfWindowResult(MainSearchThread  &th,
+                                           const TimeControl &tc,
+                                           int                rootDepth,
+                                           int                pvIdx,
+                                           int                numPv,
+                                           Value              alpha,
+                                           Value              beta)
 {
     return;
 }
@@ -154,6 +155,59 @@ void SearchPrinter::printDepthCompletes(MainSearchThread &th, const TimeControl 
                  << "Depth " << rootDepth << "-" << th.rootMoves[0].selDepth << " | Eval "
                  << th.rootMoves[0].value << " | Time " << timeText(tc.elapsed()) << " | "
                  << MovesText {th.rootMoves[0].pv});
+    }
+}
+
+void SearchPrinter::printRootMoves(MainSearchThread  &th,
+                                   const TimeControl &tc,
+                                   size_t             numRootMovesToDisplay)
+{
+    // Do not print search messages in ponder mode
+    if (th.inPonder.load(std::memory_order_relaxed))
+        return;
+
+    uint64_t nodes = th.threads.nodesSearched();
+    uint64_t speed = nodes / std::max(tc.elapsed(), (Time)1);
+
+    numRootMovesToDisplay = std::min(numRootMovesToDisplay, th.rootMoves.size());
+    for (size_t pvIdx = 0; pvIdx < numRootMovesToDisplay; pvIdx++) {
+        RootMove &curMove = th.rootMoves[pvIdx];
+
+        if (showInfo(th)) {
+            INFO("PV", pvIdx);
+            INFO("NUMPV", th.rootMoves.size());
+            INFO("SELDEPTH", curMove.selDepth);
+            INFO("NODES", curMove.numNodes);
+            INFO("TOTALNODES", nodes);
+            INFO("TOTALTIME", tc.elapsed());
+            INFO("SPEED", speed);
+            INFO("EVAL", curMove.value);
+            INFO("WINRATE", curMove.winRate);
+            INFO("DRAWRATE", curMove.drawRate);
+            INFO("PRIOR", curMove.policyPrior);
+            INFO("BESTLINE", MovesText {curMove.pv, true, true, th.board->size()});
+            INFO("PV", "DONE");
+        }
+
+        if (Config::MessageMode == MsgMode::NORMAL) {
+            MESSAGEL("(" << pvIdx + 1 << ") " << curMove.value << " (W " << (curMove.winRate * 100)
+                         << ", D " << (curMove.drawRate * 100) << ") | " << curMove.selDepth
+                         << " | " << nodesText(curMove.numNodes) << " | "
+                         << MovesText {curMove.pv});
+        }
+        else if (Config::MessageMode == MsgMode::UCILIKE) {
+            MESSAGEL("multipv " << pvIdx + 1 << " ev " << curMove.value << " w "
+                                << (curMove.winRate * 100) << " d " << (curMove.drawRate * 100)
+                                << " seldepth " << curMove.selDepth << " v "
+                                << nodesText(curMove.numNodes) << " n " << nodesText(nodes)
+                                << " n/ms " << speed << " tm " << tc.elapsed() << " prior "
+                                << curMove.policyPrior << " pv " << MovesText {curMove.pv});
+        }
+    }
+
+    if (Config::MessageMode == MsgMode::NORMAL) {
+        MESSAGEL("Speed " << speed << " | Visit " << nodesText(nodes) << " | Time "
+                          << timeText(tc.elapsed()));
     }
 }
 

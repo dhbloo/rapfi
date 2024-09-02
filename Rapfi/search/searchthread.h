@@ -21,7 +21,6 @@
 #include "../database/dbclient.h"
 #include "../database/dbstorage.h"
 #include "../eval/evaluator.h"
-#include "../game/board.h"
 #include "searchcommon.h"
 #include "searcher.h"
 #include "timecontrol.h"
@@ -36,6 +35,8 @@
     #include <mutex>
     #include <thread>
 #endif
+
+class Board;  // forward declaration
 
 namespace Search {
 
@@ -54,19 +55,24 @@ public:
 private:
     friend struct MainSearchThread;
     friend class ThreadPool;
-    bool searching, exit;
+    bool running, exit;
 
+    /// Launch a custom task in this thread.
+    void runTask(std::function<void()> task);
     /// Wake up threadLoop() and start searching routine.
-    void startSearching();
+    void runSearch();
+    /// Wake up threadLoop() and start clearing routine.
+    void runClear();
     /// Wait until threadLoop() enters idle state.
     void waitForIdle();
 
 #ifdef MULTI_THREADING
+    std::function<void()>   taskFunc;
     std::thread             thread;
     std::mutex              mutex;
     std::condition_variable cv;
 
-    void threadLoop(bool bindGroup);
+    void threadLoop();
 #endif
 
 public:
@@ -81,6 +87,8 @@ public:
     /// Search entry point. After entering main thread search function, all threads are
     /// waked up by the main thread, then this function is called to start the search.
     virtual void search();
+    /// Setup the board instance in this thread, and update the evaluator.
+    virtual void setBoardAndEvaluator(const Board &board);
     /// Return if this thread is the main thread.
     bool isMainThread() const { return id == 0; }
 
@@ -201,8 +209,6 @@ public:
     void setupDatabase(std::unique_ptr<Database::DBStorage> dbStorage);
     /// Setup evaluator maker for future evaluator creation.
     void setupEvaluator(std::function<EvaluatorMaker> evaluatorMaker);
-    /// Update evaluator to current board and rule in all threads.
-    void updateEvaluator(const Board &board, bool enabled = true);
     /// Start multi-threaded thinking for the given position.
     /// @param board The position to start searching.
     /// @param options Options of this search.

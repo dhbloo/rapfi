@@ -68,6 +68,8 @@ set(CORE_SOURCES
     search/timecontrol.cpp
     search/ab/history.cpp
     search/ab/search.cpp
+    search/mcts/node.cpp
+    search/mcts/search.cpp
     
     config.cpp
     internalConfig.cpp
@@ -139,6 +141,10 @@ set(HEADERS
     search/ab/parameter.h
     search/ab/searcher.h
     search/ab/searchstack.h
+    search/mcts/node.h
+    search/mcts/nodetable.h
+    search/mcts/searcher.h
+    search/mcts/parameter.h
 
     config.h
 )

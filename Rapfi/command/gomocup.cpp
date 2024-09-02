@@ -25,7 +25,9 @@
 #include "../eval/eval.h"
 #include "../eval/evaluator.h"
 #include "../game/board.h"
+#include "../search/ab/searcher.h"
 #include "../search/hashtable.h"
+#include "../search/mcts/searcher.h"
 #include "../search/movepick.h"
 #include "../search/opening.h"
 #include "../search/searchthread.h"
@@ -238,30 +240,27 @@ void getOption()
         else
             options.timeLeft = val;
     }
-    else if (token == "MAX_MEMORY") {
+    else if (token == "MAX_MEMORY" || token == "HASH_SIZE" /* Yixin-Board Extension*/) {
         std::cin >> val;
-        size_t maxMemSizeKB;  // max memory usage in KB
-        size_t memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
-        if (val == 0) {
-            maxMemSizeKB = 350 * 1024;  // use default gomocup max_memory
-        }
-        else {
-            maxMemSizeKB = val >> 10;  // max memory usage in KB
-            // Warn if max memory is less than 10MB or reserved memory size
-            if (maxMemSizeKB < std::max<size_t>(10240, memReservedKB))
-                ERRORL("Max memory too small, might exceeds memory limits");
+        size_t maxMemSizeKB  = val;  // max memory usage in KiB
+        size_t memReservedKB = 0;
+
+        if (token == "MAX_MEMORY") {
+            memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
+            if (val == 0) {
+                maxMemSizeKB = 350 * 1024;  // use default gomocup max_memory
+            }
+            else {
+                maxMemSizeKB = val >> 10;  // max memory usage in KB
+                // Warn if max memory is less than 10MB or reserved memory size
+                if (maxMemSizeKB < std::max<size_t>(10240, memReservedKB))
+                    ERRORL("Max memory too small, might exceeds memory limits");
+            }
         }
 
-        options.maxMemoryKB = maxMemSizeKB;
-        if (maxMemSizeKB <= memReservedKB)
-            Search::TT.resize(1);  // minimal hash size value is 1 KB
-        else
-            Search::TT.resize(maxMemSizeKB - memReservedKB);
-    }
-    else if (token == "HASH_SIZE") {  // Yixin-Board Extension
-        std::cin >> val;              // Read size of hash memory in KB
-        options.maxMemoryKB = 0;
-        Search::TT.resize(val);
+        // minimal hash size value is 1 KB
+        size_t memLimitKB = maxMemSizeKB <= memReservedKB ? 1 : maxMemSizeKB - memReservedKB;
+        Search::Threads.searcher()->setMemoryLimit(memLimitKB);
     }
     else if (token == "RULE") {
         std::cin >> val;
@@ -280,14 +279,11 @@ void getOption()
         }
 
         // Resize TT if memory reserved is different for this rule.
-        if (options.maxMemoryKB > 0
-            && Config::MemoryReservedMB[prevRule] != Config::MemoryReservedMB[options.rule.rule]) {
-            size_t maxMemSizeKB  = options.maxMemoryKB;  // max memory usage in KB
+        if (Config::MemoryReservedMB[prevRule] != Config::MemoryReservedMB[options.rule.rule]) {
+            size_t maxMemSizeKB  = Search::Threads.searcher()->getMemoryLimit();
             size_t memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
-            if (maxMemSizeKB <= memReservedKB)
-                Search::TT.resize(1);  // minimal hash size value is 1 KB
-            else
-                Search::TT.resize(maxMemSizeKB - memReservedKB);
+            size_t memLimitKB    = maxMemSizeKB <= memReservedKB ? 1 : maxMemSizeKB - memReservedKB;
+            Search::Threads.searcher()->setMemoryLimit(memLimitKB);
         }
 
         // Clear TT if rule is changed
@@ -356,7 +352,7 @@ void getOption()
                 board->move(options.rule, p);
 
             // Clear TT in case of some mistaken win/loss records
-            Search::TT.clear();
+            Search::Threads.clear(true);
         }
     }
     else if (token == "THREAD_NUM") {
@@ -412,7 +408,7 @@ void getOption()
             options.maxMoves = val;
 
             // We need to clear TT in case of mistaken results stored
-            Search::TT.clear();
+            Search::Threads.clear(true);
         }
     }
     else if (token == "DRAW_RESULT") {
@@ -429,7 +425,7 @@ void getOption()
 
         if (prevDrawResult != options.drawResult) {
             // We need to clear TT in case of mistaken results stored
-            Search::TT.clear();
+            Search::Threads.clear(true);
         }
     }
     else if (token == "EVALUATOR_DRAW_BLACK_WINRATE") {
@@ -441,6 +437,11 @@ void getOption()
         std::cin >> Config::EvaluatorDrawRatio;
         Config::EvaluatorDrawRatio = std::clamp(Config::EvaluatorDrawRatio, 0.0f, 1.0f);
     }
+    else if (token == "SEARCH_TYPE") {
+        std::cin >> str;
+        Search::Threads.setupSearcher(Config::createSearcher(str));
+        Search::Threads.clear(true);
+    }
     else {
         MESSAGEL("Unknown Info Parameter: " << token);
     }
@@ -448,7 +449,7 @@ void getOption()
 
 void clearHash()
 {
-    Search::TT.clear();
+    Search::Threads.clear(true);
     MESSAGEL("Transposition table cleared.");
 }
 
@@ -1107,7 +1108,8 @@ void splitDatabase()
 {
     auto databasePath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToSplit = Config::createDefaultDBStorage(databasePath.u8string())) {
+        std::string dbPathUTF8 = databasePath.u8string();
+        if (auto dbToSplit = Config::createDefaultDBStorage(dbPathUTF8)) {
             auto   startTime  = now();
             size_t writeCount = ::Database::splitDatabase(*Search::Threads.dbStorage(),
                                                           *dbToSplit,
@@ -1124,7 +1126,8 @@ void mergeDatabase()
 {
     auto databasePath = readPathFromInput();
     if (Search::Threads.dbStorage()) {
-        if (auto dbToMerge = Config::createDefaultDBStorage(databasePath.u8string())) {
+        std::string dbPathUTF8 = databasePath.u8string();
+        if (auto dbToMerge = Config::createDefaultDBStorage(dbPathUTF8)) {
             size_t writeCount = mergeDatabase(*Search::Threads.dbStorage(),
                                               *dbToMerge,
                                               Config::DatabaseOverwriteRule);
@@ -1171,8 +1174,7 @@ void traceBoard()
 {
     Search::Threads.waitForIdle();
     Search::Threads.main()->searchOptions = options;
-    Search::Threads.updateEvaluator(*board);  // Update evaluator
-    Search::Threads.main()->board = std::make_unique<Board>(*board, Search::Threads.main());
+    Search::Threads.main()->setBoardAndEvaluator(*board);
 
     std::string traceInfo  = Search::Threads.main()->board->trace();
     auto        traceLines = split(traceInfo, "\n");
@@ -1185,9 +1187,8 @@ void traceSearch()
 {
     Search::Threads.waitForIdle();
     Search::Threads.main()->searchOptions = options;
-    Search::Threads.updateEvaluator(*board);  // Update evaluator
-    Search::Threads.main()->board = std::make_unique<Board>(*board, Search::Threads.main());
-    Board &board                  = *Search::Threads.main()->board;
+    Search::Threads.main()->setBoardAndEvaluator(*board);
+    Board &board = *Search::Threads.main()->board;
 
     // Legal moves
     Search::MovePicker movePicker(options.rule,

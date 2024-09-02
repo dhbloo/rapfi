@@ -76,6 +76,10 @@ struct Pattern4Score
 };
 static_assert(sizeof(Pattern4Score) == sizeof(int32_t));
 
+namespace Search {
+class Searcher;  // forward declaration
+}
+
 namespace Database {
 class DBStorage;           // forward declaration
 enum class OverwriteRule;  // forward declaration
@@ -106,7 +110,7 @@ extern MsgMode             MessageMode;
 extern CoordConvertionMode IOCoordMode;
 extern CandidateRange      DefaultCandidateRange;
 extern size_t              MemoryReservedMB[RULE_NB];
-extern int64_t             DefaultTTSizeKB;
+extern size_t              DefaultTTSizeKB;
 
 // -------------------------------------------------
 // Search options
@@ -116,6 +120,13 @@ extern int  NumIterationAfterMate;
 extern int  NumIterationAfterSingularRoot;
 extern int  MaxSearchDepth;
 
+extern int NodesToPrintMCTSRootmoves;
+extern int TimeToPrintMCTSRootmoves;
+extern int MaxNonPVRootmovesToPrint;
+extern int NumNodesAfterSingularRoot;
+extern int NumNodeTableShardsPowerOfTwo;
+
+// -------------------------------------------------
 // Time management options
 extern int   TurnTimeReserved;
 extern float MatchSpace;
@@ -228,6 +239,14 @@ bool loadModel(std::istream &inStream);
 
 /// Exports current classic evaluation model to a binary stream.
 void exportModel(std::ostream &outStream);
+
+// -------------------------------------------------
+// Searcher loading
+
+/// Create a searcher instance from config.
+/// @param searcherName The name of the searcher. Empty string to use default.
+/// @return The popinter to the searcher. Can not be nullptr.
+std::unique_ptr<::Search::Searcher> createSearcher(std::string searcherName = "");
 
 // -------------------------------------------------
 // Database loading

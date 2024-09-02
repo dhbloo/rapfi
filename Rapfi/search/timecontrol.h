@@ -48,6 +48,11 @@ public:
         float averageBestMoveChanges;
     };
 
+    /// PlayoutParams struct contains all info needed per playout
+    /// in MCTS search to adjust optimum turn time.
+    struct PlayoutParams
+    {};
+
     /// Compute the optimal and maximum turn time at the beginning of a search.
     /// @param turnTime Max turn time from search options.
     /// @param matchTime Max match time from search options.
@@ -60,6 +65,11 @@ public:
     /// @param[out] timeReduction Record how much time is saved in the last move.
     /// @return True if we should stop the search.
     bool checkStop(IterParams params, float &timeReduction) const;
+
+    /// Check if we need to stop iterating deepening at this depth.
+    /// @param[in] params The time parameters from last playout.
+    /// @return True if we should stop the search.
+    bool checkStop(PlayoutParams params) const;
 
     Time optimum() const { return optimumTime; }
     Time maximum() const { return maximumTime; }

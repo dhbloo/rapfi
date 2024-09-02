@@ -45,7 +45,8 @@ enum Stages {
 
 /// Partial sort the move list up to the score limit. It dynamiclly decides
 /// which sorting algorithm to use based on how many moves are in the list.
-void fastPartialSort(ScoredMove *begin, ScoredMove *end, Score limit)
+template <typename Comparator>
+void fastPartialSort(ScoredMove *begin, ScoredMove *end, Score limit, Comparator comp)
 {
     // heruistic values
     constexpr size_t InsertionSortLimit = MAX_MOVES / 4;
@@ -59,17 +60,25 @@ void fastPartialSort(ScoredMove *begin, ScoredMove *end, Score limit)
             if (p->score >= limit) {
                 ScoredMove tmp = *p, *q;
                 *p             = *++sortedEnd;
-                for (q = sortedEnd; q != begin && *(q - 1) < tmp; --q)
+                for (q = sortedEnd; q != begin && comp(tmp, *(q - 1)); --q)
                     *q = *(q - 1);
                 *q = tmp;
             }
     }
     else if (nMoves <= SortLimit) {
-        std::sort(begin, end, std::greater<>());
+        std::sort(begin, end, comp);
     }
     else {
-        std::partial_sort(begin, begin + SortLimit, end, std::greater<>());
+        std::partial_sort(begin, begin + SortLimit, end, comp);
     }
+}
+
+/// Make the first current move to have policy = 1.0f and the rest to have policy = 0.0f.
+void markFirstMoveOneHot(ScoredMove *curMove, ScoredMove *endMove)
+{
+    curMove->policy = 1.0f;
+    for (auto *m = curMove + 1; m < endMove; ++m)
+        m->policy = 0.0f;
 }
 
 }  // namespace
@@ -88,19 +97,31 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
     , ttMove(Pos::NONE)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
+    , useNormalizedPolicy(args.evalateNormalizedPolicy)
 {
     Color self = board.sideToMove(), oppo = ~self;
     curMove = moves;
 
-    if (board.p4Count(self, A_FIVE))
+    if (board.p4Count(self, A_FIVE)) {
         endMove = generate<WINNING>(board, curMove);
-    else if (board.p4Count(oppo, A_FIVE))
+        if (useNormalizedPolicy)
+            markFirstMoveOneHot(curMove, endMove);
+    }
+    else if (board.p4Count(oppo, A_FIVE)) {
         endMove = generate<DEFEND_FIVE>(board, curMove);
-    else if (board.p4Count(self, B_FLEX4))
+        if (useNormalizedPolicy)
+            markFirstMoveOneHot(curMove, endMove);
+    }
+    else if (board.p4Count(self, B_FLEX4)) {
         endMove = generate<WINNING>(board, curMove);
+        if (useNormalizedPolicy)
+            markFirstMoveOneHot(curMove, endMove);
+    }
     else if (board.p4Count(oppo, B_FLEX4)) {
         endMove = generate<DEFEND_FOUR | ALL>(board, curMove);
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
+        if (useNormalizedPolicy)
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -110,13 +131,23 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
         case STANDARD: endMove = generate<DEFEND_B4F3 | RULE_STANDARD>(board, curMove); break;
         case RENJU: endMove = generate<DEFEND_B4F3 | RULE_RENJU>(board, curMove); break;
         }
+
         if (endMove == curMove)
             endMove = generate<ALL>(board, curMove);
         else
             endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
+
+        if (useNormalizedPolicy)
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
     }
-    else
+    else {
         endMove = generate<ALL>(board, curMove);
+        if (useNormalizedPolicy)
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+    }
+
+    if (useNormalizedPolicy)
+        fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});
 }
 
 /// MovePicker constructor for the main search.
@@ -128,8 +159,8 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     , rule(rule)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
+    , useNormalizedPolicy(false)
 {
-    assert(mainHistory);
     Color oppo = ~board.sideToMove();
     bool  ttmValid;
 
@@ -171,6 +202,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
           args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
     , hasPolicy(false)
+    , useNormalizedPolicy(false)
 {
     Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
@@ -201,12 +233,15 @@ Pos MovePicker::pickNextMove(Pred filter)
 
     while (curMove < endMove) {
         if constexpr (T == Best)
-            std::swap(*curMove, *std::max_element(curMove, endMove));
+            std::swap(*curMove, *std::max_element(curMove, endMove, ScoredMove::ScoreComparator {}));
 
         if (curMove->pos != ttMove && (!forbidden || !board.checkForbiddenPoint(curMove->pos))
             && filter()) {
-            curScore       = curMove->score;
-            curPolicyScore = curMove->rawScore;
+            curScore = curMove->score;
+            if (useNormalizedPolicy)
+                curPolicy = curMove->policy;
+            else
+                curPolicyScore = curMove->rawScore;
             return *curMove++;
         }
 
@@ -257,16 +292,14 @@ void MovePicker::scoreAllMoves()
         else
             assert(false && "incorrect score type");
 
-        if constexpr (bool(Type & MAIN_HISTORY)) {
+        if (bool(Type & MAIN_HISTORY) && mainHistory) {
             if (c.pattern4[self] >= H_FLEX3)
                 m.score += (*mainHistory)[self][m.pos][HIST_ATTACK] / 128;
             else
                 m.score += (*mainHistory)[self][m.pos][HIST_QUIET] / 256;
         }
 
-        if constexpr (bool(Type & COUNTER_MOVE)) {
-            assert(counterMoveHistory);
-
+        if (bool(Type & COUNTER_MOVE) && counterMoveHistory) {
             if (Pos lastMove = board.getLastMove(); board.isInBoard(lastMove)) {
                 const int CounterMoveBonus = 21;
                 auto [counterMove, counterMoveP4] =
@@ -277,9 +310,32 @@ void MovePicker::scoreAllMoves()
             }
         }
     }
+
+    // Compute normalized policy score if needed
+    if (useNormalizedPolicy) {
+        // Use the normalized policy if we do have policy from evaluator
+        if (hasPolicy) {
+            assert(evaluator);
+            policyBuf->applySoftmax();
+            for (auto &m : *this)
+                m.policy = (*policyBuf)[m.pos];
+        }
+        // Otherwise, use the normalized raw score as policy
+        else {
+            const float scale     = 1.0f / PolicyBuffer::ScoreScale;
+            float       sumPolicy = 0;
+            for (auto &m : *this)
+                sumPolicy += m.policy = std::exp((m.rawScore - maxPolicyScore) * scale);
+
+            // Divide sum policy to normalize
+            float invSumPolicy = 1 / sumPolicy;
+            for (auto &m : *this)
+                m.policy *= invSumPolicy;
+        }
+    }
 }
 
-// Pick the next legal move until there is no legal move left.
+/// Pick the next legal move until there is no legal move left.
 /// @return Next legal move, or Pos::NONE if there is no legal move left.
 Pos MovePicker::operator()()
 {
@@ -298,8 +354,14 @@ top:
         curMove = moves;
         endMove = generate<ALL>(board, curMove);
 
-        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY | COUNTER_MOVE)>();
-        fastPartialSort(curMove, endMove, 0);
+        if (useNormalizedPolicy) {
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});
+        }
+        else {
+            scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY | COUNTER_MOVE)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
+        }
 
         stage = ALLMOVES;
         goto top;
@@ -309,6 +371,8 @@ top:
 
         curMove = moves;
         endMove = !ttMove ? generate<DEFEND_FIVE>(board, moves) : moves;
+        if (useNormalizedPolicy)
+            markFirstMoveOneHot(curMove, endMove);
 
         stage = ALLMOVES;
         goto top;
@@ -320,8 +384,14 @@ top:
         endMove = generate<DEFEND_FOUR>(board, curMove);
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
-        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
-        fastPartialSort(curMove, endMove, 0);
+        if (useNormalizedPolicy) {
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});
+        }
+        else {
+            scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
+        }
 
         stage = ALLMOVES;
         goto top;
@@ -344,8 +414,14 @@ top:
 
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
-        scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
-        fastPartialSort(curMove, endMove, 0);
+        if (useNormalizedPolicy) {
+            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});
+        }
+        else {
+            scoreAllMoves<ScoreType(BALANCED | POLICY | MAIN_HISTORY)>();
+            fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
+        }
 
         stage = ALLMOVES;
         goto top;
@@ -364,7 +440,7 @@ top:
         }
 
         scoreAllMoves<BALANCED>();
-        fastPartialSort(curMove, endMove, 0);
+        fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
 
         stage = ALLMOVES;
         [[fallthrough]];

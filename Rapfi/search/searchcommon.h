@@ -76,10 +76,14 @@ struct RootMove
         return m.value != value ? m.value < value : m.previousValue < previousValue;
     }
 
-    Value    value         = VALUE_NONE;
-    Value    previousValue = VALUE_NONE;
-    int      selDepth      = 0;
-    uint64_t numNodes      = 0;
+    Value    value          = VALUE_NONE;
+    Value    previousValue  = VALUE_NONE;
+    int      selDepth       = 0;
+    float    winRate        = std::numeric_limits<float>::quiet_NaN();
+    float    drawRate       = std::numeric_limits<float>::quiet_NaN();
+    float    policyPrior    = std::numeric_limits<float>::quiet_NaN();
+    float    selectionValue = std::numeric_limits<float>::quiet_NaN();
+    uint64_t numNodes       = 0;
 
     std::vector<Pos> pv, previousPv;
 };
@@ -125,7 +129,6 @@ struct SearchOptions
     Time     matchTime   = 0;
     Time     timeLeft    = 0;
     uint64_t maxNodes    = 0;  // (0 means no limits)
-    uint64_t maxMemoryKB = 0;  // Memory limit (0 means no limits)
     int      maxDepth    = 99;
     int      startDepth  = 2;
 
@@ -163,5 +166,8 @@ struct SearchOptions
     ///        more than 0 |  Match only | Match only | Match+Turn
     void setTimeControl(int64_t turnTime, int64_t matchTime);
 };
+
+/// Get the therotical game value after reaching the max game ply.
+Value getDrawValue(const Board &board, const SearchOptions &options, int ply);
 
 }  // namespace Search

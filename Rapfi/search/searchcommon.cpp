@@ -19,6 +19,7 @@
 #include "searchcommon.h"
 
 #include "../config.h"
+#include "../game/board.h"
 
 namespace Search {
 
@@ -53,6 +54,21 @@ void SearchOptions::setTimeControl(int64_t turnTime, int64_t matchTime)
     }
 
     this->timeLeft = this->matchTime;
+}
+
+/// Get the return value after reaching the max game ply.
+Value getDrawValue(const Board &board, const SearchOptions &options, int ply)
+{
+    int pliesUntilMaxPly = std::max(options.maxMoves - board.nonPassMoveCount(), 0);
+    int matePly          = ply + pliesUntilMaxPly;
+
+    switch (options.drawResult) {
+    default: return VALUE_DRAW;
+    case SearchOptions::RES_BLACK_WIN:
+        return board.sideToMove() == BLACK ? mate_in(matePly) : mated_in(matePly);
+    case SearchOptions::RES_WHITE_WIN:
+        return board.sideToMove() == WHITE ? mate_in(matePly) : mated_in(matePly);
+    }
 }
 
 }  // namespace Search

@@ -1,6 +1,6 @@
 /*
  *  Rapfi, a Gomoku/Renju playing engine supporting piskvork protocol.
- *  Copyright (C) 2022  Rapfi developers
+ *  Copyright (C) 2024  Rapfi developers
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -16,36 +16,25 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "hash.h"
+#pragma once
 
-#include "utils.h"
+namespace Search::MCTS {
 
-#define ZOBRISH_SEED 0xa52ca39782739747ULL
+constexpr float CpuctExploration     = 1.0f;
+constexpr float CpuctExplorationLog  = 0.4f;
+constexpr float CpuctExplorationBase = 500;
+constexpr float CpuctParentVisitBias = 0.1f;
 
-namespace Hash {
+constexpr float FpuReductionMax     = 0.1f;
+constexpr float FpuLossProp         = 0.0f;
+constexpr float RootFpuReductionMax = 0.05f;
+constexpr float RootFpuLossProp     = 0.0f;
+constexpr float FpuUtilityBlendPow  = 2.0f;
 
-/// Global zobrist table that will be inititalized at startup.
-HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
-HashKey zobristSide[SIDE_NB];
+constexpr uint32_t MinTranspositionSkipVisits = 10;
 
-/// Init zobrish table using PRNG with the given seed.
-/// @param seed Seed of PRNG.
-void initZobrish(uint64_t seed)
-{
-    PRNG prng {seed};
+constexpr bool  UseLCBForBestmoveSelection = false;
+constexpr float LCBStdevs = 5;
+constexpr float MinVisitPropForLCB = 0.2f;
 
-    for (int i = 0; i < FULL_BOARD_CELL_COUNT; i++) {
-        zobrist[BLACK][i] = prng();
-        zobrist[WHITE][i] = prng();
-    }
-
-    zobristSide[BLACK] = prng();
-    zobristSide[WHITE] = prng();
-}
-
-const auto init = []() {
-    initZobrish(ZOBRISH_SEED);
-    return true;
-}();
-
-}  // namespace Hash
+}  // namespace Search::MCTS

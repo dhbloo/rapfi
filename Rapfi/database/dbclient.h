@@ -137,8 +137,6 @@ private:
         DBKey    key;
         DBRecord record;
         bool     dirty;
-
-        EntryCache() = default;
     };
     LRUCacheTable<HashKey, EntryCache> dbCache;
 

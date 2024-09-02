@@ -20,7 +20,7 @@
 
 #include "../core/iohelper.h"
 #include "../core/platform.h"
-#include "ab/searcher.h"
+#include "../game/board.h"
 #include "movepick.h"
 #include "opening.h"
 #include "searcher.h"
@@ -35,71 +35,98 @@ ThreadPool Threads;
 
 SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
     : id(id)
-    , searching(false)
+    , running(false)
     , exit(false)
 #ifdef MULTI_THREADING
-    , thread(&SearchThread::threadLoop, this, bindGroup)
+    , thread(&SearchThread::threadLoop, this)
 #endif
     , threads(threadPool)
 {
+    // Create search data for this thread
+    searchData = threads.searcher()->makeSearchData(*this);
+
+    // Set thread affinity to a specific group if needed
+    if (bindGroup)
+        runTask([this]() {
+            // If OS already scheduled us on a different group than 0 then don't overwrite
+            // the choice, eventually we are one of many one-threaded processes running on
+            // some Windows NUMA hardware, for instance in fishtest. To make it simple,
+            // just check if running threads are below a threshold, in this case all this
+            // NUMA machinery is not needed.
+            WinProcGroup::bindThisThread(this->id);
+        });
+
     waitForIdle();
 }
 
 SearchThread::~SearchThread()
 {
-    assert(!searching);
     exit = true;
 
 #ifdef MULTI_THREADING
-    startSearching();
+    runTask(nullptr);
     thread.join();
 #endif
 }
 
-void SearchThread::startSearching()
+void SearchThread::runTask(std::function<void()> task)
 {
 #ifdef MULTI_THREADING
-    std::lock_guard<std::mutex> lock(mutex);
-    searching = true;
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait(lock, [&] { return !running; });
+        taskFunc = std::move(task);
+        running  = true;
+    }
     cv.notify_one();
 #else
-    search();
+    if (task)
+        task();
 #endif
+}
+
+void SearchThread::runSearch()
+{
+    runTask([this] { search(); });
+}
+
+void SearchThread::runClear()
+{
+    runTask([this] { clear(); });
 }
 
 void SearchThread::waitForIdle()
 {
 #ifdef MULTI_THREADING
-    if (!searching)
+    if (!running)
         return;
 
     std::unique_lock<std::mutex> lock(mutex);
-    cv.wait(lock, [&] { return !searching; });
+    cv.wait(lock, [&] { return !running; });
 #endif
 }
 
 #ifdef MULTI_THREADING
-void SearchThread::threadLoop(bool bindGroup)
+void SearchThread::threadLoop()
 {
-    // If OS already scheduled us on a different group than 0 then don't overwrite
-    // the choice, eventually we are one of many one-threaded processes running on
-    // some Windows NUMA hardware, for instance in fishtest. To make it simple,
-    // just check if running threads are below a threshold, in this case all this
-    // NUMA machinery is not needed.
-    if (bindGroup)
-        WinProcGroup::bindThisThread(id);
-
     while (true) {
-        std::unique_lock<std::mutex> lock(mutex);
-        searching = false;
-        cv.notify_all();
-        cv.wait(lock, [&] { return searching; });
+        std::function<void()> task;
 
-        if (exit)
-            return;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            running = false;
+            cv.notify_all();
+            cv.wait(lock, [&] { return running; });
 
-        lock.unlock();
-        search();
+            if (exit)
+                return;
+
+            task     = std::move(taskFunc);
+            taskFunc = nullptr;
+        }
+
+        if (task)
+            task();
     }
 }
 #endif
@@ -107,7 +134,7 @@ void SearchThread::threadLoop(bool bindGroup)
 void SearchThread::clear()
 {
     if (searchData)
-        searchData->clearData();
+        searchData->clearData(*this);
     rootMoves.clear();
     balance2Moves.clear();
     numNodes = 0;
@@ -134,6 +161,30 @@ void MainSearchThread::search()
 {
     assert(threads.searcher());
     threads.searcher()->searchMain(*this);
+}
+
+void SearchThread::setBoardAndEvaluator(const Board &board)
+{
+    // Reset board instance in this thread to be null
+    this->board.reset();
+
+    // Setup evaluator in this thread
+    if (!threads.evaluatorMaker)
+        evaluator.reset();
+    else {
+        const int  boardSize = board.size();
+        const Rule rule      = threads.main()->searchOptions.rule;
+
+        // Clear loaded evaluator that does not match
+        if (evaluator && (evaluator->boardSize != boardSize || evaluator->rule != rule))
+            evaluator.reset();
+
+        if (!evaluator)
+            evaluator = threads.evaluatorMaker(boardSize, rule);
+    }
+
+    // Clone the board (this will also sync the evaluator to the board state)
+    this->board = std::make_unique<Board>(board, this);
 }
 
 void MainSearchThread::checkExit()
@@ -170,7 +221,7 @@ void MainSearchThread::markPonderingAvailable()
 void MainSearchThread::startOtherThreads()
 {
     for (size_t i = 1; i < threads.size(); i++)
-        threads[i]->startSearching();
+        threads[i]->runSearch();
 }
 
 void ThreadPool::waitForIdle(bool includingMainThread)
@@ -182,11 +233,9 @@ void ThreadPool::waitForIdle(bool includingMainThread)
 void ThreadPool::setNumThreads(size_t numThreads)
 {
     // Destroy all threads first
-    if (!empty()) {
-        waitForIdle();
-
-        while (!empty())
-            pop_back();  // std::unique_ptr will automatically destroy thread
+    while (!empty()) {
+        back()->waitForIdle();
+        pop_back();  // std::unique_ptr will automatically destroy thread
     }
 
     // Create requested amount of threads
@@ -200,18 +249,20 @@ void ThreadPool::setNumThreads(size_t numThreads)
         while (size() < numThreads)
             push_back(std::make_unique<SearchThread>(*this, (uint32_t)size(), bindGroup));
 #endif
-
-        if (searcher()) {
-            for (const auto &th : *this)
-                th->searchData = searcher()->makeSearchData(*th);
-        }
     }
 }
 
 void ThreadPool::setupSearcher(std::unique_ptr<Searcher> newSearcher)
 {
+    size_t memLimitKB = 0;
+    if (searcher())
+        memLimitKB = searcher()->getMemoryLimit();
+
     assert(newSearcher);
     searcherPtr = std::move(newSearcher);
+
+    if (memLimitKB)
+        searcher()->setMemoryLimit(memLimitKB);
 
     // Re-instantiate all threads
     setNumThreads(size());
@@ -242,78 +293,34 @@ void ThreadPool::setupEvaluator(std::function<EvaluatorMaker> maker)
     }
 }
 
-void ThreadPool::updateEvaluator(const Board &board, bool enabled)
-{
-    if (empty())
-        return;
-
-    waitForIdle();
-
-    // Reset board in all threads to null
-    for (const auto &th : *this) {
-        th->board.reset();
-    }
-
-    // Set evaluator in all threads
-    if (!evaluatorMaker || !enabled) {
-        for (const auto &th : *this)
-            th->evaluator.reset();
-    }
-    else {
-        // Clear all loaded evaluator that does not match
-        if (main()->evaluator
-            && (main()->evaluator->boardSize != board.size()
-                || main()->evaluator->rule != main()->searchOptions.rule)) {
-            for (const auto &th : *this)
-                th->evaluator.reset();
-        }
-
-        for (const auto &th : *this) {
-            if (!th->evaluator || th->evaluator->boardSize != board.size()
-                || th->evaluator->rule != main()->searchOptions.rule) {
-                th->evaluator = evaluatorMaker(board.size(), main()->searchOptions.rule);
-
-                // Failed to create evaluator, remove all evaluator created
-                if (!th->evaluator) {
-                    for (const auto &t : *this)
-                        t->evaluator.reset();
-                    break;
-                }
-            }
-        }
-    }
-}
-
 void ThreadPool::startThinking(const Board &board, const SearchOptions &options, bool inPonder)
 {
     assert(size() > 0);
     assert(searcher());
-    waitForIdle();
 
     // Clear and init all threads state
-    for (const auto &th : *this)
-        th->clear();
-    main()->inPonder      = inPonder;
-    main()->searchOptions = options;
-    terminate             = false;
+    for (size_t i = 1; i < size(); i++) {
+        auto &th = (*this)[i];
+        th->runTask([this, &th]() {
+            th->clear();
 
-    // Create dbClient for each thread
-    if (dbStorage()) {
-        for (size_t i = 0; i < size(); i++) {
-            if (!(*this)[i]->dbClient)
-                (*this)[i]->dbClient =
+            // Create dbClient for each thread
+            if (dbStorage() && !th->dbClient)
+                th->dbClient =
                     std::make_unique<Database::DBClient>(*dbStorage(),
                                                          Database::RECORD_MASK_LVDB,
                                                          Config::DatabaseCacheSize,
                                                          Config::DatabaseRecordCacheSize);
-        }
+        });
     }
 
-    // Create or update evaluator if needed
-    updateEvaluator(board);
+    main()->clear();
+    main()->inPonder      = inPonder;
+    main()->searchOptions = options;
+    terminate             = false;
 
-    // Clone input board to main thread
-    main()->board = std::make_unique<Board>(board, main());
+    // Clone the input board to main thread and update evaluator
+    main()->setBoardAndEvaluator(board);
 
     // Expand board candidate if needed
     Opening::expandCandidate(*main()->board);
@@ -321,34 +328,36 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
     // Generate root moves for main search thread
     MovePicker movePicker(options.rule, *main()->board, MovePicker::ExtraArgs<MovePicker::ROOT> {});
     while (Pos m = movePicker()) {
-        if (!std::count(options.blockMoves.begin(), options.blockMoves.end(), m)) {
-            if (options.balanceMode == Search::SearchOptions::BALANCE_TWO) {
-                // Use candidates before first move
-                std::unordered_set<Pos> cands;
-                FOR_EVERY_CAND_POS(main()->board, pos)
-                {
-                    cands.insert(pos);
-                }
+        // Ignore blocked moves
+        if (std::count(options.blockMoves.begin(), options.blockMoves.end(), m))
+            continue;
 
-                main()->board->move(options.rule, m);
-
-                // Generate second move for balance2
-                MovePicker movePicker2(options.rule,
-                                       *main()->board,
-                                       MovePicker::ExtraArgs<MovePicker::ROOT> {});
-                while (Pos m2 = movePicker2()) {
-                    if (cands.find(m2) != cands.end()) {
-                        Search::Balance2Move bm {m, m2};
-                        main()->rootMoves.emplace_back(bm);
-                        main()->balance2Moves[bm] = main()->rootMoves.size() - 1;
-                    }
-                }
-
-                main()->board->undo(options.rule);
+        if (options.balanceMode == Search::SearchOptions::BALANCE_TWO) {
+            // Use candidates before first move
+            std::unordered_set<Pos> cands;
+            FOR_EVERY_CAND_POS(main()->board, pos)
+            {
+                cands.insert(pos);
             }
-            else {
-                main()->rootMoves.emplace_back(m);
+
+            main()->board->move(options.rule, m);
+
+            // Generate second move for balance2
+            MovePicker movePicker2(options.rule,
+                                   *main()->board,
+                                   MovePicker::ExtraArgs<MovePicker::ROOT> {});
+            while (Pos m2 = movePicker2()) {
+                if (cands.find(m2) != cands.end()) {
+                    Search::Balance2Move bm {m, m2};
+                    main()->rootMoves.emplace_back(bm);
+                    main()->balance2Moves[bm] = main()->rootMoves.size() - 1;
+                }
             }
+
+            main()->board->undo(options.rule);
+        }
+        else {
+            main()->rootMoves.emplace_back(m);
         }
     }
 
@@ -375,33 +384,28 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
 
     // Copy board and root moves from main thread to other threads
     for (size_t i = 1; i < size(); i++) {
-        auto &th      = (*this)[i];
-        th->board     = std::make_unique<Board>(*main()->board, th.get());
-        th->rootMoves = main()->rootMoves;
-        if (options.balanceMode == Search::SearchOptions::BALANCE_TWO)
-            th->balance2Moves = main()->balance2Moves;
+        auto &th = (*this)[i];
+        th->runTask([this, &th] {
+            th->board     = std::make_unique<Board>(*main()->board, th.get());
+            th->rootMoves = main()->rootMoves;
+            if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO)
+                th->balance2Moves = main()->balance2Moves;
+        });
     }
 
-    main()->startSearching();
+    main()->runSearch();
 }
 
 void ThreadPool::clear(bool clearAllMemory)
 {
-    waitForIdle();
-
     if (searcher())
         searcher()->clear(*this, clearAllMemory);
-
-    for (const auto &th : *this)
-        th->clear();
-
-    terminate = false;
 }
 
 ThreadPool::ThreadPool()
 {
-    // Set default searcher to Alpha-beta searcher
-    setupSearcher(std::make_unique<AB::ABSearcher>());
+    // Set default searcher
+    setupSearcher(Config::createSearcher());
 }
 
 ThreadPool::~ThreadPool()

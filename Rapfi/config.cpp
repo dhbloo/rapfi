@@ -27,7 +27,9 @@
 #include "eval/mix9litennue.h"
 #include "eval/mix9nnue.h"
 #include "game/pattern.h"
+#include "search/ab/searcher.h"
 #include "search/hashtable.h"
+#include "search/mcts/searcher.h"
 #include "search/searchthread.h"
 
 #include <cpptoml.h>
@@ -91,11 +93,13 @@ CoordConvertionMode IOCoordMode = CoordConvertionMode::NONE;
 CandidateRange DefaultCandidateRange = CandidateRange::SQUARE3_LINE4;
 /// Memory reserved for stuff other than hash table in max_memory option.
 size_t MemoryReservedMB[RULE_NB] = {0};
-/// Default hash table size (negative number for not setting).
-int64_t DefaultTTSizeKB = -1;
+/// Default hash table size (zero for not setting).
+size_t DefaultTTSizeKB = 0;
 
 // -------------------------------------------------
 // Search options
+
+const char *DefaultSearcherName = "alphabeta";
 
 /// Whether to enable aspiration window.
 bool AspirationWindow = true;
@@ -107,6 +111,16 @@ int NumIterationAfterMate = 6;
 int NumIterationAfterSingularRoot = 4;
 /// Max depth to search.
 int MaxSearchDepth = 99;
+/// How many nodes to print root moves in MCTS search. (Positive number to enable)
+int NodesToPrintMCTSRootmoves = 0;
+/// How much milliseconds to print root moves in MCTS search. (Positive number to enable)
+int TimeToPrintMCTSRootmoves = 1000;
+/// Maximum number of non-pv root moves to print in MCTS search.
+int MaxNonPVRootmovesToPrint = 10;
+/// Maximum number of search nodes after we found that we are in singular root.
+int NumNodesAfterSingularRoot = 100;
+/// The power of two number of shards that the node table has.
+int NumNodeTableShardsPowerOfTwo = 10;
 
 // Time management options
 
@@ -373,13 +387,16 @@ void Config::readGeneral(const cpptoml::table &t)
 
     DefaultTTSizeKB = t.get_as<uint64_t>("default_tt_size_kb").value_or(DefaultTTSizeKB);
     // Resize TT according to default TT size (overriding previous size)
-    if (DefaultTTSizeKB >= 0)
-        Search::TT.resize(DefaultTTSizeKB);
+    if (DefaultTTSizeKB > 0)
+        Search::Threads.searcher()->setMemoryLimit(DefaultTTSizeKB);
 }
 
 /// Read search table of the config.
 void Config::readSearch(const cpptoml::table &t)
 {
+    if (auto v = t.get_as<std::string>("default_searcher"); v)
+        Search::Threads.setupSearcher(createSearcher(*v));
+
     AspirationWindow = t.get_as<bool>("aspiration_window").value_or(AspirationWindow);
     FilterSymmetryRootMoves =
         t.get_as<bool>("filter_symmetry_root_moves").value_or(FilterSymmetryRootMoves);
@@ -945,6 +962,24 @@ void Config::exportModel(std::ostream &outStream)
 
         out->write(reinterpret_cast<char *>(scores), sizeof(scores));
     }
+}
+
+std::unique_ptr<::Search::Searcher> Config::createSearcher(std::string searcherName)
+{
+    if (searcherName.empty())
+        searcherName = DefaultSearcherName;
+
+    upperInplace(searcherName);
+
+    if (searcherName == "ALPHABETA")
+        return std::make_unique<Search::AB::ABSearcher>();
+    if (searcherName == "MCTS")
+        return std::make_unique<Search::MCTS::MCTSSearcher>();
+
+    ERRORL("Unknown search type: " << searcherName
+                                   << ", must be one of [alphabeta, mcts]."
+                                      " Use alphabeta searcher as default.");
+    return std::make_unique<Search::AB::ABSearcher>();
 }
 
 std::unique_ptr<::Database::DBStorage> Config::createDefaultDBStorage(std::string utf8URL)

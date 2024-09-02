@@ -45,7 +45,9 @@ struct ABSearchData : SearchData
     CounterMoveHistory counterMoveHistory;  /// Counter move history table
 
     ~ABSearchData() = default;
-    void clearData() override;
+
+    /// Clear all search states between two search.
+    void clearData(SearchThread &th) override;
 };
 
 class ABSearcher : public Searcher
@@ -69,13 +71,33 @@ public:
         return std::make_unique<ABSearchData>();
     }
 
+    /// Set the memory size limit of the search.
+    void setMemoryLimit(size_t memorySizeKB) override;
+
+    /// Get the current memory size limit of the search.
+    size_t getMemoryLimit() const override;
+
+    /// Clear main thread states (and TT) between different games.
     void clear(ThreadPool &pool, bool clearAllMemory) override;
+
+    /// The thinking entry point. When program receives search command, main
+    /// thread is started first and other threads are launched by main thread.
     void searchMain(MainSearchThread &th) override;
+
+    /// The main iterative deeping search loop. It calls search() repeatedly with increasing depth
+    /// until the stop condition is reached. Results are updated to thread bounded with the board.
     void search(SearchThread &th) override;
+
+    /// Checks if current search reaches timeup condition.
     bool checkTimeupCondition() override;
 
 private:
-    int           pickNextDepth(ThreadPool &threads, uint32_t thisId, int lastDepth) const;
+    /// Choose the next search depth by checking completed depth of all other
+    /// threads and selecting the next depth with least working threads to
+    /// avoid repeated searching.
+    int pickNextDepth(ThreadPool &threads, uint32_t thisId, int lastDepth) const;
+
+    /// Pick thread with the best result according to eval and completed depth.
     SearchThread *pickBestThread(ThreadPool &threads) const;
 };
 

@@ -20,7 +20,7 @@
 
 #include "../config.h"
 #include "../core/iohelper.h"
-#include "../search/hashtable.h"
+#include "../search/searchthread.h"
 
 #include <filesystem>
 #include <fstream>
@@ -132,7 +132,7 @@ bool loadConfig()
     }
 
     if (success && Config::ClearHashAfterConfigLoaded)
-        Search::TT.clear();
+        Search::Threads.clear(true);
 
     return success;
 }

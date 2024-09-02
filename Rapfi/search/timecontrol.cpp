@@ -105,4 +105,9 @@ bool TimeControl::checkStop(IterParams params, float &timeReduction) const
     return elapsed() >= turnTime;
 }
 
+bool TimeControl::checkStop(PlayoutParams params) const
+{
+    return elapsed() >= optimum();
+}
+
 }  // namespace Search
