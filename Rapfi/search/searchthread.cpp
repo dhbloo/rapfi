@@ -47,13 +47,13 @@ SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
 
     // Set thread affinity to a specific group if needed
     if (bindGroup)
-        runTask([this]() {
+        runTask([](SearchThread &th) {
             // If OS already scheduled us on a different group than 0 then don't overwrite
             // the choice, eventually we are one of many one-threaded processes running on
             // some Windows NUMA hardware, for instance in fishtest. To make it simple,
             // just check if running threads are below a threshold, in this case all this
             // NUMA machinery is not needed.
-            WinProcGroup::bindThisThread(this->id);
+            WinProcGroup::bindThisThread(th.id);
         });
 
     waitForIdle();
@@ -69,7 +69,7 @@ SearchThread::~SearchThread()
 #endif
 }
 
-void SearchThread::runTask(std::function<void()> task)
+void SearchThread::runTask(std::function<void(SearchThread &)> task)
 {
 #ifdef MULTI_THREADING
     {
@@ -81,18 +81,8 @@ void SearchThread::runTask(std::function<void()> task)
     cv.notify_one();
 #else
     if (task)
-        task();
+        task(*this);
 #endif
-}
-
-void SearchThread::runSearch()
-{
-    runTask([this] { search(); });
-}
-
-void SearchThread::runClear()
-{
-    runTask([this] { clear(); });
 }
 
 void SearchThread::waitForIdle()
@@ -110,7 +100,7 @@ void SearchThread::waitForIdle()
 void SearchThread::threadLoop()
 {
     while (true) {
-        std::function<void()> task;
+        std::function<void(SearchThread &)> task;
 
         {
             std::unique_lock<std::mutex> lock(mutex);
@@ -126,7 +116,7 @@ void SearchThread::threadLoop()
         }
 
         if (task)
-            task();
+            task(*this);
     }
 }
 #endif
@@ -149,18 +139,6 @@ void MainSearchThread::clear()
     callsCnt                       = 0;
     startPonderAfterThinking       = false;
     inPonder                       = false;
-}
-
-void SearchThread::search()
-{
-    assert(threads.searcher());
-    threads.searcher()->search(*this);
-}
-
-void MainSearchThread::search()
-{
-    assert(threads.searcher());
-    threads.searcher()->searchMain(*this);
 }
 
 void SearchThread::setBoardAndEvaluator(const Board &board)
@@ -220,10 +198,38 @@ void MainSearchThread::markPonderingAvailable()
         startPonderAfterThinking.store(true, std::memory_order_relaxed);
 }
 
-void MainSearchThread::startOtherThreads()
+void MainSearchThread::startSearchingAndWait()
 {
+    Searcher *searcher = threads.searcher();
+
+    // Starts searching in non-main threads
     for (size_t i = 1; i < threads.size(); i++)
-        threads[i]->runSearch();
+        threads[i]->runTask([searcher](SearchThread &th) { searcher->search(th); });
+
+    // Starts main thread searching
+    searcher->search(*this);
+
+    // Stop all threads if not already stopped
+    threads.stopThinking();
+
+    // Wait for all other threads to stop searching
+    threads.waitForIdle(false);
+}
+
+void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> task)
+{
+    if (!task)
+        return;
+
+    // Run task in non-main threads
+    for (size_t i = 1; i < threads.size(); i++)
+        threads[i]->runTask(task);
+
+    // Run task in main thread
+    task(*this);
+
+    // Wait for all other threads to finish
+    threads.waitForIdle(false);
 }
 
 void ThreadPool::waitForIdle(bool includingMainThread)
@@ -302,17 +308,15 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
 
     // Clear and init all threads state
     for (size_t i = 1; i < size(); i++) {
-        auto &th = (*this)[i];
-        th->runTask([this, &th]() {
-            th->clear();
+        (*this)[i]->runTask([this](SearchThread &th) {
+            th.clear();
 
             // Create dbClient for each thread
-            if (dbStorage() && !th->dbClient)
-                th->dbClient =
-                    std::make_unique<Database::DBClient>(*dbStorage(),
-                                                         Database::RECORD_MASK_LVDB,
-                                                         Config::DatabaseCacheSize,
-                                                         Config::DatabaseRecordCacheSize);
+            if (dbStorage() && !th.dbClient)
+                th.dbClient = std::make_unique<Database::DBClient>(*dbStorage(),
+                                                                   Database::RECORD_MASK_LVDB,
+                                                                   Config::DatabaseCacheSize,
+                                                                   Config::DatabaseRecordCacheSize);
         });
     }
 
@@ -386,16 +390,17 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
 
     // Copy board and root moves from main thread to other threads
     for (size_t i = 1; i < size(); i++) {
-        auto &th = (*this)[i];
-        th->runTask([this, &th] {
-            th->board     = std::make_unique<Board>(*main()->board, th.get());
-            th->rootMoves = main()->rootMoves;
+        (*this)[i]->runTask([this](SearchThread &th) {
+            th.setBoardAndEvaluator(*main()->board);
+            th.rootMoves = main()->rootMoves;
             if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO)
-                th->balance2Moves = main()->balance2Moves;
+                th.balance2Moves = main()->balance2Moves;
         });
     }
 
-    main()->runSearch();
+    main()->runTask([searcher = searcher()](SearchThread &th) {
+        searcher->searchMain(static_cast<MainSearchThread &>(th));
+    });
 }
 
 void ThreadPool::clear(bool clearAllMemory)

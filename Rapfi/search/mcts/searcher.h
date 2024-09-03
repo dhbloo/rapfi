@@ -82,6 +82,9 @@ private:
     /// Setup root node for the search
     void setupRootNode(MainSearchThread &th);
 
+    /// Garbage collect all old nodes in the node table
+    void recycleOldNodes(MainSearchThread &th);
+
     /// Rank the root moves and update PV, then print all root moves
     void updateRootMovesData(MainSearchThread &th);
 };

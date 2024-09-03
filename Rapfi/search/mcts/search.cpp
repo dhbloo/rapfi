@@ -598,14 +598,8 @@ void MCTSSearcher::searchMain(MainSearchThread &th)
 
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
-
-    setupRootNode(th);       // Setup root node and other stuffs
-    th.startOtherThreads();  // Starts non-main threads
-    search(th);              // Starts main thread searching
-
-    // Stop all threads if not already stopped and wait for all threads to stop
-    th.threads.stopThinking();
-    th.threads.waitForIdle(false);
+    setupRootNode(th);  // Setup root node and other stuffs
+    th.startSearchingAndWait();
 
     // Rank root moves and record best move
     updateRootMovesData(th);
@@ -718,9 +712,6 @@ void MCTSSearcher::setupRootNode(MainSearchThread &th)
 
     SearchOptions &opts = th.options();
 
-    // Increment global node age
-    globalNodeAge += 1;
-
     // Initialize the root node to expanded state
     std::tie(root, std::ignore) =
         allocateOrFindNode(*nodeTable, th.board->zobristKey(), globalNodeAge);
@@ -732,6 +723,15 @@ void MCTSSearcher::setupRootNode(MainSearchThread &th)
 
     // Update previous Position
     previousPosition = std::move(rootPosition);
+
+    // Garbage collect all old nodes
+    recycleOldNodes(th);
+}
+
+void MCTSSearcher::recycleOldNodes(MainSearchThread &th)
+{
+    // Increment global node age
+    globalNodeAge += 1;
 }
 
 void MCTSSearcher::updateRootMovesData(MainSearchThread &th)

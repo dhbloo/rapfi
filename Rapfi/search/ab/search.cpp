@@ -181,12 +181,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
 
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
-    th.startOtherThreads();  // Starts non-main threads
-    search(th);              // Starts main thread searching
-
-    // Stop all threads if not already stopped and wait for all threads to stop
-    th.threads.stopThinking();
-    th.threads.waitForIdle(false);
+    th.startSearchingAndWait();
 
     // Select best thread according to eval and completed depth when needed
     SearchThread *bestThread = &th;

@@ -56,9 +56,10 @@ public:
     /// @note All threads in pool is guaranteed to be created by this searcher.
     virtual void clear(ThreadPool &pool, bool clearAllMemory) = 0;
 
-    /// Enter search function for main search thread.
+    /// Main-thread search entry point. After threadpool have finished preparation,
+    /// this function is called. It is responsible for starting all other threads.
     virtual void searchMain(MainSearchThread &th) = 0;
-    /// Enter search function for worker search thread.
+    /// Worker-thread search entry point. This function is called by each worker thread.
     virtual void search(SearchThread &th) = 0;
 
     /// Checks if a search reaches timeup condition.
