@@ -140,7 +140,7 @@ struct MainSearchThread : public SearchThread
     void search() override;
     /// Check exit condition (time/nodes) and set ThreadPool's terminate flag.
     /// @return True if we should stop the search now.
-    void checkExit();
+    void checkExit(uint32_t elapsedCalls = 1);
     /// Mark pondering available for the last finished searching.
     void markPonderingAvailable();
     /// Start all non-main search threads. This function should be called in

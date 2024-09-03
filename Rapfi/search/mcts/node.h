@@ -193,14 +193,17 @@ public:
     void updateStats();
 
     /// Begin the visit of this node.
-    void beginVisit() { nVirtual.fetch_add(1, std::memory_order_acq_rel); }
+    void beginVisit(uint32_t newVisits)
+    {
+        nVirtual.fetch_add(newVisits, std::memory_order_acq_rel);
+    }
 
     /// Finish the visit of this node by incrementing the total visits of this node.
-    void finishVisit(uint32_t delta)
+    void finishVisit(uint32_t newVisits, uint32_t actualNewVisits)
     {
-        if (delta)
-            n.fetch_add(delta, std::memory_order_acq_rel);
-        nVirtual.fetch_add(-1, std::memory_order_release);
+        if (actualNewVisits)
+            n.fetch_add(actualNewVisits, std::memory_order_acq_rel);
+        nVirtual.fetch_add(-newVisits, std::memory_order_release);
     }
 
     /// Directly increment the total visits of this node by delta.

@@ -18,7 +18,12 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace Search::MCTS {
+
+constexpr uint32_t MaxNumVisitsPerPlayout = 100;
+constexpr float    MaxNewVisitsProp       = 0.2f;
 
 constexpr float CpuctExploration     = 1.0f;
 constexpr float CpuctExplorationLog  = 0.4f;
@@ -34,7 +39,7 @@ constexpr float FpuUtilityBlendPow  = 2.0f;
 constexpr uint32_t MinTranspositionSkipVisits = 10;
 
 constexpr bool  UseLCBForBestmoveSelection = false;
-constexpr float LCBStdevs = 5;
-constexpr float MinVisitPropForLCB = 0.2f;
+constexpr float LCBStdevs                  = 5;
+constexpr float MinVisitPropForLCB         = 0.2f;
 
 }  // namespace Search::MCTS

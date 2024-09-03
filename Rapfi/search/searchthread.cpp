@@ -187,12 +187,14 @@ void SearchThread::setBoardAndEvaluator(const Board &board)
     this->board = std::make_unique<Board>(board, this);
 }
 
-void MainSearchThread::checkExit()
+void MainSearchThread::checkExit(uint32_t elapsedCalls)
 {
     // We only check exit condition after a number of calls.
     // This is to avoid expensive calculation in timeup condition checking.
-    if (callsCnt-- > 0)
+    if (callsCnt > elapsedCalls) {
+        callsCnt -= elapsedCalls;
         return;
+    }
 
     // Resets callsCnt
     if (searchOptions.maxNodes)
