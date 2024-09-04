@@ -59,12 +59,19 @@ public:
     /// Get the total number of shards of this node table.
     size_t getNumShards() const { return numShards; }
 
+    /// Get the shard with the given shard index.
+    /// @note This function is thread-safe.
+    Shard getShardByShardIndex(size_t index) const
+    {
+        return Shard {index, tables[index], mutexes[index]};
+    }
+
     /// Get the shard that contains the node with the given hash key.
     /// @note This function is thread-safe.
-    Shard getShard(HashKey hash) const
+    Shard getShardByHash(HashKey hash) const
     {
         size_t index = hash & mask;
-        return Shard {index, tables[index], mutexes[index]};
+        return getShardByShardIndex(index);
     }
 
     /// Find the node with the given hash key.
@@ -72,7 +79,7 @@ public:
     /// @note This function uses reader lock to ensure thread-safety.
     Node *findNode(HashKey hash) const
     {
-        Shard            shard = getShard(hash);
+        Shard            shard = getShardByHash(hash);
         std::shared_lock lock(shard.mutex);
         auto             it = shard.table.find(hash);
         return it != shard.table.end() ? it->get() : nullptr;
@@ -86,7 +93,7 @@ public:
     std::pair<Node *, bool> tryInsertNode(std::unique_ptr<Node> nodePtr)
     {
         HashKey          hash  = nodePtr->getHash();
-        Shard            shard = getShard(hash);
+        Shard            shard = getShardByHash(hash);
         std::unique_lock lock(shard.mutex);
 
         auto [it, inserted] = shard.table.emplace(std::move(nodePtr));

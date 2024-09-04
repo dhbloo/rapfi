@@ -66,11 +66,8 @@ inline float puctSelectionValue(float    childUtility,
     float Q = childUtility;
 
     // Account for virtual losses
-    if (childVirtualVisits > 0) {
-        float    childUtilitySum = childUtility * childVisits;
-        uint32_t childVisitsSum  = childVisits + childVirtualVisits;
-        Q                        = (childUtilitySum - childVirtualVisits) / childVisitsSum;
-    }
+    if (childVirtualVisits > 0)
+        Q = (Q * childVisits - childVirtualVisits) / (childVisits + childVirtualVisits);
 
     return Q + U;
 }
@@ -513,12 +510,54 @@ void extractPVOfChildNode(const Node &node, std::vector<Pos> &pv, int maxDepth =
     }
 }
 
+/// Apply a custom function to the node and its children recursively.
+/// @param node The node to traverse recursively.
+/// @param f The function to apply to the node and its children.
+/// @param prng The PRNG to use for permuting the children for multi-thread visit.
+/// @param globalNodeAge The global node age to synchronize the visits.
+void recursiveApply(Node &node, std::function<void(Node &)> *f, PRNG *prng, uint32_t globalNodeAge)
+{
+    std::atomic<uint32_t> &nodeAge = node.getAgeRef();
+    // If the node's age has been updated, then the node's traversal is done
+    if (nodeAge.load(std::memory_order_acquire) == globalNodeAge)
+        return;
+
+    if (!node.isLeaf()) {
+        EdgeArray &edges = *node.getEdges();
+
+        // Get the edge indices of the children to visit
+        std::vector<uint32_t> edgeIndices;
+        for (uint32_t edgeIndex = 0; edgeIndex < edges.numEdges; edgeIndex++) {
+            Edge &childEdge = edges[edgeIndex];
+            Node *childNode = childEdge.getChild();
+            if (childNode)
+                edgeIndices.push_back(edgeIndex);
+        }
+
+        // Shuffle the indices for better multi-thread visit
+        if (prng)
+            std::shuffle(edgeIndices.begin(), edgeIndices.end(), *prng);
+
+        // Recursively apply the function to the children
+        for (uint32_t edgeIndex : edgeIndices) {
+            Edge &childEdge = edges[edgeIndex];
+            Node *childNode = childEdge.getChild();
+            recursiveApply(*childNode, f, prng, globalNodeAge);
+        }
+    }
+
+    // If we are the one who first set the node age, we call the function
+    uint32_t oldAge = nodeAge.exchange(globalNodeAge, std::memory_order_acq_rel);
+    if (f && oldAge != globalNodeAge)
+        (*f)(node);
+}
+
 }  // namespace
 
 MCTSSearcher::MCTSSearcher()
 {
     root          = nullptr;
-    nodeTable     = nullptr;
+    nodeTable     = std::make_unique<NodeTable>(Config::NumNodeTableShardsPowerOfTwo);
     globalNodeAge = 0;
 }
 
@@ -535,10 +574,32 @@ size_t MCTSSearcher::getMemoryLimit() const
 void MCTSSearcher::clear(ThreadPool &pool, bool clearAllMemory)
 {
     root = nullptr;
-    if (clearAllMemory) {
-        nodeTable     = std::make_unique<NodeTable>(Config::NumNodeTableShardsPowerOfTwo);
-        globalNodeAge = 0;
-    }
+    if (!clearAllMemory)
+        return;
+
+    globalNodeAge = 0;
+
+    // Clear the node table using all threads, and wait for finish
+    pool.main()->runTask([this](SearchThread &th) {
+        std::atomic<size_t> numShardsProcessed = 0;
+        MainSearchThread   &mainThread         = static_cast<MainSearchThread &>(th);
+        mainThread.runCustomTaskAndWait([this, &numShardsProcessed](SearchThread &t) {
+            for (;;) {
+                size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
+                if (shardIdx >= this->nodeTable->getNumShards())
+                    return;
+
+                NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
+                std::unique_lock lock(shard.mutex);
+                shard.table.clear();
+            }
+        });
+    });
+    pool.waitForIdle();
+
+    // Reset node table num shards if needed
+    if (nodeTable->getNumShards() != Config::NumNodeTableShardsPowerOfTwo)
+        nodeTable = std::make_unique<NodeTable>(Config::NumNodeTableShardsPowerOfTwo);
 }
 
 void MCTSSearcher::searchMain(MainSearchThread &th)
@@ -672,7 +733,7 @@ void MCTSSearcher::search(SearchThread &th)
                 printer.printRootMoves(mainThread, timectl, numSelectableRootMoves);
             }
 
-            if ((numSelectableRootMoves == 1 || th.rootMoves.size() == 1)
+            if (th.rootMoves.size() == 1
                 && th.threads.nodesSearched() >= Config::NumNodesAfterSingularRoot)
                 th.threads.stopThinking();
         }
@@ -721,17 +782,58 @@ void MCTSSearcher::setupRootNode(MainSearchThread &th)
         expandNode<true>(*root, opts, *th.board, 0);
     assert(root->getEdges()->numEdges > 0);
 
+    // Garbage collect all old nodes (only when we are going forward in game)
+    if (rootPosition.size() >= previousPosition.size())
+        recycleOldNodes(th);
+
     // Update previous Position
     previousPosition = std::move(rootPosition);
-
-    // Garbage collect all old nodes
-    recycleOldNodes(th);
 }
 
 void MCTSSearcher::recycleOldNodes(MainSearchThread &th)
 {
     // Increment global node age
     globalNodeAge += 1;
+
+    std::atomic<uint32_t> numReachableNodes = 0;
+    std::atomic<uint32_t> numRecycledNodes  = 0;
+
+    std::function<void(Node &)> f = [&](Node &node) {
+        numReachableNodes.fetch_add(1, std::memory_order_relaxed);
+    };
+
+    // Mark all reachable nodes from the root node
+    th.runCustomTaskAndWait([this, &f](SearchThread &t) {
+        PRNG prng(Hash::LCHash(t.id));
+        recursiveApply(*this->root, &f, t.id ? &prng : nullptr, this->globalNodeAge);
+    });
+
+    // Remove all unreachable nodes
+    std::atomic<size_t> numShardsProcessed = 0;
+
+    th.runCustomTaskAndWait([this, &numRecycledNodes, &numShardsProcessed](SearchThread &t) {
+        for (;;) {
+            size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
+            if (shardIdx >= this->nodeTable->getNumShards())
+                return;
+
+            NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
+            std::unique_lock lock(shard.mutex);
+            for (auto it = shard.table.begin(); it != shard.table.end();) {
+                Node *node = it->get();
+                if (node->getAgeRef().load(std::memory_order_relaxed) != this->globalNodeAge) {
+                    it = shard.table.erase(it);
+                    numRecycledNodes.fetch_add(1, std::memory_order_relaxed);
+                }
+                else
+                    it++;
+            }
+        }
+    });
+
+    MESSAGEL("Reachable nodes: " << numReachableNodes.load()
+                                 << ", Recycled nodes: " << numRecycledNodes.load()
+                                 << ", Root visit: " << root->getVisits());
 }
 
 void MCTSSearcher::updateRootMovesData(MainSearchThread &th)

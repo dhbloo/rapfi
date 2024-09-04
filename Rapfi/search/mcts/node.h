@@ -178,6 +178,9 @@ public:
     /// Returns the total virtual visits of this node.
     uint32_t getVirtualVisits() const { return nVirtual.load(std::memory_order_acquire); }
 
+    /// Returns the reference to the age of this node.
+    std::atomic<uint32_t> &getAgeRef() { return age; }
+
     /// Returns the evaluated utility value of this node.
     float getEvalUtility() const { return utility; }
 
