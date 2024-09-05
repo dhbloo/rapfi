@@ -120,6 +120,24 @@ bool Node::createEdges(MovePicker &movePicker)
     return false;
 }
 
+float Node::getQVar(float priorVar, float priorWeight) const
+{
+    uint32_t visits = n.load(std::memory_order_relaxed);
+    if (visits < 2)
+        return priorVar;
+
+    float weight        = visits;
+    float utilityAvg    = q.load(std::memory_order_relaxed);
+    float utilitySqrAvg = qSqr.load(std::memory_order_relaxed);
+
+    // sample_var = (utilitySqrAvg - utilityAvg * utilityAvg) * weight / (weight - 1.0f)
+    // regula_var = (sample_var * (weight-1) + varPrior * priorWeight) / (weight-1 + priorWeight)
+    float sampleVariance = std::max(utilitySqrAvg - utilityAvg * utilityAvg, 0.0f);
+    float regularizedVariance =
+        (sampleVariance * weight + priorVar * priorWeight) / (weight + priorWeight - 1.0f);
+    return regularizedVariance;
+}
+
 void Node::updateStats()
 {
     const EdgeArray *edgeArray = getEdges();

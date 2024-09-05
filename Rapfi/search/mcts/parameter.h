@@ -30,6 +30,10 @@ constexpr float CpuctExplorationLog  = 0.4f;
 constexpr float CpuctExplorationBase = 500;
 constexpr float CpuctParentVisitBias = 0.1f;
 
+constexpr float CpuctUtilityStdevScale     = 0.0f;
+constexpr float CpuctUtilityVarPrior       = 0.16f;
+constexpr float CpuctUtilityVarPriorWeight = 2.0f;
+
 constexpr float FpuReductionMax     = 0.1f;
 constexpr float FpuLossProp         = 0.0f;
 constexpr float RootFpuReductionMax = 0.05f;

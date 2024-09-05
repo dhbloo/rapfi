@@ -169,15 +169,8 @@ public:
     /// Returns the average utility value of this node.
     float getQ() const { return q.load(std::memory_order_relaxed); }
 
-    /// Returns the average squared utility value of this node.
-    float getQSqr() const { return qSqr.load(std::memory_order_relaxed); }
-
-    /// Returns the variance of the utility value of this node.
-    float getQVar() const
-    {
-        float q = getQ();
-        return getQSqr() - q * q;
-    }
+    /// Returns the estimated sample variance of utility value.
+    float getQVar(float priorVar = 1.0f, float priorWeight = 1.0f) const;
 
     /// Returns the average draw rate of this node.
     float getD() const { return d.load(std::memory_order_relaxed); }

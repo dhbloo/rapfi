@@ -185,7 +185,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
             INFO("WINRATE", curMove.winRate);
             INFO("DRAWRATE", curMove.drawRate);
             INFO("PRIOR", curMove.policyPrior);
-            INFO("UTILITYVAR", curMove.utilityVar);
+            INFO("STDEV", curMove.utilityStdev);
             INFO("LCBVALUE", curMove.lcbValue);
             INFO("BESTLINE", MovesText {curMove.pv, true, true, th.board->size()});
             INFO("PV", "DONE");
@@ -195,22 +195,20 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
         oldState.copyfmt(std::cout);
         std::cout << std::fixed << std::setprecision(2);
 
-        // Compute display confidence as -log(variance)
-        float confidence = std::min(-std::log(curMove.utilityVar), 20.0f);
-
         if (Config::MessageMode == MsgMode::NORMAL) {
             MESSAGEL("(" << pvIdx + 1 << ") " << curMove.value << " (W " << (curMove.winRate * 100)
-                         << ", D " << (curMove.drawRate * 100) << ", C " << confidence << ") | V "
-                         << nodesText(curMove.numNodes) << " | SD " << curMove.selDepth << " | "
-                         << MovesText {curMove.pv});
+                         << ", D " << (curMove.drawRate * 100) << ", S " << curMove.utilityStdev
+                         << ") | V " << nodesText(curMove.numNodes) << " | SD " << curMove.selDepth
+                         << " | " << MovesText {curMove.pv});
         }
         else if (Config::MessageMode == MsgMode::UCILIKE) {
             MESSAGEL("multipv " << pvIdx + 1 << " ev " << curMove.value << " w "
                                 << (curMove.winRate * 100) << " d " << (curMove.drawRate * 100)
-                                << " c " << confidence << " v " << nodesText(curMove.numNodes)
-                                << " seldepth " << curMove.selDepth << " n " << nodesText(nodes)
-                                << " n/ms " << speed << " tm " << tc.elapsed() << " prior "
-                                << curMove.policyPrior << " pv " << MovesText {curMove.pv});
+                                << " s " << curMove.utilityStdev << " v "
+                                << nodesText(curMove.numNodes) << " seldepth " << curMove.selDepth
+                                << " n " << nodesText(nodes) << " n/ms " << speed << " tm "
+                                << tc.elapsed() << " prior " << curMove.policyPrior << " pv "
+                                << MovesText {curMove.pv});
         }
 
         std::cout.copyfmt(oldState);

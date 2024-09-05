@@ -77,7 +77,7 @@ struct RootMove
     float    winRate        = std::numeric_limits<float>::quiet_NaN();
     float    drawRate       = std::numeric_limits<float>::quiet_NaN();
     float    policyPrior    = std::numeric_limits<float>::quiet_NaN();
-    float    utilityVar     = std::numeric_limits<float>::quiet_NaN();
+    float    utilityStdev   = std::numeric_limits<float>::quiet_NaN();
     float    lcbValue       = std::numeric_limits<float>::quiet_NaN();
     float    selectionValue = std::numeric_limits<float>::quiet_NaN();
     uint64_t numNodes       = 0;

@@ -103,12 +103,22 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
     assert(!node.isLeaf());
     SearchThread *thisThread = board.thisThread();
 
-    uint32_t parentVisits       = node.getVisits();
-    float    cpuctExploration   = cpuctExplorationFactor(parentVisits);
-    float    bestSelectionValue = -std::numeric_limits<float>::infinity();
-    Edge    *bestEdge           = nullptr;
-    Node    *bestNode           = nullptr;
-    float    exploredPolicySum  = 0.0f;
+    uint32_t parentVisits     = node.getVisits();
+    float    cpuctExploration = cpuctExplorationFactor(parentVisits);
+
+    // Apply dynamic cpuct scaling based on parent utility variance if needed
+    if constexpr (CpuctUtilityStdevScale > 0) {
+        float parentUtilityVar = node.getQVar(CpuctUtilityVarPrior, CpuctUtilityVarPriorWeight);
+        float parentUtilityStdevProp = std::sqrt(parentUtilityVar / CpuctUtilityVarPrior);
+        float parentUtilityStdevFactor =
+            1.0f + CpuctUtilityStdevScale * (parentUtilityStdevProp - 1.0f);
+        cpuctExploration *= parentUtilityStdevFactor;
+    }
+
+    float bestSelectionValue = -std::numeric_limits<float>::infinity();
+    Edge *bestEdge           = nullptr;
+    Node *bestNode           = nullptr;
+    float exploredPolicySum  = 0.0f;
 
     // Iterate through all expanded children to find the best selection value
     EdgeArray &edges = *node.getEdges();
@@ -455,9 +465,8 @@ int selectBestmoveOfChildNode(const Node            &node,
                 lcbRadius.push_back(1e4f);
             }
             else {
-                float utilityVar   = childNode->getQVar();
-                float utilityStdev = std::sqrt(utilityVar / childVisits);
-                float radius       = utilityStdev * LCBStdevs;
+                float utilityVar = childNode->getQVar();
+                float radius     = LCBStdevs * std::sqrt(utilityVar / childVisits);
                 lcbValues.push_back(utilityMean - radius);
                 lcbRadius.push_back(radius);
 
@@ -907,10 +916,10 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
             if (childNode->getVisits() > 0) {
                 float childUtility = -childNode->getQ();
 
-                rm->winRate    = childUtility * 0.5f + 0.5f;
-                rm->drawRate   = childNode->getD();
-                rm->value      = Config::winRateToValue(rm->winRate);
-                rm->utilityVar = childNode->getQVar();
+                rm->winRate      = childUtility * 0.5f + 0.5f;
+                rm->drawRate     = childNode->getD();
+                rm->value        = Config::winRateToValue(rm->winRate);
+                rm->utilityStdev = std::sqrt(childNode->getQVar());
             }
             rm->policyPrior = childPolicy;
             rm->numNodes    = childEdge.getVisits();
