@@ -194,7 +194,9 @@ void ABSearcher::searchMain(MainSearchThread &th)
         auto rm = std::find(bestThread->rootMoves.begin(), bestThread->rootMoves.end(), dbWinMove);
         if (rm != bestThread->rootMoves.end()) {
             rm->value = dbWinValue;
-            std::stable_sort(bestThread->rootMoves.begin(), bestThread->rootMoves.end());
+            std::stable_sort(bestThread->rootMoves.begin(),
+                             bestThread->rootMoves.end(),
+                             RootMoveValueComparator {});
         }
         // If database winning move is not in rootmoves, return it directly
         else {
@@ -294,9 +296,11 @@ void ABSearcher::search(SearchThread &th)
             if (options.balanceMode)
                 std::stable_sort(th.rootMoves.begin(),
                                  th.rootMoves.begin() + sd.pvIdx + 1,
-                                 BalanceMoveLessComparator {options.balanceBias});
+                                 BalanceMoveValueComparator {options.balanceBias});
             else
-                std::stable_sort(th.rootMoves.begin(), th.rootMoves.begin() + sd.pvIdx + 1);
+                std::stable_sort(th.rootMoves.begin(),
+                                 th.rootMoves.begin() + sd.pvIdx + 1,
+                                 RootMoveValueComparator {});
         }
 
         // If search is complete, update completed depth.
@@ -496,10 +500,11 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         if (thisThread->options().balanceMode)
             std::stable_sort(thisThread->rootMoves.begin() + searchData->pvIdx,
                              thisThread->rootMoves.end(),
-                             BalanceMoveLessComparator {});
+                             BalanceMoveValueComparator {});
         else
             std::stable_sort(thisThread->rootMoves.begin() + searchData->pvIdx,
-                             thisThread->rootMoves.end());
+                             thisThread->rootMoves.end(),
+                             RootMoveValueComparator {});
 
         // If search has been stopped, break immediately. Sorting result is safe to use.
         if (thisThread->threads.isTerminating())

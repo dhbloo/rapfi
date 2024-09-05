@@ -38,8 +38,9 @@ constexpr float FpuUtilityBlendPow  = 2.0f;
 
 constexpr uint32_t MinTranspositionSkipVisits = 10;
 
-constexpr bool  UseLCBForBestmoveSelection = false;
-constexpr float LCBStdevs                  = 5;
-constexpr float MinVisitPropForLCB         = 0.2f;
+constexpr bool  UseLCBForBestmoveSelection = true;
+constexpr float LCBStdevs =
+    4.265f;  // quantile of student's t dist(n) at confidence level 1-1e-5 as n -> inf
+constexpr float LCBMinVisitProp = 0.15f;
 
 }  // namespace Search::MCTS

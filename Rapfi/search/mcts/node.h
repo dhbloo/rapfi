@@ -169,6 +169,16 @@ public:
     /// Returns the average utility value of this node.
     float getQ() const { return q.load(std::memory_order_relaxed); }
 
+    /// Returns the average squared utility value of this node.
+    float getQSqr() const { return qSqr.load(std::memory_order_relaxed); }
+
+    /// Returns the variance of the utility value of this node.
+    float getQVar() const
+    {
+        float q = getQ();
+        return getQSqr() - q * q;
+    }
+
     /// Returns the average draw rate of this node.
     float getD() const { return d.load(std::memory_order_relaxed); }
 
@@ -217,22 +227,25 @@ private:
     /// The graph hash of this node.
     const HashKey hash;
 
-    /// The sorted edges of this node.
+    /// The edge array of this node, edges are sorted by normalized policy.
     std::atomic<EdgeArray *> edges;
 
     /// Total visits under this node's subgraph.
     /// For leaf node, this indicates if the node's value has been evaluated.
-    /// For non-leaf node, this is the sum of all visits of the children edges plus 1.
+    /// For non-leaf node, this is the sum of all children's edge visits plus 1.
     std::atomic<uint32_t> n;
 
     /// Total started but not finished visits under this node's subgraph,
     /// mainly for computing virtual loss when multi-threading is used.
     std::atomic<uint32_t> nVirtual;
 
-    /// Average win-loss rate (from current side to move) of this node.
+    /// Average utility (from current side to move) of this node, in [-1,1].
     std::atomic<float> q;
 
-    /// Average draw rate of this node. Not flipped when changing side.
+    /// Average squared utility of this node, for computing utility variance.
+    std::atomic<float> qSqr;
+
+    /// Average draw rate of this node in [0,1]. Not flipped when changing side.
     std::atomic<float> d;
 
     /// The age of this node, used to find and recycle unused nodes.
@@ -243,11 +256,11 @@ private:
     /// not a terminal node, this value is VALUE_NONE.
     Value terminalValue;
 
-    /// For non-terminal node, this stores the node's raw utility value
-    /// (from current side to move).
+    /// For non-terminal node, this stores the node's raw utility value in [-1,1].
+    /// Higher values means better position from current side to move.
     float utility;
 
-    /// For non-terminal node, this stores the node's raw draw probability
+    /// For non-terminal node, this stores the node's raw draw probability in [0,1].
     /// (from current side to move).
     float drawRate;
 };

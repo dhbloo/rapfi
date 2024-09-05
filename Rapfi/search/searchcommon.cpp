@@ -23,7 +23,12 @@
 
 namespace Search {
 
-bool BalanceMoveLessComparator::operator()(const RootMove &a, const RootMove &b) const
+bool RootMoveValueComparator::operator()(const RootMove &a, const RootMove &b) const
+{
+    return a.value != b.value ? a.value > b.value : a.previousValue > b.previousValue;
+}
+
+bool BalanceMoveValueComparator::operator()(const RootMove &a, const RootMove &b) const
 {
     return a.value != b.value
                ? balancedValue(a.value, bias) > balancedValue(b.value, bias)

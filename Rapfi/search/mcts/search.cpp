@@ -387,16 +387,13 @@ uint32_t searchNode(Node &node, Board &board, int ply, uint32_t newVisits)
 ///     Only filled when we are using LCB for selection.
 /// @param allowDirectPolicyMove If true and the node has no explored children,
 ///     allow to select from those unexplored children by policy prior directly.
-/// @param forceUseLCB If non-zero, force to use LCB for selection. If the
-///     value is positive, always use LCB, otherwise never use LCB.
 /// @return The index of the best move (with highest selection value) to select.
 ///     Returns -1 if there is no selectable children.
 int selectBestmoveOfChildNode(const Node            &node,
                               std::vector<uint32_t> &edgeIndices,
                               std::vector<float>    &selectionValues,
                               std::vector<float>    &lcbValues,
-                              bool                   allowDirectPolicyMove,
-                              int                    forceUseLCB)
+                              bool                   allowDirectPolicyMove)
 {
     assert(!node.isLeaf());
     edgeIndices.clear();
@@ -436,25 +433,62 @@ int selectBestmoveOfChildNode(const Node            &node,
     }
 
     // Compute lower confidence bound values if needed
-    if (forceUseLCB >= 0 && (forceUseLCB > 0 || UseLCBForBestmoveSelection)) {
-        uint32_t bestLCBEdgeIndex = 0;
-        float    bestLCBValue     = std::numeric_limits<float>::lowest();
+    if (UseLCBForBestmoveSelection && !edgeIndices.empty()) {
+        int   bestLCBIndex = -1;
+        float bestLCBValue = std::numeric_limits<float>::lowest();
 
+        std::vector<float> lcbRadius;
+
+        // Compute LCB values for all selectable children and find highest LCB value
         for (size_t i = 0; i < edgeIndices.size(); i++) {
             uint32_t    edgeIndex = edgeIndices[i];
             const Edge &childEdge = edges[edgeIndex];
             Node       *childNode = childEdge.getChild();
             assert(childNode);
 
-            // TODO: add LCB computation here
-            lcbValues.push_back(0.0f);
+            float utilityMean = -childNode->getQ();
 
-            if (selectionValues[i] > 0
-                && selectionValues[i] >= MinVisitPropForLCB * bestmoveSelectionValue
-                && lcbValues[i] > bestLCBValue) {
-                bestLCBEdgeIndex = edgeIndex;
-                bestLCBValue     = lcbValues[i];
+            // Only compute LCB for children with enough visits
+            uint32_t childVisits = childNode->getVisits();
+            if (childVisits < 2) {
+                lcbValues.push_back(utilityMean - 1e5f);
+                lcbRadius.push_back(1e4f);
             }
+            else {
+                float utilityVar   = childNode->getQVar();
+                float utilityStdev = std::sqrt(utilityVar / childVisits);
+                float radius       = utilityStdev * LCBStdevs;
+                lcbValues.push_back(utilityMean - radius);
+                lcbRadius.push_back(radius);
+
+                if (selectionValues[i] > 0
+                    && selectionValues[i] >= LCBMinVisitProp * bestmoveSelectionValue
+                    && lcbValues[i] > bestLCBValue) {
+                    bestLCBIndex = i;
+                    bestLCBValue = lcbValues[i];
+                }
+            }
+        }
+
+        // Best LCB child gets a bonus on selection value
+        if (bestLCBIndex >= 0) {
+            float bestLCBSelectionValue = selectionValues[bestLCBIndex];
+            for (size_t i = 0; i < edgeIndices.size(); i++) {
+                if (i == bestLCBIndex)
+                    continue;
+
+                // Compute how much the best LCB value is better than the current child
+                float lcbBonus = bestLCBValue - lcbValues[i];
+                if (lcbBonus <= 0)
+                    continue;
+
+                // Compute how many times larger the radius can be before this LCB value is better
+                float gain   = std::min(lcbBonus / lcbRadius[i] + 1.0f, 5.0f);
+                float lbound = gain * gain * selectionValues[i];
+                if (lbound > bestLCBSelectionValue)
+                    bestLCBSelectionValue = lbound;
+            }
+            selectionValues[bestLCBIndex] = bestLCBSelectionValue;
         }
     }
 
@@ -493,8 +527,7 @@ void extractPVOfChildNode(const Node &node, std::vector<Pos> &pv, int maxDepth =
                                                       tempEdgeIndices,
                                                       tempSelectionValues,
                                                       tempLCBValues,
-                                                      true,
-                                                      0);
+                                                      true);
         if (bestmoveIndex < 0)
             break;
 
@@ -844,7 +877,7 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
     std::vector<uint32_t> edgeIndices;
     std::vector<float>    selectionValues, lcbValues;
     int                   bestChildIndex =
-        selectBestmoveOfChildNode(*root, edgeIndices, selectionValues, lcbValues, true, 0);
+        selectBestmoveOfChildNode(*root, edgeIndices, selectionValues, lcbValues, true);
     uint32_t maxNumRootMovesToPrint =
         std::max<uint32_t>(th.options().multiPV, Config::MaxNonPVRootmovesToPrint);
     numSelectableRootMoves = std::min<uint32_t>(edgeIndices.size(), maxNumRootMovesToPrint);
@@ -874,9 +907,10 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
             if (childNode->getVisits() > 0) {
                 float childUtility = -childNode->getQ();
 
-                rm->winRate  = childUtility * 0.5f + 0.5f;
-                rm->drawRate = childNode ? childNode->getD() : 0.0f;
-                rm->value    = Config::winRateToValue(rm->winRate);
+                rm->winRate    = childUtility * 0.5f + 0.5f;
+                rm->drawRate   = childNode->getD();
+                rm->value      = Config::winRateToValue(rm->winRate);
+                rm->utilityVar = childNode->getQVar();
             }
             rm->policyPrior = childPolicy;
             rm->numNodes    = childEdge.getVisits();
@@ -886,6 +920,8 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
             rm->policyPrior = childPolicy;
             rm->numNodes    = 0;
         }
+        rm->lcbValue =
+            i < lcbValues.size() ? lcbValues[i] : std::numeric_limits<float>::quiet_NaN();
         rm->selectionValue = selectionValues[i];
     }
 

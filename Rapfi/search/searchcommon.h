@@ -70,11 +70,6 @@ struct RootMove
         assert(pv.size() >= 2);
         return pv[0] == m.move1 && pv[1] == m.move2;
     }
-    // Sort in descending order
-    bool operator<(const RootMove &m) const
-    {
-        return m.value != value ? m.value < value : m.previousValue < previousValue;
-    }
 
     Value    value          = VALUE_NONE;
     Value    previousValue  = VALUE_NONE;
@@ -82,6 +77,8 @@ struct RootMove
     float    winRate        = std::numeric_limits<float>::quiet_NaN();
     float    drawRate       = std::numeric_limits<float>::quiet_NaN();
     float    policyPrior    = std::numeric_limits<float>::quiet_NaN();
+    float    utilityVar     = std::numeric_limits<float>::quiet_NaN();
+    float    lcbValue       = std::numeric_limits<float>::quiet_NaN();
     float    selectionValue = std::numeric_limits<float>::quiet_NaN();
     uint64_t numNodes       = 0;
 
@@ -90,9 +87,16 @@ struct RootMove
 
 using RootMoves = std::vector<RootMove>;
 
-/// BalanceMoveLessComparator compares two root moves according to their
+/// RootMoveValueComparator compares two root moves according to their value, and
+/// sorts them in descending order.
+struct RootMoveValueComparator
+{
+    bool operator()(const RootMove &a, const RootMove &b) const;
+};
+
+/// BalanceMoveValueComparator compares two root moves according to their
 /// distance to the balanced eval in balance move mode.
-struct BalanceMoveLessComparator
+struct BalanceMoveValueComparator
 {
     int bias = 0;
 
@@ -125,12 +129,12 @@ struct SearchOptions
     } infoMode;
 
     // Time control
-    Time     turnTime    = 0;
-    Time     matchTime   = 0;
-    Time     timeLeft    = 0;
-    uint64_t maxNodes    = 0;  // (0 means no limits)
-    int      maxDepth    = 99;
-    int      startDepth  = 2;
+    Time     turnTime   = 0;
+    Time     matchTime  = 0;
+    Time     timeLeft   = 0;
+    uint64_t maxNodes   = 0;  // (0 means no limits)
+    int      maxDepth   = 99;
+    int      startDepth = 2;
 
     /// MultiPV mode, normally set to 1
     uint16_t multiPV = 1;

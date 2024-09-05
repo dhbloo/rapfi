@@ -405,6 +405,9 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
 
 void ThreadPool::clear(bool clearAllMemory)
 {
+    if (empty())
+        setNumThreads(Config::DefaultThreadNum);
+
     if (searcher())
         searcher()->clear(*this, clearAllMemory);
 }

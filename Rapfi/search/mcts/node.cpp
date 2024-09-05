@@ -29,6 +29,7 @@ Node::Node(HashKey hash, uint32_t age)
     , n(0)
     , nVirtual(0)
     , q(1.0f)  // Default as a losing node for the parent's side of view
+    , qSqr(1.0f)
     , d(0.0f)
     , age(age)
 {}
@@ -63,6 +64,7 @@ void Node::setTerminal(Value value, int ply)
     assert(drawRate >= 0.0f && drawRate <= 1.0f);
 
     q.store(utility, std::memory_order_relaxed);
+    qSqr.store(utility * utility, std::memory_order_relaxed);
     d.store(drawRate, std::memory_order_relaxed);
     n.store(1, std::memory_order_release);
 }
@@ -77,6 +79,7 @@ void Node::setNonTerminal(float utility, float drawRate)
     this->terminalValue = VALUE_NONE;
 
     q.store(utility, std::memory_order_relaxed);
+    qSqr.store(utility * utility, std::memory_order_relaxed);
     d.store(drawRate, std::memory_order_relaxed);
     n.store(1, std::memory_order_release);
 }
@@ -124,9 +127,10 @@ void Node::updateStats()
     if (!edgeArray)
         return;
 
-    uint32_t nSum = 1;
-    float    qSum = utility;
-    float    dSum = drawRate;
+    uint32_t nSum    = 1;
+    float    qSum    = utility;
+    float    qSqrSum = utility * utility;
+    float    dSum    = drawRate;
     for (uint32_t i = 0; i < edgeArray->numEdges; i++) {
         const Edge &edge   = (*edgeArray)[i];
         uint32_t    childN = edge.getVisits();
@@ -139,14 +143,17 @@ void Node::updateStats()
         assert(childNode);  // child node should be guaranteed to be non-null
 
         nSum += childN;
-        float childQ = childNode->q.load(std::memory_order_relaxed);
-        float childD = childNode->d.load(std::memory_order_relaxed);
+        float childQ    = childNode->q.load(std::memory_order_relaxed);
+        float childQSqr = childNode->qSqr.load(std::memory_order_relaxed);
+        float childD    = childNode->d.load(std::memory_order_relaxed);
         qSum += childN * (-childQ);  // Flip side for child's utility
+        qSqrSum += childN * childQSqr;
         dSum += childN * childD;
     }
 
     float norm = 1.0f / nSum;
     q.store(qSum * norm, std::memory_order_relaxed);
+    qSqr.store(qSqrSum * norm, std::memory_order_relaxed);
     d.store(dSum * norm, std::memory_order_relaxed);
 }
 

@@ -571,9 +571,6 @@ void start()
         board               = std::make_unique<Board>(boardSize, candidateRange);
     }
 
-    if (Search::Threads.empty())
-        Search::Threads.setNumThreads(Config::DefaultThreadNum);
-
     restart();
 }
 
