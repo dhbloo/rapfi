@@ -204,7 +204,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
         else if (Config::MessageMode == MsgMode::UCILIKE) {
             MESSAGEL("multipv " << pvIdx + 1 << " ev " << curMove.value << " w "
                                 << (curMove.winRate * 100) << " d " << (curMove.drawRate * 100)
-                                << " s " << curMove.utilityStdev << " v "
+                                << " stdev " << curMove.utilityStdev << " v "
                                 << nodesText(curMove.numNodes) << " seldepth " << curMove.selDepth
                                 << " n " << nodesText(nodes) << " n/ms " << speed << " tm "
                                 << tc.elapsed() << " prior " << curMove.policyPrior << " pv "

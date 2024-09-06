@@ -32,6 +32,7 @@ Node::Node(HashKey hash, uint32_t age)
     , qSqr(1.0f)
     , d(0.0f)
     , age(age)
+    , bound()
 {}
 
 Node::~Node()
@@ -41,23 +42,22 @@ Node::~Node()
         delete edgeArray;
 }
 
-void Node::setTerminal(Value value, int ply)
+void Node::setTerminal(Value value)
 {
     assert(value != VALUE_NONE);
+    assert(-VALUE_INFINITE <= value && value <= VALUE_INFINITE);
+    terminalValue = value;
     if (value >= VALUE_MATE_IN_MAX_PLY) {
-        utility       = 1.0;
-        drawRate      = 0.0f;
-        terminalValue = value - ply;
+        utility  = 1.0;
+        drawRate = 0.0f;
     }
     else if (value <= VALUE_MATED_IN_MAX_PLY) {
-        utility       = -1.0;
-        drawRate      = 0.0f;
-        terminalValue = value + ply;
+        utility  = -1.0;
+        drawRate = 0.0f;
     }
     else {
-        utility       = Config::valueToWinRate(value) * 2 - 1.0f;
-        drawRate      = 1.0f;
-        terminalValue = value;
+        utility  = Config::valueToWinRate(value) * 2 - 1.0f;
+        drawRate = 1.0f;
     }
 
     assert(utility >= -1.0f && utility <= 1.0f);
@@ -66,6 +66,7 @@ void Node::setTerminal(Value value, int ply)
     q.store(utility, std::memory_order_relaxed);
     qSqr.store(utility * utility, std::memory_order_relaxed);
     d.store(drawRate, std::memory_order_relaxed);
+    bound.store(ValueBound {value}, std::memory_order_relaxed);
     n.store(1, std::memory_order_release);
 }
 
@@ -145,34 +146,43 @@ void Node::updateStats()
     if (!edgeArray)
         return;
 
-    uint32_t nSum    = 1;
-    float    qSum    = utility;
-    float    qSqrSum = utility * utility;
-    float    dSum    = drawRate;
+    uint32_t   nSum     = 1;
+    float      qSum     = utility;
+    float      qSqrSum  = utility * utility;
+    float      dSum     = drawRate;
+    ValueBound maxBound = ValueBound {-VALUE_INFINITE};
     for (uint32_t i = 0; i < edgeArray->numEdges; i++) {
         const Edge &edge   = (*edgeArray)[i];
         uint32_t    childN = edge.getVisits();
 
         // No need to read from child node if it has zero edge visits
-        if (childN == 0)
+        if (childN == 0) {
+            // All unvisited children all have uninitialized bound (-inf, inf)
+            maxBound |= ValueBound {};
             break;
+        }
 
         Node *childNode = edge.getChild();
         assert(childNode);  // child node should be guaranteed to be non-null
 
-        nSum += childN;
         float childQ    = childNode->q.load(std::memory_order_relaxed);
         float childQSqr = childNode->qSqr.load(std::memory_order_relaxed);
         float childD    = childNode->d.load(std::memory_order_relaxed);
+        nSum += childN;
         qSum += childN * (-childQ);  // Flip side for child's utility
         qSqrSum += childN * childQSqr;
         dSum += childN * childD;
+        maxBound |= childNode->bound.load(std::memory_order_relaxed);
     }
 
     float norm = 1.0f / nSum;
     q.store(qSum * norm, std::memory_order_relaxed);
     qSqr.store(qSqrSum * norm, std::memory_order_relaxed);
     d.store(dSum * norm, std::memory_order_relaxed);
+
+    // Only update bound if this is not a terminal node
+    if (!isTerminal())
+        bound.store(maxBound, std::memory_order_relaxed);
 }
 
 }  // namespace Search::MCTS

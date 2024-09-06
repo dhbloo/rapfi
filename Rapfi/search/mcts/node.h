@@ -122,6 +122,32 @@ struct EdgeArray
 static_assert(alignof(EdgeArray) == alignof(Edge), "Sanity check on EdgeArray's alignment");
 static_assert(sizeof(Edge) % sizeof(EdgeArray) == 0, "Sanity check on Edge's size");
 
+/// Represents the value bound of a node.
+struct ValueBound
+{
+    Eval lower, upper;
+
+    ValueBound() : lower(-VALUE_INFINITE), upper(VALUE_INFINITE) {};
+    ValueBound(Value terminalValue) : lower(terminalValue), upper(terminalValue) {}
+
+    /// Returns whether this bound is terminal.
+    bool isTerminal() const { return lower == upper; }
+    /// Returns the lower bound of this child node's bound.
+    Value childLowerBound() const { return static_cast<Value>(-upper); }
+    /// Returns the upper bound of this child node's bound.
+    Value childUpperBound() const { return static_cast<Value>(-lower); }
+    /// Add a child node's bound to this parent node's bound.
+    ValueBound &operator|=(ValueBound childBound)
+    {
+        lower = std::max<Eval>(lower, -childBound.upper);
+        upper = std::max<Eval>(upper, -childBound.lower);
+        return *this;
+    }
+};
+
+static_assert(std::atomic<ValueBound>::is_always_lock_free,
+              "std::atomic<ValueBound> should be a lock free atomic variable");
+
 /// A node in the MCTS graph.
 /// It contains the edges, children, and statistics of this node.
 class Node
@@ -141,8 +167,7 @@ public:
 
     /// Set this node to be a terminal node and set num visits to 1.
     /// @param value The terminal value of this node.
-    /// @param ply The current search ply.
-    void setTerminal(Value value, int ply);
+    void setTerminal(Value value);
 
     /// Set this node to be a non-terminal node and set num visits to 1.
     /// @param utility The raw utility value of this node.
@@ -189,6 +214,9 @@ public:
 
     /// Returns the evaluated draw rate of this node.
     float getEvalDrawRate() const { return drawRate; }
+
+    /// Returns the propogated value bound of this node.
+    ValueBound getBound() const { return bound.load(std::memory_order_relaxed); }
 
     /// Returns if this node is terminal.
     bool isTerminal() const { return terminalValue != VALUE_NONE; }
@@ -244,10 +272,8 @@ private:
     /// The age of this node, used to find and recycle unused nodes.
     std::atomic<uint32_t> age;
 
-    /// For terminal node, this stores the theoretical value (from current
-    /// side to move), including the game ply to mate/mated. If this node is
-    /// not a terminal node, this value is VALUE_NONE.
-    Value terminalValue;
+    /// The propogated terminal value bound of this node.
+    std::atomic<ValueBound> bound;
 
     /// For non-terminal node, this stores the node's raw utility value in [-1,1].
     /// Higher values means better position from current side to move.
@@ -256,6 +282,11 @@ private:
     /// For non-terminal node, this stores the node's raw draw probability in [0,1].
     /// (from current side to move).
     float drawRate;
+
+    /// For terminal node, this stores the theoretical value (from current
+    /// side to move), including the game ply to mate/mated. If this node is
+    /// not a terminal node, this value is VALUE_NONE.
+    Eval terminalValue;
 };
 
 }  // namespace Search::MCTS

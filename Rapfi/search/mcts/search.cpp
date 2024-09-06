@@ -107,7 +107,7 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
     float    cpuctExploration = cpuctExplorationFactor(parentVisits);
 
     // Apply dynamic cpuct scaling based on parent utility variance if needed
-    if constexpr (CpuctUtilityStdevScale > 0) {
+    if (CpuctUtilityStdevScale > 0) {
         float parentUtilityVar = node.getQVar(CpuctUtilityVarPrior, CpuctUtilityVarPriorWeight);
         float parentUtilityStdevProp = std::sqrt(parentUtilityVar / CpuctUtilityVarPrior);
         float parentUtilityStdevFactor =
@@ -197,18 +197,18 @@ void evaluateNode(Node &node, const SearchOptions &options, const Board &board, 
 
         // Check if the board has been filled or we have reached the max game ply.
         if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves) {
-            Value value = getDrawValue(board, options, ply);
-            node.setTerminal(value, ply);
+            Value value = getDrawValue(board, options, board.ply());
+            node.setTerminal(value);
             return;
         }
 
         // Check for immediate winning
-        if (Value value = quickWinCheck(options.rule, board, ply); value != VALUE_ZERO) {
+        if (Value value = quickWinCheck(options.rule, board, board.ply()); value != VALUE_ZERO) {
             // Do not return mate that longer than maxMoves option
-            if (board.nonPassMoveCount() + mate_step(value, ply) > options.maxMoves)
-                value = getDrawValue(board, options, ply);
+            if (mate_step(value, 0) > options.maxMoves)
+                value = getDrawValue(board, options, board.ply());
 
-            node.setTerminal(value, ply);
+            node.setTerminal(value);
             return;
         }
     }
@@ -241,16 +241,17 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
 
         bool noValidMove = node.createEdges(mp);
         if (noValidMove) {
-            Value terminalValue =
-                board.p4Count(~board.sideToMove(), A_FIVE) ? mated_in(ply + 2) : mated_in(ply + 4);
+            Value terminalValue = board.p4Count(~board.sideToMove(), A_FIVE)
+                                      ? mated_in(board.ply() + 2)
+                                      : mated_in(board.ply() + 4);
 
             // Do not return mate that longer than maxMoves option
             if (std::abs(terminalValue) >= VALUE_MATE_IN_MAX_PLY) {
-                if (board.nonPassMoveCount() + mate_step(terminalValue, ply) > options.maxMoves)
-                    terminalValue = getDrawValue(board, options, ply);
+                if (mate_step(terminalValue, 0) > options.maxMoves)
+                    terminalValue = getDrawValue(board, options, board.ply());
             }
 
-            node.setTerminal(terminalValue, ply);
+            node.setTerminal(terminalValue);
         }
         else {
             assert(!node.isLeaf());
@@ -410,8 +411,9 @@ int selectBestmoveOfChildNode(const Node            &node,
     selectionValues.clear();
     lcbValues.clear();
 
-    int   bestmoveIndex          = -1;
-    float bestmoveSelectionValue = std::numeric_limits<float>::lowest();
+    int        bestmoveIndex          = -1;
+    float      bestmoveSelectionValue = std::numeric_limits<float>::lowest();
+    ValueBound maxBound {-VALUE_INFINITE};
 
     const EdgeArray &edges = *node.getEdges();
     for (uint32_t edgeIndex = 0; edgeIndex < edges.numEdges; edgeIndex++) {
@@ -440,6 +442,9 @@ int selectBestmoveOfChildNode(const Node            &node,
         }
         edgeIndices.push_back(edgeIndex);
         selectionValues.push_back(selectionValue);
+
+        // Update bound stats
+        maxBound |= childNode->getBound();
     }
 
     // Compute lower confidence bound values if needed
@@ -498,6 +503,32 @@ int selectBestmoveOfChildNode(const Node            &node,
                     bestLCBSelectionValue = lbound;
             }
             selectionValues[bestLCBIndex] = bestLCBSelectionValue;
+            bestmoveIndex                 = bestLCBIndex;
+        }
+    }
+
+    // Select best check mate move if possible
+    if (maxBound.lower >= VALUE_MATE_IN_MAX_PLY) {
+        bestmoveIndex          = -1;
+        bestmoveSelectionValue = std::numeric_limits<float>::lowest();
+        // Make best move the one with the maximum lower bound
+        for (size_t i = 0; i < edgeIndices.size(); i++) {
+            uint32_t    edgeIndex = edgeIndices[i];
+            const Edge &childEdge = edges[edgeIndex];
+            Node       *childNode = childEdge.getChild();
+            assert(childNode);
+
+            Value childLowerBound = static_cast<Value>(-childNode->getBound().upper);
+            if (childLowerBound < VALUE_MATE_IN_MAX_PLY)  // Downweight non-proven mate moves
+                selectionValues[i] *= 1e-9f;
+            else if (childLowerBound < maxBound.lower)  // Downweight non-shorted mate moves
+                selectionValues[i] *= 1e-3f * (1 + maxBound.lower - childLowerBound);
+
+            // Find the best edge with the highest selection value
+            if (selectionValues[i] > bestmoveSelectionValue) {
+                bestmoveIndex          = i;
+                bestmoveSelectionValue = selectionValues[i];
+            }
         }
     }
 
@@ -824,8 +855,8 @@ void MCTSSearcher::setupRootNode(MainSearchThread &th)
         expandNode<true>(*root, opts, *th.board, 0);
     assert(root->getEdges()->numEdges > 0);
 
-    // Garbage collect all old nodes (only when we are going forward in game)
-    if (rootPosition.size() >= previousPosition.size())
+    // Garbage collect old nodes (only when we go forward, and not with singular root)
+    if (rootPosition.size() >= previousPosition.size() && th.rootMoves.size() > 1)
         recycleOldNodes(th);
 
     // Update previous Position
@@ -913,12 +944,18 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
         float childPolicy = childEdge.getP();
         Node *childNode   = childEdge.getChild();
         if (childNode) {
+            ValueBound childBound = childNode->getBound();
             if (childNode->getVisits() > 0) {
                 float childUtility = -childNode->getQ();
 
-                rm->winRate      = childUtility * 0.5f + 0.5f;
-                rm->drawRate     = childNode->getD();
-                rm->value        = Config::winRateToValue(rm->winRate);
+                rm->winRate  = childUtility * 0.5f + 0.5f;
+                rm->drawRate = childNode->getD();
+                if (Value lo = childBound.childLowerBound(); lo >= VALUE_MATE_IN_MAX_PLY)
+                    rm->value = mate_in(std::max(mate_step(lo, 0) - th.board->ply(), 0));
+                else if (Value up = childBound.childUpperBound(); up <= VALUE_MATED_IN_MAX_PLY)
+                    rm->value = mated_in(std::max(mate_step(up, 0) - th.board->ply(), 0));
+                else
+                    rm->value = Config::winRateToValue(rm->winRate);
                 rm->utilityStdev = std::sqrt(childNode->getQVar());
             }
             rm->policyPrior = childPolicy;
