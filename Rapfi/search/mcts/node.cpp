@@ -87,13 +87,13 @@ void Node::setNonTerminal(float utility, float drawRate)
 
 bool Node::createEdges(MovePicker &movePicker)
 {
-    movePicker.enableNormalizedPolicy();
-
     Pos      moveList[MAX_MOVES];
     float    policyList[MAX_MOVES];
     uint32_t numEdges = 0;
     // Moves from the move picker should be sorted
     while (Pos move = movePicker()) {
+        assert(movePicker.hasPolicyScore());
+        assert(movePicker.hasNormalizedPolicy());
         moveList[numEdges]   = move;
         policyList[numEdges] = movePicker.curMoveNormalizePolicy();
         numEdges++;

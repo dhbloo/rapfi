@@ -47,4 +47,6 @@ constexpr float LCBStdevs =
     4.265f;  // quantile of student's t dist(n) at confidence level 1-1e-5 as n -> inf
 constexpr float LCBMinVisitProp = 0.15f;
 
+constexpr float PolicyTemperature = 1.0f;
+
 }  // namespace Search::MCTS

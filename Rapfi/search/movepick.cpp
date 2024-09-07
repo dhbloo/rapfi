@@ -97,7 +97,8 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
     , ttMove(Pos::NONE)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
-    , useNormalizedPolicy(args.evalateNormalizedPolicy)
+    , useNormalizedPolicy(args.useNormalizedPolicy)
+    , normalizedPolicyTemp(args.normalizedPolicyTemp)
 {
     Color self = board.sideToMove(), oppo = ~self;
     curMove = moves;
@@ -159,7 +160,8 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     , rule(rule)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
-    , useNormalizedPolicy(false)
+    , useNormalizedPolicy(args.useNormalizedPolicy)
+    , normalizedPolicyTemp(args.normalizedPolicyTemp)
 {
     Color oppo = ~board.sideToMove();
     bool  ttmValid;
@@ -203,6 +205,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
     , hasPolicy(false)
     , useNormalizedPolicy(false)
+    , normalizedPolicyTemp(1.0f)
 {
     Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
@@ -233,7 +236,8 @@ Pos MovePicker::pickNextMove(Pred filter)
 
     while (curMove < endMove) {
         if constexpr (T == Best)
-            std::swap(*curMove, *std::max_element(curMove, endMove, ScoredMove::ScoreComparator {}));
+            std::swap(*curMove,
+                      *std::max_element(curMove, endMove, ScoredMove::ScoreComparator {}));
 
         if (curMove->pos != ttMove && (!forbidden || !board.checkForbiddenPoint(curMove->pos))
             && filter()) {
@@ -273,9 +277,10 @@ void MovePicker::scoreAllMoves()
 
         evaluator->evaluatePolicy(board, *policyBuf);
         hasPolicy      = true;
-        maxPolicyScore = std::numeric_limits<Score>::lowest() / 2;  // avoid underflow
+        maxPolicyScore = std::numeric_limits<Score>::lowest() / 2;
     }
 
+    maxScore = std::numeric_limits<Score>::lowest() / 2;
     for (auto &m : *this) {
         const Cell &c = board.cell(m);
 
@@ -309,6 +314,8 @@ void MovePicker::scoreAllMoves()
                     m.score += CounterMoveBonus;
             }
         }
+
+        maxScore = std::max(maxScore, m.score);
     }
 
     // Compute normalized policy score if needed
@@ -371,8 +378,10 @@ top:
 
         curMove = moves;
         endMove = !ttMove ? generate<DEFEND_FIVE>(board, moves) : moves;
-        if (useNormalizedPolicy)
+        if (useNormalizedPolicy) {
             markFirstMoveOneHot(curMove, endMove);
+            hasPolicy = true;
+        }
 
         stage = ALLMOVES;
         goto top;

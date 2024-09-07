@@ -91,7 +91,7 @@ public:
     Score score(Pos pos) const { return Score((*this)[pos] * ScoreScale) + scoreBias; }
 
     /// Applies softmax to all computed policy.
-    void applySoftmax();
+    void applySoftmax(PolicyType temp = 1.0f);
 
 private:
     inline size_t posToIndex(Pos pos) const

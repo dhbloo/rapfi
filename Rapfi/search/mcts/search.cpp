@@ -224,7 +224,12 @@ template <bool Root = false>
 bool expandNode(Node &node, const SearchOptions &options, const Board &board, int ply)
 {
     if constexpr (Root) {
-        MovePicker mp(options.rule, board, MovePicker::ExtraArgs<MovePicker::ROOT> {true});
+        MovePicker mp(options.rule,
+                      board,
+                      MovePicker::ExtraArgs<MovePicker::ROOT> {
+                          true,
+                          PolicyTemperature,
+                      });
         bool       noValidMove = node.createEdges(mp);
         assert(!node.isLeaf());
         assert(!noValidMove);
@@ -237,6 +242,8 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
                           Pos::NONE,
                           nullptr,
                           nullptr,
+                          true,
+                          PolicyTemperature,
                       });
 
         bool noValidMove = node.createEdges(mp);

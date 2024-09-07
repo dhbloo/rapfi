@@ -29,7 +29,11 @@ namespace Search {
 class MovePicker
 {
 public:
-    enum SearchType { ROOT, MAIN, QVCF,  };
+    enum SearchType {
+        ROOT,
+        MAIN,
+        QVCF,
+    };
     template <SearchType ST>
     struct ExtraArgs
     {};
@@ -41,15 +45,25 @@ public:
     MovePicker(const MovePicker &)            = delete;
     MovePicker &operator=(const MovePicker &) = delete;
 
+    /// Gets the next move in the sorted move list.
     [[nodiscard]] Pos operator()();
-    bool              hasPolicyScore() const { return hasPolicy; }
-    void              enableNormalizedPolicy() { useNormalizedPolicy = true; }
-    float             curMoveNormalizePolicy() const { return curPolicy; }
-    Score             maxMovePolicy() const { return maxPolicyScore; }
-    Score             curMovePolicy() const { return curPolicyScore; }
-    Score             curMoveScore() const { return curScore; }
-    Score             curMovePolicyDiff() const { return maxPolicyScore - curPolicyScore; }
-    Score             curMoveScoreDiff() const { return maxPolicyScore - curScore; }
+
+    /// Whether this movepicker has policy score from the evaluator.
+    bool hasPolicyScore() const { return hasPolicy; }
+    /// Whether this movepicker computes normalized policy score.
+    bool hasNormalizedPolicy() const { return useNormalizedPolicy; }
+    /// Get the normalized policy in [0,1] of current move. Use after enable normalized policy.
+    float curMoveNormalizePolicy() const { return curPolicy; }
+    /// Get the maximum policy score of all moves.
+    Score maxMovePolicy() const { return maxPolicyScore; }
+    /// Get the policy score of current move.
+    Score curMovePolicy() const { return curPolicyScore; }
+    /// Get adjusted score of current move.
+    Score curMoveScore() const { return curScore; }
+    /// Get the policy score difference between current move and the best move.
+    Score curMovePolicyDiff() const { return maxPolicyScore - curPolicyScore; }
+    /// Get the adjusted score difference between current move and the best move.
+    Score curMoveScoreDiff() const { return maxScore - curScore; }
 
 private:
     enum PickType { Next, Best };
@@ -78,7 +92,9 @@ private:
     bool                      allowPlainB4InVCF;
     bool                      hasPolicy;
     bool                      useNormalizedPolicy;
-    Score                     curScore, curPolicyScore, maxPolicyScore;
+    float                     normalizedPolicyTemp;
+    Score                     curScore, maxScore;
+    Score                     curPolicyScore, maxPolicyScore;
     float                     curPolicy;
     ScoredMove               *curMove, *endMove;
     ScoredMove                moves[MAX_MOVES];
@@ -87,7 +103,8 @@ private:
 template <>
 struct MovePicker::ExtraArgs<MovePicker::ROOT>
 {
-    bool evalateNormalizedPolicy = false;
+    bool  useNormalizedPolicy  = false;
+    float normalizedPolicyTemp = 1.0f;
 };
 
 template <>
@@ -96,6 +113,8 @@ struct MovePicker::ExtraArgs<MovePicker::MAIN>
     Pos                 ttMove;
     MainHistory        *mainHistory;
     CounterMoveHistory *counterMoveHistory;
+    bool                useNormalizedPolicy  = false;
+    float               normalizedPolicyTemp = 1.0f;
 };
 
 template <>
