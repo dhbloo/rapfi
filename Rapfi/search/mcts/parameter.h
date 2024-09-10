@@ -22,8 +22,7 @@
 
 namespace Search::MCTS {
 
-constexpr uint32_t MaxNumVisitsPerPlayout = 100;
-constexpr float    MaxNewVisitsProp       = 0.2f;
+constexpr float MaxNewVisitsProp = 0.2f;
 
 constexpr float CpuctExploration     = 1.0f;
 constexpr float CpuctExplorationLog  = 0.4f;

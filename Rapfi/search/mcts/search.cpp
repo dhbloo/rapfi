@@ -769,7 +769,7 @@ void MCTSSearcher::search(SearchThread &th)
     // Main search loop
     std::vector<Node *> selectedPath;
     while (!th.threads.isTerminating()) {
-        uint32_t newNumPlayouts = MaxNumVisitsPerPlayout;
+        uint32_t newNumPlayouts = Config::MaxNumVisitsPerPlayout;
 
         // Cap new number of playouts to the maximum num nodes to visit
         if (options.maxNodes) {

@@ -115,6 +115,8 @@ int NumIterationAfterMate = 6;
 int NumIterationAfterSingularRoot = 4;
 /// Max depth to search.
 int MaxSearchDepth = 99;
+/// The maximum number of visits per playout in MCTS search.
+int MaxNumVisitsPerPlayout = 100;
 /// How many nodes to print root moves in MCTS search. (Positive number to enable)
 int NodesToPrintMCTSRootmoves = 0;
 /// How much milliseconds to print root moves in MCTS search. (Positive number to enable)
@@ -401,6 +403,7 @@ void Config::readSearch(const cpptoml::table &t)
     if (auto v = t.get_as<std::string>("default_searcher"); v)
         Search::Threads.setupSearcher(createSearcher(*v));
 
+    // Parameters for alpha-beta search
     AspirationWindow = t.get_as<bool>("aspiration_window").value_or(AspirationWindow);
     FilterSymmetryRootMoves =
         t.get_as<bool>("filter_symmetry_root_moves").value_or(FilterSymmetryRootMoves);
@@ -409,6 +412,20 @@ void Config::readSearch(const cpptoml::table &t)
     NumIterationAfterSingularRoot =
         t.get_as<int>("num_iteration_after_singular_root").value_or(NumIterationAfterSingularRoot);
     MaxSearchDepth = t.get_as<int>("max_search_depth").value_or(MaxSearchDepth);
+
+    // Parameters for MCTS search
+    MaxNumVisitsPerPlayout =
+        t.get_as<int>("max_num_visits_per_playout").value_or(MaxNumVisitsPerPlayout);
+    NodesToPrintMCTSRootmoves =
+        t.get_as<int>("nodes_to_print_mcts_rootmoves").value_or(NodesToPrintMCTSRootmoves);
+    TimeToPrintMCTSRootmoves =
+        t.get_as<int>("time_to_print_mcts_rootmoves").value_or(TimeToPrintMCTSRootmoves);
+    MaxNonPVRootmovesToPrint =
+        t.get_as<int>("max_non_pv_rootmoves_to_print").value_or(MaxNonPVRootmovesToPrint);
+    NumNodesAfterSingularRoot =
+        t.get_as<int>("num_nodes_after_singular_root").value_or(NumNodesAfterSingularRoot);
+    NumNodeTableShardsPowerOfTwo =
+        t.get_as<int>("num_node_table_shards_power_of_two").value_or(NumNodeTableShardsPowerOfTwo);
 
     // Read time management options
     if (auto tm = t.get_table("timectl")) {

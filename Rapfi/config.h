@@ -120,6 +120,7 @@ extern int  NumIterationAfterMate;
 extern int  NumIterationAfterSingularRoot;
 extern int  MaxSearchDepth;
 
+extern int MaxNumVisitsPerPlayout;
 extern int NodesToPrintMCTSRootmoves;
 extern int TimeToPrintMCTSRootmoves;
 extern int MaxNonPVRootmovesToPrint;
