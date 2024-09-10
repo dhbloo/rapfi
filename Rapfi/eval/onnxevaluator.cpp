@@ -376,6 +376,8 @@ public:
 
         boardInput[0 * channelStride + posOffset] = color == sideToMove;   // self plane
         boardInput[1 * channelStride + posOffset] = color == ~sideToMove;  // oppo plane
+
+        outputDirty = true;
     }
 
     void undo(OnnxModel &model, Color color, int x, int y) override
@@ -385,6 +387,8 @@ public:
 
         boardInput[0 * channelStride + posOffset] = 0;  // self plane
         boardInput[1 * channelStride + posOffset] = 0;  // oppo plane
+
+        outputDirty = true;
     }
 
     ValueType evaluateValue(OnnxModel &model) override
@@ -413,6 +417,7 @@ private:
     void runInference(OnnxModel &model)
     {
         model.run(inputNames, inputTensors, outputNames, outputTensors);
+        outputDirty = false;
     }
 
     const int           boardWidth, boardHeight;

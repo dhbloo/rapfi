@@ -393,6 +393,11 @@ top:
         endMove = generate<DEFEND_FOUR>(board, curMove);
         endMove = (rule == RENJU ? generate<VCF | RULE_RENJU> : generate<VCF>)(board, endMove);
 
+        if (endMove == curMove) {
+            stage = MAIN_MOVES;
+            goto top;
+        }
+
         if (useNormalizedPolicy) {
             scoreAllMoves<ScoreType(BALANCED | POLICY)>();
             fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});

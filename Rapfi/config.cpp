@@ -115,6 +115,8 @@ int NumIterationAfterMate = 6;
 int NumIterationAfterSingularRoot = 4;
 /// Max depth to search.
 int MaxSearchDepth = 99;
+/// Expand node (evaluating policy) when first evaluate a node (evaluating value).
+bool ExpandWhenFirstEvaluate = false;
 /// The maximum number of visits per playout in MCTS search.
 int MaxNumVisitsPerPlayout = 100;
 /// How many nodes to print root moves in MCTS search. (Positive number to enable)
@@ -414,6 +416,8 @@ void Config::readSearch(const cpptoml::table &t)
     MaxSearchDepth = t.get_as<int>("max_search_depth").value_or(MaxSearchDepth);
 
     // Parameters for MCTS search
+    ExpandWhenFirstEvaluate =
+        t.get_as<bool>("expand_when_first_evaluate").value_or(ExpandWhenFirstEvaluate);
     MaxNumVisitsPerPlayout =
         t.get_as<int>("max_num_visits_per_playout").value_or(MaxNumVisitsPerPlayout);
     NodesToPrintMCTSRootmoves =

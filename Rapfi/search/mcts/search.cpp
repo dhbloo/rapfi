@@ -185,39 +185,6 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
     return {bestEdge, bestNode};
 }
 
-/// evaluate: evaluate the value of this node and make the first visit
-template <bool Root = false>
-void evaluateNode(Node &node, const SearchOptions &options, const Board &board, int ply)
-{
-    SearchThread *thisThread = board.thisThread();
-
-    if (!Root) {
-        if (ply > thisThread->selDepth)
-            thisThread->selDepth = ply;
-
-        // Check if the board has been filled or we have reached the max game ply.
-        if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves) {
-            Value value = getDrawValue(board, options, board.ply());
-            node.setTerminal(value);
-            return;
-        }
-
-        // Check for immediate winning
-        if (Value value = quickWinCheck(options.rule, board, board.ply()); value != VALUE_ZERO) {
-            // Do not return mate that longer than maxMoves option
-            if (mate_step(value, 0) > options.maxMoves)
-                value = getDrawValue(board, options, board.ply());
-
-            node.setTerminal(value);
-            return;
-        }
-    }
-
-    // Evaluate value for new node that has not been visited
-    Evaluation::ValueType v = Evaluation::computeEvaluatorValue(board);
-    node.setNonTerminal(v.winLossRate(), v.draw());
-}
-
 /// expand: generate edges and evaluate the policy of this node
 /// @return Whether this node has no valid move, which means this node is a terminal node.
 template <bool Root = false>
@@ -265,6 +232,43 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
         }
         return noValidMove;
     }
+}
+
+/// evaluate: evaluate the value of this node and make the first visit
+template <bool Root = false>
+void evaluateNode(Node &node, const SearchOptions &options, const Board &board, int ply)
+{
+    SearchThread *thisThread = board.thisThread();
+
+    if (!Root) {
+        if (ply > thisThread->selDepth)
+            thisThread->selDepth = ply;
+
+        // Check if the board has been filled or we have reached the max game ply.
+        if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves) {
+            Value value = getDrawValue(board, options, board.ply());
+            node.setTerminal(value);
+            return;
+        }
+
+        // Check for immediate winning
+        if (Value value = quickWinCheck(options.rule, board, board.ply()); value != VALUE_ZERO) {
+            // Do not return mate that longer than maxMoves option
+            if (mate_step(value, 0) > options.maxMoves)
+                value = getDrawValue(board, options, board.ply());
+
+            node.setTerminal(value);
+            return;
+        }
+    }
+
+    // Evaluate value for new node that has not been visited
+    Evaluation::ValueType v = Evaluation::computeEvaluatorValue(board);
+    node.setNonTerminal(v.winLossRate(), v.draw());
+
+    // If ExpandWhenFirstEvaluate mode is enabled, we expand the node immediately
+    if (Config::ExpandWhenFirstEvaluate)
+        expandNode<Root>(node, options, board, ply);
 }
 
 /// select and backpropagate: select the best child node and backpropagate the statistics
