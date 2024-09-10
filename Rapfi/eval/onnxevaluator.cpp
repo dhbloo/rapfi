@@ -436,7 +436,7 @@ struct OnnxModelLoader : WeightLoader<OnnxModel, OnnxModelArguments>
 
             MESSAGEL("Initialized onnx model " << pathToConsoleString(onnxModelPath)
                                                << " on device: " << deviceString(args.device));
-            return std::move(ptr);
+            return ptr;
         }
         catch (const std::exception &e) {
             ERRORL("Failed to create onnx model: " << e.what());
