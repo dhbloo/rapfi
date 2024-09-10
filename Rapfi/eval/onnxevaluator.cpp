@@ -419,7 +419,11 @@ private:
 
 struct OnnxModelLoader : WeightLoader<OnnxModel, OnnxModelArguments>
 {
-    OnnxModelLoader(int boardSize, Rule rule) : boardSize(boardSize), rule(rule) {}
+    OnnxModelLoader(int boardSize, Rule rule, std::filesystem::path onnxModelPath)
+        : boardSize(boardSize)
+        , rule(rule)
+        , onnxModelPath(onnxModelPath)
+    {}
 
     std::unique_ptr<OnnxModel> load(std::istream &is, OnnxModelArguments args) override
     {
@@ -429,6 +433,9 @@ struct OnnxModelLoader : WeightLoader<OnnxModel, OnnxModelArguments>
                 return nullptr;
             if (!ptr->supportBoardSize(boardSize))
                 return nullptr;
+
+            MESSAGEL("Initialized onnx model " << pathToConsoleString(onnxModelPath)
+                                               << " on device: " << deviceString(args.device));
             return std::move(ptr);
         }
         catch (const std::exception &e) {
@@ -438,8 +445,9 @@ struct OnnxModelLoader : WeightLoader<OnnxModel, OnnxModelArguments>
     }
 
 private:
-    int  boardSize;
-    Rule rule;
+    int                   boardSize;
+    Rule                  rule;
+    std::filesystem::path onnxModelPath;
 };
 
 static WeightRegistry<OnnxModelLoader> OnnxModelRegistry;
@@ -475,7 +483,7 @@ OnnxEvaluator::OnnxEvaluator(int                   boardSize,
     if (args.device == DEFAULT_DEV)
         args.device = getDefaultDevice();
 
-    OnnxModelLoader loader {boardSize, rule};
+    OnnxModelLoader loader {boardSize, rule, onnxModelPath};
     model = OnnxModelRegistry.loadWeightFromFile(loader, onnxModelPath, args);
     if (!model)
         throw std::runtime_error("Failed to load onnx model from "
@@ -483,9 +491,6 @@ OnnxEvaluator::OnnxEvaluator(int                   boardSize,
 
     accumulator[BLACK] = makeOnnxAccumulator(*model, boardSize, rule, BLACK);
     accumulator[WHITE] = makeOnnxAccumulator(*model, boardSize, rule, WHITE);
-
-    MESSAGEL("Initialized onnx model " << pathToConsoleString(onnxModelPath)
-                                       << " on device: " << deviceString(args.device));
 }
 
 OnnxEvaluator::~OnnxEvaluator()

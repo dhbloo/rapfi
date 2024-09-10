@@ -787,7 +787,7 @@ void MCTSSearcher::search(SearchThread &th)
 
         if (th.isMainThread()) {
             MainSearchThread &mainThread = static_cast<MainSearchThread &>(th);
-            mainThread.checkExit(std::max(newNumNodes, 1u));
+            mainThread.checkExit(std::max(newNumNodes, 64u));
 
             bool printRootMoves = false;
             if (Config::NodesToPrintMCTSRootmoves > 0) {
@@ -927,7 +927,6 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
         selectBestmoveOfChildNode(*root, edgeIndices, selectionValues, lcbValues, true);
     uint32_t maxNumRootMovesToPrint =
         std::max<uint32_t>(th.options().multiPV, Config::MaxNonPVRootmovesToPrint);
-    numSelectableRootMoves = std::min<uint32_t>(edgeIndices.size(), maxNumRootMovesToPrint);
 
     for (RootMove &rm : th.rootMoves) {
         rm.selectionValue = std::numeric_limits<float>::lowest();
@@ -936,7 +935,8 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
         rm.pv.resize(1);
     }
 
-    EdgeArray &edges = *root->getEdges();
+    EdgeArray &edges       = *root->getEdges();
+    numSelectableRootMoves = 0;
     for (size_t i = 0; i < edgeIndices.size(); i++) {
         uint32_t edgeIndex = edgeIndices[i];
         Edge    &childEdge = edges[edgeIndex];
@@ -948,8 +948,7 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
             continue;
 
         // Record the root move's value for explored children
-        float childPolicy = childEdge.getP();
-        Node *childNode   = childEdge.getChild();
+        Node *childNode = childEdge.getChild();
         if (childNode) {
             ValueBound childBound = childNode->getBound();
             if (childNode->getVisits() > 0) {
@@ -964,19 +963,24 @@ void MCTSSearcher::updateRootMovesData(MainSearchThread &th)
                 else
                     rm->value = Config::winRateToValue(rm->winRate);
                 rm->utilityStdev = std::sqrt(childNode->getQVar());
+                numSelectableRootMoves++;
             }
-            rm->policyPrior = childPolicy;
-            rm->numNodes    = childEdge.getVisits();
+            rm->numNodes = childEdge.getVisits();
             extractPVOfChildNode(*childNode, rm->pv);
         }
         else {
-            rm->policyPrior = childPolicy;
-            rm->numNodes    = 0;
+            rm->numNodes = 0;
         }
+        rm->policyPrior = childEdge.getP();
         rm->lcbValue =
             i < lcbValues.size() ? lcbValues[i] : std::numeric_limits<float>::quiet_NaN();
         rm->selectionValue = selectionValues[i];
     }
+
+    // If we do not have any visited children, display all of them to show policy
+    if (numSelectableRootMoves == 0)
+        numSelectableRootMoves = th.rootMoves.size();
+    numSelectableRootMoves = std::min(numSelectableRootMoves, maxNumRootMovesToPrint);
 
     // Sort the root moves in descending order by selection value
     std::stable_sort(th.rootMoves.begin(),
