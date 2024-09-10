@@ -29,8 +29,9 @@ namespace Evaluation::onnx {
 /// A simple classification on onnx execution provider and device id.
 enum OnnxDevice {
     DEFAULT_DEV = 0,
-    CPU         = 1,
-    CUDA_0      = 2,
+    CPU_ST      = 1,
+    CPU_MT      = 2,
+    CUDA_0      = 3,
     CUDA_MAX    = CUDA_0 + 127,
     TRT_0       = CUDA_MAX + 1,
     TRT_MAX     = TRT_0 + 127,
@@ -43,8 +44,10 @@ OnnxDevice parseDeviceString(std::string device)
         return DEFAULT_DEV;
 
     upperInplace(device);
-    if (device == "CPU")
-        return CPU;
+    if (device == "CPU" || device == "CPU-SINGLETHREAD")
+        return CPU_ST;
+    else if (device == "CPU-MULTITHREAD")
+        return CPU_MT;
     else if (device == "CUDA")
         return CUDA_0;
     else if (device.rfind("CUDA:", 0) == 0) {
@@ -70,8 +73,10 @@ OnnxDevice parseDeviceString(std::string device)
 /// Get the device string of a onnx device enum.
 std::string deviceString(OnnxDevice device)
 {
-    if (device == CPU)
-        return "cpu";
+    if (device == CPU_ST)
+        return "cpu-singlethread";
+    else if (device == CPU_MT)
+        return "cpu-multithread";
     else if (CUDA_0 <= device && device <= CUDA_MAX)
         return "cuda:" + std::to_string(device - CUDA_0);
     else if (TRT_0 <= device && device <= TRT_MAX)
@@ -90,7 +95,7 @@ enum OnnxModelIOVersion : uint16_t {
 /// Get the default device of this machine.
 OnnxDevice getDefaultDevice()
 {
-    return CPU;
+    return CPU_ST;
 }
 
 /// Arguments for creating a onnx model instance.
@@ -191,10 +196,17 @@ public:
 private:
     void setupSessionOptions(OnnxDevice device)
     {
-        if (device == CPU) {
+        if (device == CPU_ST) {
             sessionOptions.SetIntraOpNumThreads(1);
             sessionOptions.SetInterOpNumThreads(1);
-            return;  // Do nothing
+            return;
+        }
+        else if (device == CPU_MT) {
+            sessionOptions.SetIntraOpNumThreads(0);
+            sessionOptions.SetInterOpNumThreads(0);
+            sessionOptions.AddConfigEntry("session.intra_op.allow_spinning", "0");
+            sessionOptions.AddConfigEntry("session.inter_op.allow_spinning", "0");
+            return;
         }
         else if (CUDA_0 <= device && device <= CUDA_MAX) {
 #ifdef USE_ORT_GPU_EP
