@@ -93,6 +93,7 @@ split(std::string_view s, std::string_view delims = "\n", bool includeEmpty = fa
 
 std::string timeText(Time time);
 std::string nodesText(uint64_t nodes);
+std::string speedText(uint64_t nodesPerSecond);
 
 // -------------------------------------------------
 // Container helpers

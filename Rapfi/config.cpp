@@ -32,6 +32,10 @@
 #include "search/mcts/searcher.h"
 #include "search/searchthread.h"
 
+#ifdef USE_ORT_EVALUATOR
+    #include "eval/onnxevaluator.h"
+#endif
+
 #include <cpptoml.h>
 #include <fstream>
 #include <functional>
@@ -643,6 +647,23 @@ void Config::readEvaluator(const cpptoml::table &t)
             },
             true));
     }
+#ifdef USE_ORT_EVALUATOR
+    else if (*evaluatorType == "ort") {
+        std::string deviceName = t.get_as<std::string>("ort_device").value_or("");
+
+        Search::Threads.setupEvaluator(warpEvaluatorMaker(
+            [=](int                   boardSize,
+                Rule                  rule,
+                std::filesystem::path weightPath,
+                const cpptoml::table &weightCfg) {
+                return std::make_unique<Evaluation::onnx::OnnxEvaluator>(boardSize,
+                                                                         rule,
+                                                                         weightPath,
+                                                                         deviceName);
+            },
+            true));
+    }
+#endif
     else {
         throw std::runtime_error("unsupported evaluator type");
     }

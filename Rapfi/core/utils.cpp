@@ -116,6 +116,16 @@ std::string nodesText(uint64_t nodes)
         return std::to_string(nodes / 1000000000000) + "T";
 }
 
+std::string speedText(uint64_t nodesPerSecond)
+{
+    if (nodesPerSecond < 100000)
+        return std::to_string(nodesPerSecond);
+    else if (nodesPerSecond < 100000000)
+        return std::to_string(nodesPerSecond / 1000) + "K";
+    else
+        return std::to_string(nodesPerSecond / 1000000) + "M";
+}
+
 // -------------------------------------------------
 
 std::string LegacyFileCPToUTF8(std::string str)

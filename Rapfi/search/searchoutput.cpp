@@ -105,7 +105,7 @@ void SearchPrinter::printPvCompletes(MainSearchThread  &th,
         return;
 
     uint64_t nodes = th.threads.nodesSearched();
-    uint64_t speed = nodes / std::max(tc.elapsed(), (Time)1);
+    uint64_t speed = nodes * 1000 / std::max(tc.elapsed(), (Time)1);
     if (!th.threads.isTerminating()) {
         RootMove &curMove = th.rootMoves[pvIdx];
 
@@ -131,11 +131,11 @@ void SearchPrinter::printPvCompletes(MainSearchThread  &th,
             if (numPv > 1)
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " multipv "
                                   << pvIdx + 1 << " ev " << curMove.value << " n "
-                                  << nodesText(nodes) << " n/ms " << speed << " tm " << tc.elapsed()
+                                  << nodesText(nodes) << " nps " << speed << " tm " << tc.elapsed()
                                   << " pv " << MovesText {curMove.pv});
             else
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " ev " << curMove.value
-                                  << " n " << nodesText(nodes) << " n/ms " << speed << " tm "
+                                  << " n " << nodesText(nodes) << " nps " << speed << " tm "
                                   << tc.elapsed() << " pv " << MovesText {curMove.pv});
         }
     }
@@ -167,7 +167,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
         return;
 
     uint64_t nodes = th.threads.nodesSearched();
-    uint64_t speed = nodes / std::max(tc.elapsed(), (Time)1);
+    uint64_t speed = nodes * 1000 / std::max(tc.elapsed(), (Time)1);
 
     numRootMovesToDisplay = std::min(numRootMovesToDisplay, th.rootMoves.size());
     for (size_t pvIdx = 0; pvIdx < numRootMovesToDisplay; pvIdx++) {
@@ -206,7 +206,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
                                 << (curMove.winRate * 100) << " d " << (curMove.drawRate * 100)
                                 << " stdev " << curMove.utilityStdev << " v "
                                 << nodesText(curMove.numNodes) << " seldepth " << curMove.selDepth
-                                << " n " << nodesText(nodes) << " n/ms " << speed << " tm "
+                                << " n " << nodesText(nodes) << " nps " << speed << " tm "
                                 << tc.elapsed() << " prior " << curMove.policyPrior << " pv "
                                 << MovesText {curMove.pv});
         }
@@ -215,7 +215,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
     }
 
     if (Config::MessageMode == MsgMode::NORMAL) {
-        MESSAGEL("Speed " << speed << " | Visit " << nodesText(nodes) << " | Time "
+        MESSAGEL("Speed " << speedText(speed) << " | Visit " << nodesText(nodes) << " | Time "
                           << timeText(tc.elapsed()));
     }
 }
@@ -227,11 +227,11 @@ void SearchPrinter::printSearchEnds(MainSearchThread  &th,
 {
     if (Config::MessageMode == MsgMode::NORMAL || Config::MessageMode == MsgMode::BRIEF) {
         uint64_t nodes      = th.threads.nodesSearched();
-        uint64_t speed      = nodes / std::max(tc.elapsed(), (Time)1);
+        uint64_t speed      = nodes * 1000 / std::max(tc.elapsed(), (Time)1);
         bool     showPonder = th.inPonder.load(std::memory_order_relaxed);
 
         MESSAGEL((showPonder ? "[Pondering] " : "")
-                 << "Speed " << speed << " | Depth " << rootDepth << "-"
+                 << "Speed " << speedText(speed) << " | Depth " << rootDepth << "-"
                  << bestThread.rootMoves[0].selDepth << " | Eval " << bestThread.rootMoves[0].value
                  << " | Node " << nodesText(nodes) << " | Time " << timeText(tc.elapsed()));
 

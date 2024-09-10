@@ -21,6 +21,10 @@ option(USE_NEON_DOTPROD "Enable NEON dotprod instruction" OFF)
 option(USE_WASM_SIMD "Enable WebAssembly SIMD instruction" OFF)
 option(USE_WASM_SIMD_RELAXED "Enable WebAssembly Relaxed SIMD instruction" OFF)
 
+option(USE_ORT_EVALUATOR "Enable ONNX runtime evaluator" OFF)
+option(USE_ORT_GPU_EP "Enable ONNX GPU execution providers" OFF)
+option(ORT_ROOTDIR "Root directory of onnxruntime" "")
+
 option(ENABLE_LTO "Enable link time optimization" OFF)
 option(FORCE_ASSERTION "Enable force assertion for all build type" OFF)
 option(USE_ASAN "Enable address sanitizer" OFF)
@@ -248,6 +252,31 @@ if(EMSCRIPTEN)
         LINK_FLAGS ${EMCC_FLAGS}
     )
 
+endif()
+
+#==========================================================
+# Onnx runtime linking
+
+if(USE_ORT_EVALUATOR)
+    if(NOT (EXISTS "${ORT_ROOTDIR}"))
+	    message(FATAL_ERROR "Must provide a valid directory path to Onnx Runtime SDK.")
+    endif()
+
+    target_compile_definitions(rapfi PRIVATE USE_ORT_EVALUATOR)
+    target_sources(rapfi PRIVATE
+		eval/onnxevaluator.cpp
+		eval/onnxevaluator.h
+	)
+	target_include_directories(rapfi PRIVATE "${ORT_ROOTDIR}/include")
+	target_link_directories(rapfi PRIVATE "${ORT_ROOTDIR}/lib")
+    target_link_libraries(rapfi PRIVATE "onnxruntime.lib")
+
+    if(USE_ORT_GPU_EP)
+        target_compile_definitions(rapfi PRIVATE USE_ORT_GPU_EP)
+		target_link_libraries(rapfi PRIVATE "onnxruntime_providers_shared.lib")
+		target_link_libraries(rapfi PRIVATE "onnxruntime_providers_cuda.lib")
+		target_link_libraries(rapfi PRIVATE "onnxruntime_providers_tensorrt.lib")
+    endif()
 endif()
 
 #==========================================================

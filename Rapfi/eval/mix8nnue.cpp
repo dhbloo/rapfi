@@ -58,11 +58,9 @@ constexpr int8_t Conv1dLine4Len9Points[33][2] = {
     {3, -3},  {3, 0},  {3, 3},  {4, -4},  {4, 0},  {4, 4},
 };
 
-static Evaluation::WeightRegistry<Mix8Weight> Mix8WeightRegistry;
-
 struct Mix8BinaryWeightLoader : WeightLoader<Mix8Weight>
 {
-    std::unique_ptr<Mix8Weight> load(std::istream &in)
+    std::unique_ptr<Mix8Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
     {
         auto w = std::make_unique<Mix8Weight>();
 
@@ -98,6 +96,8 @@ struct Mix8BinaryWeightLoader : WeightLoader<Mix8Weight>
             return nullptr;
     }
 };
+
+static Evaluation::WeightRegistry<Mix8BinaryWeightLoader> Mix8WeightRegistry;
 
 template <size_t Size, typename T>
 using Batch = simd::detail::VecBatch<Size, T, simd::NativeInstType>;
@@ -788,7 +788,7 @@ Mix8Evaluator::Mix8Evaluator(int                   boardSize,
              std::make_pair(WHITE, whiteWeightPath),
          }) {
         currentWeightPath  = weightPath;
-        weight[weightSide] = Mix8WeightRegistry.loadWeightFromFile(weightPath, loader);
+        weight[weightSide] = Mix8WeightRegistry.loadWeightFromFile(loader, weightPath);
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));
