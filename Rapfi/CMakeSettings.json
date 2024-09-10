@@ -12,6 +12,34 @@
       "inheritEnvironments": [ "msvc_x64_x64" ]
     },
     {
+      "name": "x64-onnx-Debug",
+      "generator": "Ninja",
+      "configurationType": "Debug",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "ORT_ROOTDIR",
+          "value": "D:/C++/Lib/onnx/onnxruntime-win-x64-1.19.2/",
+          "type": "STRING"
+        },
+        {
+          "name": "USE_ORT_EVALUATOR",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_ORT_GPU_EP",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
       "name": "x64-RelWithDebInfo",
       "generator": "Ninja",
       "configurationType": "RelWithDebInfo",
@@ -30,6 +58,39 @@
       ]
     },
     {
+      "name": "x64-onnx-RelWithDebInfo",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "FORCE_ASSERTION",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "ORT_ROOTDIR",
+          "value": "D:/C++/Lib/onnx/onnxruntime-win-x64-1.19.2/",
+          "type": "STRING"
+        },
+        {
+          "name": "USE_ORT_EVALUATOR",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_ORT_GPU_EP",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
       "name": "x64-Release",
       "generator": "Ninja",
       "configurationType": "Release",
@@ -43,6 +104,39 @@
         {
           "name": "ENABLE_LTO",
           "value": "True",
+          "type": "BOOL"
+        }
+      ]
+    },
+    {
+      "name": "x64-onnx-Release",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "ENABLE_LTO",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "ORT_ROOTDIR",
+          "value": "D:/C++/Lib/onnx/onnxruntime-win-x64-1.19.2/",
+          "type": "STRING"
+        },
+        {
+          "name": "USE_ORT_EVALUATOR",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_ORT_GPU_EP",
+          "value": "False",
           "type": "BOOL"
         }
       ]
@@ -187,6 +281,34 @@
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
       "inheritEnvironments": [ "clang_cl_x64_x64" ]
+    },
+    {
+      "name": "x64-onnx-Clang-Release",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\build\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "clang_cl_x64_x64" ],
+      "variables": [
+        {
+          "name": "ORT_ROOTDIR",
+          "value": "D:/C++/Lib/onnx/onnxruntime-win-x64-1.19.2/",
+          "type": "STRING"
+        },
+        {
+          "name": "USE_ORT_EVALUATOR",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
+          "name": "USE_ORT_GPU_EP",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
     },
     {
       "name": "x64-Clang-Release-SSE",
