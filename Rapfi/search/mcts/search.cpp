@@ -38,7 +38,7 @@ inline float cpuctExplorationFactor(uint32_t parentVisits)
     float cpuct = CpuctExploration;
     if (CpuctExplorationLog != 0)
         cpuct += CpuctExplorationLog * std::log(1.0f + parentVisits / CpuctExplorationBase);
-    return cpuct * std::sqrt(parentVisits + CpuctParentVisitBias);
+    return cpuct * std::sqrt(parentVisits + 1e-2f);
 }
 
 /// Compute the initial utility value for unexplored children, considering first play urgency.
