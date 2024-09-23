@@ -29,18 +29,17 @@ namespace Search::MCTS {
 class NodeTable
 {
 public:
-    using NodePtr = std::unique_ptr<Node>;
     struct NodeCompare
     {
         using is_transparent = void;
-        bool operator()(HashKey lhs, const NodePtr &rhs) const { return lhs < rhs->getHash(); }
-        bool operator()(const NodePtr &lhs, HashKey rhs) const { return lhs->getHash() < rhs; }
-        bool operator()(const NodePtr &lhs, const NodePtr &rhs) const
+        bool operator()(HashKey lhs, const Node &rhs) const { return lhs < rhs.getHash(); }
+        bool operator()(const Node &lhs, HashKey rhs) const { return lhs.getHash() < rhs; }
+        bool operator()(const Node &lhs, const Node &rhs) const
         {
-            return lhs->getHash() < rhs->getHash();
+            return lhs.getHash() < rhs.getHash();
         }
     };
-    using Table = std::set<NodePtr, NodeCompare>;
+    using Table = std::set<Node, NodeCompare>;
 
     struct Shard
     {
@@ -81,23 +80,31 @@ public:
     {
         Shard            shard = getShardByHash(hash);
         std::shared_lock lock(shard.mutex);
-        auto             it = shard.table.find(hash);
-        return it != shard.table.end() ? it->get() : nullptr;
+        Table::iterator  it = shard.table.find(hash);
+        if (it == shard.table.end())
+            return nullptr;
+
+        // Normally elements in std::set are immutable, but we only use a node's hash
+        // to compare nodes, so we can safely cast away constness here.
+        return std::addressof(const_cast<Node &>(*it));
     }
 
-    /// Try insert a new node into the table.
-    /// @param nodePtr Pointer to the node to be inserted.
+    /// Try emplace a new node into the table.
+    /// @param hash Hash key of the new node.
+    /// @param args Extra arguments to pass to the constructor of the new node.
     /// @return A pair of (Pointer to the inserted node, Whether the node is
     ///   successfully inserted). If there is already a node inserted by other
     ///   threads, the pointer to that node is returned instead.
-    std::pair<Node *, bool> tryInsertNode(std::unique_ptr<Node> nodePtr)
+    template <typename... Args>
+    std::pair<Node *, bool> tryEmplaceNode(HashKey hash, Args... args)
     {
-        HashKey          hash  = nodePtr->getHash();
         Shard            shard = getShardByHash(hash);
         std::unique_lock lock(shard.mutex);
 
-        auto [it, inserted] = shard.table.emplace(std::move(nodePtr));
-        return {it->get(), inserted};
+        // Try to emplace the node after acquiring the writer lock
+        auto [it, inserted] = shard.table.emplace(hash, std::forward<Args>(args)...);
+        // We also return whether the node is actually created by us
+        return {std::addressof(const_cast<Node &>(*it)), inserted};
     }
 
 private:

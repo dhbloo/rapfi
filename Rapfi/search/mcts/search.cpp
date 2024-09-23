@@ -85,10 +85,8 @@ allocateOrFindNode(NodeTable &nodeTable, HashKey hash, uint32_t globalNodeAge)
     bool  didInsertion = false;
 
     // Allocate and insert a new child node if we do not find a transposition
-    if (!node) {
-        auto newNode                 = std::make_unique<Node>(hash, globalNodeAge);
-        std::tie(node, didInsertion) = nodeTable.tryInsertNode(std::move(newNode));
-    }
+    if (!node)
+        std::tie(node, didInsertion) = nodeTable.tryEmplaceNode(hash, globalNodeAge);
 
     return {node, didInsertion};
 }
@@ -904,7 +902,7 @@ void MCTSSearcher::recycleOldNodes(MainSearchThread &th)
             NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
             std::unique_lock lock(shard.mutex);
             for (auto it = shard.table.begin(); it != shard.table.end();) {
-                Node *node = it->get();
+                Node *node = std::addressof(const_cast<Node &>(*it));
                 if (node->getAgeRef().load(std::memory_order_relaxed) != this->globalNodeAge) {
                     it = shard.table.erase(it);
                     numRecycledNodes.fetch_add(1, std::memory_order_relaxed);
