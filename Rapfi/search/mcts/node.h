@@ -22,6 +22,7 @@
 #include "../../core/types.h"
 #include "../movepick.h"
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstring>
@@ -31,6 +32,76 @@ namespace Search::MCTS {
 
 class Node;
 class NodeTable;
+
+constexpr uint8_t policyQuant(float p)
+{
+    if (p <= 0)
+        return 0;
+
+    int32_t t = int32_t(p * 32768.0f);
+    if (t >= (1 << 15))
+        return 255;
+    if (t >= (1 << 14))  // 1
+        return 7 * 32 + (t - (1 << 14)) / (1 << 9);
+    else if (t >= (1 << 13))  // 1/2
+        return 6 * 32 + (t - (1 << 13)) / (1 << 8);
+    else if (t >= (1 << 12))  // 1/4
+        return 5 * 32 + (t - (1 << 12)) / (1 << 7);
+    else if (t >= (1 << 11))  // 1/8
+        return 4 * 32 + (t - (1 << 11)) / (1 << 6);
+    else if (t >= (1 << 10))  // 1/16
+        return 7 * 16 + (t - (1 << 10)) / (1 << 6);
+    else if (t >= (1 << 9))  // 1/32
+        return 6 * 16 + (t - (1 << 9)) / (1 << 5);
+    else if (t >= (1 << 8))  // 1/64
+        return 5 * 16 + (t - (1 << 8)) / (1 << 4);
+    else if (t >= (1 << 7))  // 1/128
+        return 4 * 16 + (t - (1 << 7)) / (1 << 3);
+    else if (t >= (1 << 6))  // 1/512~1/256
+        return 3 * 16 + (t - (1 << 6)) / (1 << 2);
+    else if (t >= (15 << 1))  // 15/16384~1/512
+        return 31 + (t - (15 << 1)) / (1 << 1);
+    else  // <15/16384
+        return 1 + t;
+}
+
+constexpr float policyDequant(uint8_t t)
+{
+    int p = 0;
+    if (t == 0)
+        p = 0;
+    else if (t < 31)
+        p = (-1 + 2 * t) * 1;
+    else if (t < 3 * 16)
+        p = (2 * t + 1 - 1 * 32) * 2;
+    else if (t < 4 * 16)
+        p = (2 * t + 1 - 2 * 32) * 4;
+    else if (t < 5 * 16)
+        p = (2 * t + 1 - 3 * 32) * 8;
+    else if (t < 6 * 16)
+        p = (2 * t + 1 - 4 * 32) * 16;
+    else if (t < 7 * 16)
+        p = (2 * t + 1 - 5 * 32) * 32;
+    else if (t < 4 * 32)
+        p = (2 * t + 1 - 6 * 32) * 64;
+    else if (t < 5 * 32)
+        p = (2 * t + 1 - 3 * 64) * 64;
+    else if (t < 6 * 32)
+        p = (2 * t + 1 - 4 * 64) * 128;
+    else if (t < 7 * 32)
+        p = (2 * t + 1 - 5 * 64) * 256;
+    else
+        p = (2 * t + 1 - 6 * 64) * 512;
+
+    return float(p) * (1 / 65536.0f);
+}
+
+inline const std::array<float, 256> PolicyDequantTable = []() {
+    std::array<float, 256> table;
+    for (int i = 0; i < 256; ++i)
+        table[i] = policyDequant(i);
+    return table;
+}();
 
 /// An edge in the MCTS graph.
 /// It contains the move, policy and num visits of this edge.
@@ -48,21 +119,11 @@ public:
     void setP(float p)
     {
         assert(0.0f <= p && p <= 1.0f);
-        constexpr int32_t roundings = (1 << 11) - (3 << 28);
-        int32_t           bits;  // TODO: change to std::bit_cast in C++20
-        std::memcpy(&bits, &p, sizeof(float));
-        bits += roundings;
-        policy = (bits < 0) ? 0 : static_cast<uint16_t>(bits >> 12);
+        quantizedPolicy = policyQuant(p);
     }
 
     /// Get the normalized policy of this edge.
-    float getP() const
-    {
-        uint32_t bits = (static_cast<uint32_t>(policy) << 12) | (3 << 28);
-        float    p;  // TODO: change to std::bit_cast in C++20
-        std::memcpy(&p, &bits, sizeof(uint32_t));
-        return p;
-    }
+    float getP() const { return PolicyDequantTable[quantizedPolicy]; }
 
     /// Get the number of edge visits of this edge.
     uint32_t getVisits() const { return edgeVisits.load(std::memory_order_acquire); }
@@ -87,7 +148,7 @@ private:
     Pos move;
 
     /// quantized and compressed 16bit policy value
-    uint16_t policy;
+    uint8_t quantizedPolicy;
 
     /// Number of finished visits of this edge.
     std::atomic<uint32_t> edgeVisits;
