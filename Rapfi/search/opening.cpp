@@ -18,6 +18,7 @@
 
 #include "opening.h"
 
+#include "../core/iohelper.h"
 #include "../game/board.h"
 #include "search.h"
 #include "searchthread.h"
@@ -308,20 +309,26 @@ bool OpeningGenerator::next()
 {
     board.newGame(rule);
 
-    // Pick a random move count and area
-    int numMoves =
-        numMoveChoices[std::uniform_int_distribution<size_t>(0, numMoveChoices.size() - 1)(prng)];
-    int areaSize = std::uniform_int_distribution<>(config.localSizeMin, config.localSizeMax)(prng);
-    int x0       = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
-    int y0       = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
+    // Pick a random move count
+    bool findBalancedMove = config.balance1Nodes || config.balance2Nodes;
+    int  idx              = std::uniform_int_distribution<int>(0, numMoveChoices.size() - 1)(prng);
+    int  numMoves         = numMoveChoices[idx];
 
     // Spare two moves for balanced position (if available)
-    int numRandomMoves = std::max(numMoves - bool(config.balance1Nodes || config.balance2Nodes), 0);
+    int numRandomMoves = std::max(numMoves - findBalancedMove, 0);
     if (numRandomMoves > 0) {
         // Put random moves on board
+        int areaSize =
+            std::uniform_int_distribution<>(config.localSizeMin, config.localSizeMax)(prng);
+        int x0 = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
+        int y0 = std::uniform_int_distribution<>(0, board.size() - 1 - areaSize)(prng);
+
         CandArea area(x0, y0, x0 + areaSize, y0 + areaSize);
         putRandomMoves(numRandomMoves, area);
     }
+
+    if (!findBalancedMove)
+        return false;
 
     // For empty board, randomly make a part of the whole board as move condidate
     if (board.ply() == 0)
@@ -331,12 +338,19 @@ bool OpeningGenerator::next()
             0);
 
     // First try to put balance1 move, if that fails, try balance2
-    if (config.balance1Nodes && putBalance1Move())
-        return true;
+    if (config.balance1Nodes) {
+        if (Config::MessageMode != MsgMode::NONE)
+            MESSAGEL("Searching balanced1 for opening " << board.positionString());
+        if (putBalance1Move())
+            return true;
+    }
 
     if (config.balance2Nodes && board.ply() > 2) {
         board.undo(rule);  // undo the move put by balance1
         board.undo(rule);  // undo one random move
+
+        if (Config::MessageMode != MsgMode::NONE)
+            MESSAGEL("Searching balanced2 for opening " << board.positionString());
         if (putBalance2Move())
             return true;
     }
@@ -351,19 +365,29 @@ bool OpeningGenerator::next()
 ///     of random moves, the actual moves put will be the size of that area.
 void OpeningGenerator::putRandomMoves(int numMoves, CandArea area)
 {
+    // Collect all candidate moves in the area and shuffle them
     std::vector<Pos> randomMoves;
     FOR_EVERY_CANDAREA_POS(&board, pos, area)
     {
         randomMoves.push_back(pos);
     }
-
     std::shuffle(randomMoves.begin(), randomMoves.end(), prng);
 
-    if (randomMoves.size() > numMoves)
-        randomMoves.resize(numMoves);
-
-    for (Pos pos : randomMoves)
+    int count = 0;
+    for (Pos pos : randomMoves) {
         board.move(rule, pos);
+
+        // Make sure we do not accidentally put a winning move
+        if (board.p4Count(board.sideToMove(), A_FIVE) || board.p4Count(board.sideToMove(), B_FLEX4)
+            || board.p4Count(board.sideToMove(), C_BLOCK4_FLEX3)) {
+            board.undo(rule);
+        }
+        else {
+            count++;
+            if (count >= numMoves)
+                break;
+        }
+    }
 }
 
 /// Put one move to make a balanced opening.

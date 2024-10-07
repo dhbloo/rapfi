@@ -42,15 +42,17 @@ void Command::opengen(int argc, char *argv[])
     std::ofstream             outfile;
 
     cxxopts::Options options("rapfi opengen");
-    options.add_options()                                                                       //
-        ("n,number", "Number of openings to generate", cxxopts::value<size_t>())                //
-        ("o,output", "Save openings to a text file", cxxopts::value<std::string>())             //
-        ("s,boardsize", "Size of board in [5,22]", cxxopts::value<int>()->default_value("15"))  //
+    options.add_options()                                                         //
+        ("n,number", "Number of openings to generate", cxxopts::value<size_t>())  //
+        ("o,output",
+         "Save openings to a text file (default to stdout if not specified)",
+         cxxopts::value<std::string>())                                                         //
+        ("s,boardsize", "Board size in [5,22]", cxxopts::value<int>()->default_value("15"))  //
         ("r,rule",
          "One of [freestyle, standard, renju] rule",
          cxxopts::value<std::string>()->default_value("freestyle"))  //
         ("t,thread",
-         "Number of search threads to use",
+         "Number of search threads to use for searching balanced moves",
          cxxopts::value<size_t>()->default_value(std::to_string(Config::DefaultThreadNum)))  //
         ("hashsize",
          "Hash size of the transposition table (in MB)",
