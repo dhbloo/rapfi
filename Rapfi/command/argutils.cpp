@@ -124,8 +124,11 @@ Opening::OpeningGenConfig Command::parseOpengenConfig(const cxxopts::ParseResult
     cfg.localSizeMin  = result["min-area-size"].as<int>();
     cfg.localSizeMax  = result["max-area-size"].as<int>();
     cfg.balance1Nodes = result["balance1-node"].as<size_t>();
-    cfg.balance2Nodes = result["balance2-node"].as<size_t>();
-    cfg.balanceWindow = Value(result["balance-window"].as<int>());
+    cfg.balance1FastCheckNodes =
+        static_cast<uint64_t>(result["balance1-fast-check-ratio"].as<double>() * cfg.balance1Nodes);
+    cfg.balance1FastCheckWindow = Value(result["balance1-fast-check-window"].as<int>());
+    cfg.balance2Nodes           = result["balance2-node"].as<size_t>();
+    cfg.balanceWindow           = Value(result["balance-window"].as<int>());
 
     if (cfg.minMoves <= 0 || cfg.maxMoves < cfg.minMoves)
         throw std::invalid_argument("condition 0 < minMove <= maxMove does no satisfy");

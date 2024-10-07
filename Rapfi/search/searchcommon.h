@@ -118,7 +118,7 @@ struct SearchOptions
         INFO_REALTIME            = 0b01,
         INFO_DETAIL              = 0b10,
         INFO_REALTIME_AND_DETAIL = 0b11,
-    } infoMode;
+    } infoMode = INFO_NONE;
 
     // Time control
     Time     turnTime    = 0;

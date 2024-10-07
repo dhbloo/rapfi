@@ -46,7 +46,7 @@ void Command::opengen(int argc, char *argv[])
         ("n,number", "Number of openings to generate", cxxopts::value<size_t>())  //
         ("o,output",
          "Save openings to a text file (default to stdout if not specified)",
-         cxxopts::value<std::string>())                                                         //
+         cxxopts::value<std::string>())                                                      //
         ("s,boardsize", "Board size in [5,22]", cxxopts::value<int>()->default_value("15"))  //
         ("r,rule",
          "One of [freestyle, standard, renju] rule",
@@ -72,6 +72,13 @@ void Command::opengen(int argc, char *argv[])
         ("balance1-node",
          "Maximal nodes for balance1 search",
          cxxopts::value<uint64_t>()->default_value(std::to_string(cfg.balance1Nodes)))  //
+        ("balance1-fast-check-ratio",
+         "Spend how much amount of nodes to fast check if this position is balanceable",
+         cxxopts::value<double>()->default_value(
+             std::to_string((double)cfg.balance1FastCheckNodes / (double)cfg.balance1Nodes)))  //
+        ("balance1-fast-check-window",
+         "Consider this position as unbalanceable if its initial value falls outside the window",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.balance1FastCheckWindow)))  //
         ("balance2-node",
          "Maximal nodes for balance2 search",
          cxxopts::value<uint64_t>()->default_value(std::to_string(cfg.balance2Nodes)))  //
@@ -152,8 +159,8 @@ void Command::opengen(int argc, char *argv[])
 
         // Print out generation progress over time
         if (now() - lastTime >= reportInterval) {
-            MESSAGEL("Generated " << i << " of " << numOpenings << " openings, opening/s = "
-                                  << i / ((now() - startTime) / 1000.0));
+            MESSAGEL("Generated " << i << " of " << numOpenings << " openings, opening/min = "
+                                  << i / ((now() - startTime) / 60000.0));
             lastTime = now();
         }
     }

@@ -341,18 +341,22 @@ bool OpeningGenerator::next()
     if (config.balance1Nodes) {
         if (Config::MessageMode != MsgMode::NONE)
             MESSAGEL("Searching balanced1 for opening " << board.positionString());
-        if (putBalance1Move())
+        if (putBalance1Move()) {
+            board.move(rule, Search::Threads.main()->rootMoves[0].pv[0]);
             return true;
+        }
     }
 
-    if (config.balance2Nodes && board.ply() > 2) {
-        board.undo(rule);  // undo the move put by balance1
+    if (config.balance2Nodes && board.ply() > 1) {
         board.undo(rule);  // undo one random move
 
         if (Config::MessageMode != MsgMode::NONE)
             MESSAGEL("Searching balanced2 for opening " << board.positionString());
-        if (putBalance2Move())
+        if (putBalance2Move()) {
+            board.move(rule, Search::Threads.main()->rootMoves[0].pv[0]);
+            board.move(rule, Search::Threads.main()->rootMoves[0].pv[1]);
             return true;
+        }
     }
 
     return false;
@@ -394,30 +398,47 @@ void OpeningGenerator::putRandomMoves(int numMoves, CandArea area)
 /// @return True if successfully found a balanced move.
 bool OpeningGenerator::putBalance1Move()
 {
+    using Search::Threads;
+
     // Setup search options
     Search::SearchOptions options;
     options.rule.rule           = rule;
     options.disableOpeningQuery = true;
     options.balanceMode         = Search::SearchOptions::BALANCE_ONE;
-    options.maxNodes            = config.balance1Nodes;
 
-    Search::Threads.clear(false);
-    assert(!Search::Threads.empty());
+    Threads.clear(false);
+    assert(!Threads.empty());
 
-    // Start BALANCE1 search
-    Search::Threads.startThinking(board, options);
-    Search::Threads.waitForIdle();
+    // First do fast check to see if this position is balanceable
+    options.maxNodes = config.balance1FastCheckNodes;
+    if (options.maxNodes > 0) {
+        Threads.startThinking(board, options);
+        Threads.waitForIdle();
+
+        // Consider this position as unbalanceable if its initial value is too far
+        if (std::abs(Threads.main()->rootMoves[0].value) > config.balance1FastCheckWindow)
+            return false;
+    }
+
+    // Start the actual BALANCE1 search
+    options.maxNodes = std::max(config.balance1Nodes, config.balance1FastCheckNodes)
+                       - config.balance1FastCheckNodes;
+    if (options.maxNodes > 0) {
+        Threads.startThinking(board, options);
+        Threads.waitForIdle();
+    }
 
     // Check if BALANCE1 has find a move that is balanced enough
-    assert(!Search::Threads.main()->rootMoves.empty());
-    board.move(rule, Search::Threads.main()->rootMoves[0].pv[0]);
-    return std::abs(Search::Threads.main()->rootMoves[0].value) <= config.balanceWindow;
+    assert(!Threads.main()->rootMoves.empty());
+    return std::abs(Threads.main()->rootMoves[0].value) <= config.balanceWindow;
 }
 
 /// Put two moves to make a balanced opening.
 /// @return True if successfully found a balanced move pair.
 bool OpeningGenerator::putBalance2Move()
 {
+    using Search::Threads;
+
     // Setup search options
     Search::SearchOptions options;
     options.rule.rule           = rule;
@@ -425,17 +446,15 @@ bool OpeningGenerator::putBalance2Move()
     options.balanceMode         = Search::SearchOptions::BALANCE_TWO;
     options.maxNodes            = config.balance2Nodes;
 
-    Search::Threads.clear(false);
-    assert(!Search::Threads.empty());
+    Threads.clear(false);
+    assert(!Threads.empty());
 
     // Try BALANCE2 search
-    Search::Threads.startThinking(board, options);
-    Search::Threads.waitForIdle();
+    Threads.startThinking(board, options);
+    Threads.waitForIdle();
 
-    assert(!Search::Threads.main()->rootMoves.empty());
-    board.move(rule, Search::Threads.main()->rootMoves[0].pv[0]);
-    board.move(rule, Search::Threads.main()->rootMoves[0].pv[1]);
-    return std::abs(Search::Threads.main()->rootMoves[0].value) <= config.balanceWindow;
+    assert(!Threads.main()->rootMoves.empty());
+    return std::abs(Threads.main()->rootMoves[0].value) <= config.balanceWindow;
 }
 
 }  // namespace Opening
