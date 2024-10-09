@@ -30,6 +30,200 @@
 using namespace Search;
 using namespace Search::MCTS;
 
+namespace SimpleVCF {
+
+struct SearchStack
+{
+    Pattern4 moveP4[2];
+};
+
+template <Rule Rule>
+Value vcfsearch(Board &board, SearchStack *ss, int ply, Value alpha, Value beta, Depth depth)
+{
+    Color                self = board.sideToMove(), oppo = ~self;
+    SearchThread        *thisThread = board.thisThread();
+    const SearchOptions &options    = thisThread->options();
+    int                  moveCount  = 0;
+    Value                bestValue  = -VALUE_INFINITE, value;
+    Value                oldAlpha   = alpha;  // Flag BOUND_EXACT when value above alpha in PVNode
+    Pos                  bestMove   = Pos::NONE;
+    if (ply > thisThread->selDepth)
+        thisThread->selDepth = ply;
+
+    // Check if the board has been filled or we have reached the max game ply.
+    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
+        return getDrawValue(board, options, board.ply());
+
+    // Check for immediate winning
+    if (Value value = quickWinCheck(options.rule, board, board.ply()); value != VALUE_ZERO) {
+        // Do not return mate that longer than maxMoves option
+        if (mate_step(value, 0) > options.maxMoves)
+            value = getDrawValue(board, options, board.ply());
+
+        return value;
+    }
+
+    // Mate distance pruning
+    alpha = std::max(mated_in(board.ply()), alpha);
+    beta  = std::min(mate_in(board.ply() + 1), beta);
+    if (alpha >= beta)
+        return alpha;
+
+    // Step 4. Transposition table lookup
+    HashKey posKey  = board.zobristKey();
+    Value   ttValue = VALUE_NONE;
+    Value   ttEval  = VALUE_NONE;
+    bool    ttIsPv  = false;
+    Bound   ttBound = BOUND_NONE;
+    Pos     ttMove  = Pos::NONE;
+    int     ttDepth = (int)DEPTH_LOWER_BOUND;
+    bool    ttHit   = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, 0);
+
+    // Check for an early TT cutoff (for all types of nodes)
+    if (ttHit && ttDepth >= depth) {
+        if (ttBound & BOUND_LOWER)
+            alpha = std::max(alpha, ttValue);
+        if (ttBound & BOUND_UPPER)
+            beta = std::min(beta, ttValue);
+        if (alpha >= beta)
+            return ttValue;
+    }
+
+    // Stand pat for the situation that we do not find a mate
+    bestValue = VALUE_ZERO;
+    if (bestValue > alpha)
+        alpha = bestValue;
+
+    MovePicker mp(Rule,
+                  board,
+                  MovePicker::ExtraArgs<MovePicker::QVCF> {
+                      Pos::NONE,
+                      depth,
+                      {ss[ply - 2].moveP4[self], ss[ply - 4].moveP4[self]}});
+
+    while (Pos move = mp()) {
+        assert(board.isLegal(move));
+        ss[ply].moveP4[BLACK] = board.cell(move).pattern4[BLACK];
+        ss[ply].moveP4[WHITE] = board.cell(move).pattern4[WHITE];
+
+        // Make and search the move
+        board.move<Rule, Board::MoveType::NO_EVAL>(move);
+
+        // Call defence-side vcf search
+        value = -vcfdefend<Rule>(board, ss, ply + 1, -beta, -alpha, depth - 1);
+
+        board.undo<Rule, Board::MoveType::NO_EVAL>();
+
+        // Check for a new best move
+        if (value > bestValue) {
+            bestValue = value;
+
+            if (value > alpha) {
+                bestMove = move;
+
+                if (value < beta)  // Update alpha
+                    alpha = value;
+                else  // Fail high
+                    break;
+            }
+        }
+    }
+
+    // Save TT entry for this position
+    TT.store(posKey,
+             bestValue,
+             VALUE_NONE,
+             true,
+             bestValue >= beta      ? BOUND_LOWER
+             : bestValue > oldAlpha ? BOUND_EXACT
+                                    : BOUND_UPPER,
+             bestMove,
+             (int)std::max(depth, DEPTH_QVCF),
+             0);
+
+    assert(bestValue > -VALUE_INFINITE && bestValue < VALUE_INFINITE);
+    return bestValue;
+}
+
+template <Rule Rule>
+Value vcfdefend(Board &board, SearchStack *ss, int ply, Value alpha, Value beta, Depth depth)
+{
+    Color                self = board.sideToMove(), oppo = ~self;
+    SearchThread        *thisThread = board.thisThread();
+    const SearchOptions &options    = thisThread->options();
+    if (ply > thisThread->selDepth)
+        thisThread->selDepth = ply;
+
+    // Return evaluation immediately if there is no vcf threat
+    if (!board.p4Count(oppo, A_FIVE))
+        return VALUE_ZERO;
+
+    // Check if the board has been filled or we have reached the max game ply.
+    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
+        return getDrawValue(board, options, board.ply());
+
+    // Search the only defence move
+    Pos move = board.stateInfo().lastPattern4(oppo, A_FIVE);
+    assert(board.cell(move).pattern4[oppo] == A_FIVE);
+
+    Value value;
+    if (options.rule == Rule::RENJU && self == BLACK && board.checkForbiddenPoint(move)) {
+        // For renju, if black's defence move is a forbidden point, black loses in two steps.
+        value = mated_in(board.ply() + 2);
+    }
+    else {
+        ss[ply].moveP4[BLACK] = board.cell(move).pattern4[BLACK];
+        ss[ply].moveP4[WHITE] = board.cell(move).pattern4[WHITE];
+
+        board.move<Rule, Board::MoveType::NO_EVAL>(move);
+        TT.prefetch(board.zobristKey());
+
+        // Call attack-side vcf search
+        // Note that we do not reduce depth for vcf defence move.
+        value = -vcfsearch<Rule>(board, ss, ply + 1, -beta, -alpha, depth);
+
+        board.undo<Rule, Board::MoveType::NO_EVAL>();
+    }
+
+    assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
+    return value;
+}
+
+Value vcf(Rule rule, Board &board, int ply)
+{
+    Value alpha = -VALUE_EVAL_MAX;
+    Value beta  = VALUE_EVAL_MAX;
+    Depth depth = 0;
+
+    SearchStack  stack[MAX_MOVES + 4];
+    SearchStack *ss = stack - ply + 4;
+    for (int i : {1, 2, 3, 4}) {
+        ss[ply - i].moveP4[BLACK] = NONE;
+        ss[ply - i].moveP4[WHITE] = NONE;
+    }
+
+    if (board.p4Count(~board.sideToMove(), A_FIVE)) {
+        switch (rule) {
+        case FREESTYLE: return vcfdefend<FREESTYLE>(board, ss, ply, alpha, beta, depth);
+        case STANDARD: return vcfdefend<STANDARD>(board, ss, ply, alpha, beta, depth);
+        case RENJU: return vcfdefend<RENJU>(board, ss, ply, alpha, beta, depth);
+        default: break;
+        }
+    }
+    else {
+        switch (rule) {
+        case FREESTYLE: return vcfsearch<FREESTYLE>(board, ss, ply, alpha, beta, depth);
+        case STANDARD: return vcfsearch<STANDARD>(board, ss, ply, alpha, beta, depth);
+        case RENJU: return vcfsearch<RENJU>(board, ss, ply, alpha, beta, depth);
+        default: break;
+        }
+    }
+
+    return VALUE_ZERO;
+}
+
+}  // namespace SimpleVCF
+
 namespace {
 
 /// Compute the Cpuct exploration factor for the given parent node visits.
@@ -234,7 +428,7 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
 
 /// evaluate: evaluate the value of this node and make the first visit
 template <bool Root = false>
-void evaluateNode(Node &node, const SearchOptions &options, const Board &board, int ply)
+void evaluateNode(Node &node, const SearchOptions &options, Board &board, int ply)
 {
     SearchThread *thisThread = board.thisThread();
 
@@ -255,6 +449,12 @@ void evaluateNode(Node &node, const SearchOptions &options, const Board &board, 
             if (mate_step(value, 0) > options.maxMoves)
                 value = getDrawValue(board, options, board.ply());
 
+            node.setTerminal(value);
+            return;
+        }
+
+        // Search VCF
+        if (Value value = SimpleVCF::vcf(options.rule, board, ply); value != VALUE_ZERO) {
             node.setTerminal(value);
             return;
         }
@@ -645,7 +845,7 @@ MCTSSearcher::MCTSSearcher()
 
 void MCTSSearcher::setMemoryLimit(size_t memorySizeKB)
 {
-    TT.resize(1);
+    TT.resize(8192);
 }
 
 size_t MCTSSearcher::getMemoryLimit() const

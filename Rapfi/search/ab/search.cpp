@@ -1484,12 +1484,11 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     ABSearchData *searchData = thisThread->searchDataAs<ABSearchData>();
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
-    Color    self = board.sideToMove(), oppo = ~self;
-    uint16_t oppo5     = board.p4Count(oppo, A_FIVE);  // opponent five
-    int      moveCount = 0;
-    Value    bestValue = -VALUE_INFINITE, value;
-    Value    oldAlpha  = alpha;  // Flag BOUND_EXACT when value above alpha in PVNode
-    Pos      bestMove  = Pos::NONE;
+    Color self = board.sideToMove(), oppo = ~self;
+    int   moveCount = 0;
+    Value bestValue = -VALUE_INFINITE, value;
+    Value oldAlpha  = alpha;  // Flag BOUND_EXACT when value above alpha in PVNode
+    Pos   bestMove  = Pos::NONE;
 
     // Update selDepth (selDepth counts from 1, ply from 0)
     if (PvNode && thisThread->selDepth <= ss->ply)
