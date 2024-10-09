@@ -63,7 +63,7 @@ static const std::vector<BenchEntry> benchSet = {
 struct EngineState
 {
     size_t  threadNum;
-    size_t  hashSizeKB;
+    size_t  memoryLimitKB;
     bool    aspirationWindow;
     int     numIterationAfterSingularRoot;
     int     numIterationAfterMate;
@@ -75,7 +75,7 @@ EngineState saveEngineStateForBenckmark()
     EngineState state;
 
     state.threadNum                     = Search::Threads.size();
-    state.hashSizeKB                    = Search::TT.hashSizeKB();
+    state.memoryLimitKB                 = Search::Threads.searcher()->getMemoryLimit();
     state.aspirationWindow              = Config::AspirationWindow;
     state.numIterationAfterSingularRoot = Config::NumIterationAfterSingularRoot;
     state.numIterationAfterMate         = Config::NumIterationAfterMate;
@@ -87,7 +87,7 @@ EngineState saveEngineStateForBenckmark()
 void recoverEngineState(EngineState state)
 {
     Search::Threads.setNumThreads(state.threadNum);
-    Search::TT.resize(state.hashSizeKB);
+    Search::Threads.searcher()->setMemoryLimit(state.memoryLimitKB);
     Config::MessageMode                   = state.messageMode;
     Config::AspirationWindow              = state.aspirationWindow;
     Config::NumIterationAfterSingularRoot = state.numIterationAfterSingularRoot;
@@ -134,7 +134,7 @@ void Command::benchmark()
     Config::NumIterationAfterSingularRoot = 0;
     Config::NumIterationAfterMate         = 0;
     Search::Threads.setNumThreads(1);
-    Search::TT.resize(TTSizeMB * 1024);
+    Search::Threads.searcher()->setMemoryLimit(TTSizeMB * 1024);
     Search::SearchOptions options;
     options.infoMode            = Search::SearchOptions::INFO_NONE;
     options.disableOpeningQuery = true;

@@ -57,14 +57,31 @@ constexpr GenType operator|(GenType a, GenType b)
 struct ScoredMove
 {
     Pos   pos;
-    Score score;     /// Score with history and other heruistics that is used for sorting
-    Score rawScore;  /// Raw score from score table or evaluator
+    Score score;  /// Score with history and other heruistics that is used for sorting
+    union {
+        Score rawScore;  /// Raw score from score table or evaluator
+        float policy;    /// Normalized policy score from neural network
+    };
 
     operator Pos() const { return pos; }
     operator float() const = delete;  // Inhibit unwanted implicit conversions
     void operator=(Pos p) { pos = p; }
-    bool operator<(const ScoredMove &o) const { return score < o.score; }
-    bool operator>(const ScoredMove &o) const { return score > o.score; }
+
+    struct ScoreComparator
+    {
+        bool operator()(const ScoredMove &a, const ScoredMove &b) const
+        {
+            return a.score > b.score;
+        }
+    };
+
+    struct PolicyComparator
+    {
+        bool operator()(const ScoredMove &a, const ScoredMove &b) const
+        {
+            return a.policy > b.policy;
+        }
+    };
 };
 
 /// Generate moves satisfying the given GenType, and stores them

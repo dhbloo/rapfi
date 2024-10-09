@@ -51,8 +51,6 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
                                      3945,  5747,  7889,  10371, 13193, 16355, 19857, 23699,
                                      27881, 32403, 37265, 42467, 48009, 53891, 60113};
 
-static Evaluation::WeightRegistry<Mix9LiteWeight> Mix9LiteWeightRegistry;
-
 constexpr int                   Alignment = 16;
 constexpr simd::InstructionType IT256     = getInstTypeOfWidth(simd::NativeInstType, 256);
 constexpr simd::InstructionType IT128     = getInstTypeOfWidth(simd::NativeInstType, 128);
@@ -85,7 +83,7 @@ using F32Op = simd::detail::VecOp<float, Batch::Inst>;
 
 struct Mix9LiteBinaryWeightLoader : WeightLoader<Mix9LiteWeight>
 {
-    std::unique_ptr<Mix9LiteWeight> load(std::istream &in)
+    std::unique_ptr<Mix9LiteWeight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
     {
         auto w = std::make_unique<Mix9LiteWeight>();
 
@@ -183,6 +181,8 @@ struct Mix9LiteBinaryWeightLoader : WeightLoader<Mix9LiteWeight>
         simd::preprocessLinear<OutSize, InSize, Alignment, Batch<OutSize, int32_t>::Inst>(weight);
     }
 };
+
+static Evaluation::WeightRegistry<Mix9LiteBinaryWeightLoader> Mix9LiteWeightRegistry;
 
 template <int  OutSize,
           int  InSize,
@@ -862,7 +862,7 @@ Mix9LiteEvaluator::Mix9LiteEvaluator(int                   boardSize,
              std::make_pair(WHITE, whiteWeightPath),
          }) {
         currentWeightPath  = weightPath;
-        weight[weightSide] = Mix9LiteWeightRegistry.loadWeightFromFile(weightPath, loader);
+        weight[weightSide] = Mix9LiteWeightRegistry.loadWeightFromFile(loader, weightPath);
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));

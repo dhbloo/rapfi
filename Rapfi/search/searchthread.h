@@ -21,7 +21,6 @@
 #include "../database/dbclient.h"
 #include "../database/dbstorage.h"
 #include "../eval/evaluator.h"
-#include "../game/board.h"
 #include "searchcommon.h"
 #include "searcher.h"
 #include "timecontrol.h"
@@ -37,6 +36,8 @@
     #include <thread>
 #endif
 
+class Board;  // forward declaration
+
 namespace Search {
 
 class Searcher;    // forward declaration
@@ -50,23 +51,23 @@ struct SearchThread
 {
 public:
     const uint32_t id;
+    /// Launch a custom task in this thread.
+    void runTask(std::function<void(SearchThread &)> task);
+    /// Wait until threadLoop() enters idle state.
+    void waitForIdle();
 
 private:
     friend struct MainSearchThread;
     friend class ThreadPool;
-    bool searching, exit;
-
-    /// Wake up threadLoop() and start searching routine.
-    void startSearching();
-    /// Wait until threadLoop() enters idle state.
-    void waitForIdle();
+    bool running, exit;
 
 #ifdef MULTI_THREADING
-    std::thread             thread;
-    std::mutex              mutex;
-    std::condition_variable cv;
+    std::function<void(SearchThread &)> taskFunc;
+    std::thread                         thread;
+    std::mutex                          mutex;
+    std::condition_variable             cv;
 
-    void threadLoop(bool bindGroup);
+    void threadLoop();
 #endif
 
 public:
@@ -78,9 +79,8 @@ public:
     virtual ~SearchThread();
     /// Clear the thread state between two search.
     virtual void clear();
-    /// Search entry point. After entering main thread search function, all threads are
-    /// waked up by the main thread, then this function is called to start the search.
-    virtual void search();
+    /// Setup the board instance in this thread, and update the evaluator.
+    virtual void setBoardAndEvaluator(const Board &board);
     /// Return if this thread is the main thread.
     bool isMainThread() const { return id == 0; }
 
@@ -127,17 +127,17 @@ struct MainSearchThread : public SearchThread
 
     /// Clear the main thread state between two search.
     void clear() override;
-    /// Main thread search entry point. After threadpool have finished preparation,
-    /// this function is called. It is responsible for starting all other threads.
-    void search() override;
     /// Check exit condition (time/nodes) and set ThreadPool's terminate flag.
     /// @return True if we should stop the search now.
-    void checkExit();
+    void checkExit(uint32_t elapsedCalls = 1);
     /// Mark pondering available for the last finished searching.
     void markPonderingAvailable();
-    /// Start all non-main search threads. This function should be called in
-    /// main thread to start searching routine in all other worker threads.
-    void startOtherThreads();
+    /// Start the searching function of all threads (including main thread itself).
+    /// This function will block until the main thread finishs its search, then it
+    /// will set terminating to true and wait for all other threads to finish.
+    void startSearchingAndWait();
+    /// Start a custom task with all threads and wait for them to finish.
+    void runCustomTaskAndWait(std::function<void(SearchThread &)> task);
 
     /// Current search options
     SearchOptions  searchOptions;
@@ -201,8 +201,6 @@ public:
     void setupDatabase(std::unique_ptr<Database::DBStorage> dbStorage);
     /// Setup evaluator maker for future evaluator creation.
     void setupEvaluator(std::function<EvaluatorMaker> evaluatorMaker);
-    /// Update evaluator to current board and rule in all threads.
-    void updateEvaluator(const Board &board, bool enabled = true);
     /// Start multi-threaded thinking for the given position.
     /// @param board The position to start searching.
     /// @param options Options of this search.

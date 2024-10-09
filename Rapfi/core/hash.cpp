@@ -27,7 +27,6 @@ namespace Hash {
 /// Global zobrist table that will be inititalized at startup.
 HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
 HashKey zobristSide[SIDE_NB];
-HashKey zobristPass[SIDE_NB][MAX_MOVES];
 
 /// Init zobrish table using PRNG with the given seed.
 /// @param seed Seed of PRNG.

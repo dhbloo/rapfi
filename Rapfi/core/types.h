@@ -206,18 +206,18 @@ constexpr int mate_step(Value v, int ply)
 
 constexpr int searchValueToStoredValue(Value value, int searchPly)
 {
-    return value == VALUE_NONE              ? VALUE_NONE
-           : value > VALUE_MATE_IN_MAX_PLY  ? value + searchPly
-           : value < VALUE_MATED_IN_MAX_PLY ? value - searchPly
-                                            : value;
+    return value == VALUE_NONE               ? VALUE_NONE
+           : value >= VALUE_MATE_IN_MAX_PLY  ? value + searchPly
+           : value <= VALUE_MATED_IN_MAX_PLY ? value - searchPly
+                                             : value;
 }
 
 constexpr Value storedValueToSearchValue(int storedValue, int searchPly)
 {
-    return storedValue == VALUE_NONE              ? VALUE_NONE
-           : storedValue > VALUE_MATE_IN_MAX_PLY  ? Value(storedValue - searchPly)
-           : storedValue < VALUE_MATED_IN_MAX_PLY ? Value(storedValue + searchPly)
-                                                  : Value(storedValue);
+    return storedValue == VALUE_NONE               ? VALUE_NONE
+           : storedValue >= VALUE_MATE_IN_MAX_PLY  ? Value(storedValue - searchPly)
+           : storedValue <= VALUE_MATED_IN_MAX_PLY ? Value(storedValue + searchPly)
+                                                   : Value(storedValue);
 }
 
 // -------------------------------------------------

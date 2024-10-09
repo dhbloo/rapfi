@@ -197,6 +197,13 @@ class Compressor::CompressorData
         std::string                                    entryName;
         std::function<void(StreamType &, std::string)> finialize;
 
+        CStream(std::unique_ptr<StreamType>                    stream,
+                std::string                                    entryName,
+                std::function<void(StreamType &, std::string)> finialize = nullptr)
+            : stream(std::move(stream))
+            , entryName(entryName)
+            , finialize(finialize)
+        {}
         CStream(CStream &&)            = default;
         CStream &operator=(CStream &&) = default;
         ~CStream()
@@ -285,22 +292,23 @@ std::ostream *Compressor::openOutputStream(std::string entryName)
                                                    0u,
                                                    0u,
                                                    {0u, 0u, 0u}};
-        data->openedOutputStreams.push_back(
-            {std::make_unique<lz4_stream::ostream>(*data->ostreamSink, LZ4Perf), entryName});
+        data->openedOutputStreams.emplace_back(
+            std::make_unique<lz4_stream::ostream>(*data->ostreamSink, LZ4Perf),
+            entryName);
     } break;
     case Type::ZIP_DEFAULT:
 #ifdef WITH_ZIP
-        data->openedOutputStreams.push_back(
-            {std::make_unique<std::stringstream>(),
-             entryName,
-             [zip = data->zip](std::ostream &os, std::string entryName) {
-                 assert(zip);
-                 std::stringstream &ss = static_cast<std::stringstream &>(os);
-                 std::string        buffer(std::istreambuf_iterator<char>(ss), {});
-                 zip_entry_open(zip, entryName.c_str());
-                 zip_entry_write(zip, buffer.c_str(), buffer.size());
-                 zip_entry_close(zip);
-             }});
+        data->openedOutputStreams.emplace_back(
+            std::make_unique<std::stringstream>(),
+            entryName,
+            [zip = data->zip](std::ostream &os, std::string entryName) {
+                assert(zip);
+                std::stringstream &ss = static_cast<std::stringstream &>(os);
+                std::string        buffer(std::istreambuf_iterator<char>(ss), {});
+                zip_entry_open(zip, entryName.c_str());
+                zip_entry_write(zip, buffer.c_str(), buffer.size());
+                zip_entry_close(zip);
+            });
         break;
 #else
         throw "Zip is not enabled in this build";
@@ -323,8 +331,9 @@ std::istream *Compressor::openInputStream(std::string entryName)
     switch (data->type) {
     case Type::LZ4_DEFAULT: {
         assert(entryName == "");
-        data->openedInputStreams.push_back(
-            {std::make_unique<lz4_stream::istream>(*data->istreamSink), entryName});
+        data->openedInputStreams.emplace_back(
+            std::make_unique<lz4_stream::istream>(*data->istreamSink),
+            entryName);
     } break;
     case Type::ZIP_DEFAULT:
 #ifdef WITH_ZIP
@@ -341,7 +350,7 @@ std::istream *Compressor::openInputStream(std::string entryName)
         ss->write(outbuf, outbufSize);
         free(outbuf);
 
-        data->openedInputStreams.push_back({std::move(ss), entryName});
+        data->openedInputStreams.emplace_back(std::move(ss), entryName);
     } break;
 #else
         throw "Zip is not enabled in this build";

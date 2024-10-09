@@ -31,7 +31,7 @@
 ///     or smaller than VALUE_MATE/-VALUE_MATE is returned, which also contains
 ///     the number of plies to end the game.
 template <Rule Rule>
-Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
+inline Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
 {
     Color self = board.sideToMove(), oppo = ~self;
 
@@ -102,4 +102,15 @@ Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFINITE)
     }
 
     return VALUE_ZERO;
+}
+
+inline Value
+quickWinCheck(Rule rule, const Board &board, int ply, Value beta = VALUE_MATE_IN_MAX_PLY)
+{
+    switch (rule) {
+    default:
+    case FREESTYLE: return quickWinCheck<FREESTYLE>(board, ply, beta);
+    case STANDARD: return quickWinCheck<STANDARD>(board, ply, beta);
+    case RENJU: return quickWinCheck<RENJU>(board, ply, beta);
+    }
 }

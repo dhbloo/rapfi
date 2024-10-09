@@ -108,19 +108,8 @@ Value evaluate(const Board &board, Value alpha, Value beta)
     if (board.evaluator()) {
         // Use evaluator eval if classical eval are in alpha-beta window margin
         int margin = classicalEvalMargin(eval);
-        if (eval >= alpha - margin && eval <= beta + margin) {
-            ValueType v = board.evaluator()->evaluateValue(board);
-
-            // Adjust draw rate according to draw ratio and draw black win rate
-            if (Config::EvaluatorDrawRatio < 1.0) {
-                float newDrawRate = Config::EvaluatorDrawRatio * v.draw();
-                float drawWinRate = Config::EvaluatorDrawBlackWinRate;
-                drawWinRate       = self == BLACK ? drawWinRate : 1.0f - drawWinRate;
-                v                 = v.valueOfDrawWinRate(drawWinRate, newDrawRate);
-            }
-
-            return v.value();
-        }
+        if (eval >= alpha - margin && eval <= beta + margin)
+            return computeEvaluatorValue(board).value();
     }
 
     return eval;
@@ -159,6 +148,22 @@ Value evaluate(const Board &board, Rule rule)
 
         return std::clamp(eval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
     }
+}
+
+ValueType computeEvaluatorValue(const Board &board)
+{
+    Color     self = board.sideToMove();
+    ValueType v    = board.evaluator()->evaluateValue(board);
+
+    // Adjust draw rate according to draw ratio and draw black win rate
+    if (Config::EvaluatorDrawRatio < 1.0) {
+        float newDrawRate = Config::EvaluatorDrawRatio * v.draw();
+        float drawWinRate = Config::EvaluatorDrawBlackWinRate;
+        drawWinRate       = self == BLACK ? drawWinRate : 1.0f - drawWinRate;
+        v                 = v.valueOfDrawWinRate(drawWinRate, newDrawRate);
+    }
+
+    return v;
 }
 
 /// Trace all evaluation info from a board state with rule.

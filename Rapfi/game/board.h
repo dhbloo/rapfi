@@ -267,11 +267,11 @@ public:
     /// Fetch the current board hash key.
     HashKey zobristKey() const { return currentZobristKey ^ Hash::zobristSide[currentSide]; }
 
-    /// Fetch the next board hash key after a move of pos.
+    /// Compute the board hash key after a move, without actually making the move.
     HashKey zobristKeyAfter(Pos pos) const
     {
         return currentZobristKey ^ Hash::zobristSide[~currentSide]
-               ^ Hash::zobrist[currentSide][pos];
+               ^ (pos != Pos::PASS ? Hash::zobrist[currentSide][pos] : HashKey {});
     }
 
     /// Get the current pattern4 accumulate counter for one side.

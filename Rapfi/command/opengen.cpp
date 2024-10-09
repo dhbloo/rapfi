@@ -117,7 +117,7 @@ void Command::opengen(int argc, char *argv[])
         rule           = parseRule(args["rule"].as<std::string>());
         numThreads     = std::max<size_t>(args["thread"].as<size_t>(), 1);
         boardsize      = args["boardsize"].as<int>();
-        hashSizeMb     = args["hashsize"].as<size_t>();
+        hashSizeMb     = std::max<size_t>(args["hashsize"].as<size_t>(), 1);
         reportInterval = args["report-interval"].as<Time>();
         silence        = args.count("no-search-message");
         cfg            = parseOpengenConfig(args);
@@ -141,7 +141,7 @@ void Command::opengen(int argc, char *argv[])
     Config::NumIterationAfterSingularRoot = 64;
 
     // Start generating openings and write position strings to output stream
-    Search::TT.resize(hashSizeMb * 1024);
+    Search::Threads.searcher()->setMemoryLimit(hashSizeMb * 1024);
     Search::Threads.setNumThreads(numThreads);
     Search::Threads.clear(false);
 

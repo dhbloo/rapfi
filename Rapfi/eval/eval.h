@@ -29,6 +29,9 @@ template <Rule R>
 Value evaluate(const Board &board, Value alpha = -VALUE_INFINITE, Value beta = VALUE_INFINITE);
 Value evaluate(const Board &board, Rule rule);
 
+class ValueType;
+ValueType computeEvaluatorValue(const Board &board);
+
 /// EvalInfo struct contains all information needed to evaluate a position.
 struct EvalInfo
 {

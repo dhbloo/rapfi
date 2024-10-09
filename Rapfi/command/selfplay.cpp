@@ -255,7 +255,7 @@ void Command::selfplay(int argc, char *argv[])
         numGames          = args["number"].as<size_t>();
         rule              = parseRule(args["rule"].as<std::string>());
         numThreads        = std::max<size_t>(args["thread"].as<size_t>(), 1);
-        hashSizeMb        = args["hashsize"].as<size_t>();
+        hashSizeMb        = std::max<size_t>(args["hashsize"].as<size_t>(), 1);
         multipv           = std::max(args["multipv"].as<int>(), 1);
         multipvDecaySteps = std::max(args["multipv-decay-steps"].as<int>(), 0);
         noMateMultiPV     = args.count("no-multipv-after-mate");
@@ -346,7 +346,7 @@ void Command::selfplay(int argc, char *argv[])
 
     // Set num threads and TT size
     Search::Threads.setNumThreads(numThreads);
-    Search::TT.resize(hashSizeMb * 1024);
+    Search::Threads.searcher()->setMemoryLimit(hashSizeMb * 1024);
 
     PRNG                               prng {};
     std::uniform_int_distribution<int> boardSizeDis(boardSizeMin, boardSizeMax);

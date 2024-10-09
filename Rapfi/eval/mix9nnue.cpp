@@ -51,11 +51,9 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
                                      3945,  5747,  7889,  10371, 13193, 16355, 19857, 23699,
                                      27881, 32403, 37265, 42467, 48009, 53891, 60113};
 
-static Evaluation::WeightRegistry<Mix9Weight> Mix9WeightRegistry;
-
 struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
 {
-    std::unique_ptr<Mix9Weight> load(std::istream &in)
+    std::unique_ptr<Mix9Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
     {
         auto w = std::make_unique<Mix9Weight>();
 
@@ -149,6 +147,8 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         simd::preprocessLinear<OutSize, OutSize>(b.value_corner_down_weight);
     }
 };
+
+static Evaluation::WeightRegistry<Mix9BinaryWeightLoader> Mix9WeightRegistry;
 
 constexpr int                   Alignment = simd::NativeAlignment;
 constexpr simd::InstructionType IT        = simd::NativeInstType;
@@ -847,7 +847,7 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
              std::make_pair(WHITE, whiteWeightPath),
          }) {
         currentWeightPath  = weightPath;
-        weight[weightSide] = Mix9WeightRegistry.loadWeightFromFile(weightPath, loader);
+        weight[weightSide] = Mix9WeightRegistry.loadWeightFromFile(loader, weightPath);
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));

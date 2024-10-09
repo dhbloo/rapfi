@@ -51,40 +51,41 @@ void HashTable::resize(size_t hashSizeKB)
     size_t newNumBuckets = hashSizeKB * (1024 / sizeof(Bucket));
     newNumBuckets        = std::max<size_t>(newNumBuckets, 1);
 
-    if (newNumBuckets != numBuckets) {
-        numBuckets = newNumBuckets;
+    if (newNumBuckets == numBuckets)
+        return;
 
-        if (table) {
-            Threads.waitForIdle();
-            MemAlloc::alignedLargePageFree(table);
-            table = nullptr;
-        }
+    numBuckets = newNumBuckets;
 
-        size_t tryNumBuckets = numBuckets;
-        while (tryNumBuckets) {
-            size_t allocSize = sizeof(Bucket) * tryNumBuckets;
-            table            = static_cast<Bucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
-
-            if (!table)
-                tryNumBuckets /= 2;
-            else
-                break;
-        }
-
-        if (tryNumBuckets != numBuckets) {
-            numBuckets = tryNumBuckets;
-            ERRORL("Failed to allocate " << hashSizeKB << " KB for transposition table.");
-
-            // Exit program if failed to allocate 1 cluster
-            if (!numBuckets)
-                std::exit(EXIT_FAILURE);
-
-            MESSAGEL("Allocated " << (numBuckets * sizeof(Bucket) >> 10)
-                                  << " KB for transposition table.");
-        }
-
-        clear();
+    if (table) {
+        Threads.waitForIdle();
+        MemAlloc::alignedLargePageFree(table);
+        table = nullptr;
     }
+
+    size_t tryNumBuckets = numBuckets;
+    while (tryNumBuckets) {
+        size_t allocSize = sizeof(Bucket) * tryNumBuckets;
+        table            = static_cast<Bucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
+
+        if (!table)
+            tryNumBuckets /= 2;
+        else
+            break;
+    }
+
+    if (tryNumBuckets != numBuckets) {
+        numBuckets = tryNumBuckets;
+        ERRORL("Failed to allocate " << hashSizeKB << " KB for transposition table.");
+
+        // Exit program if failed to allocate 1 cluster
+        if (!numBuckets)
+            std::exit(EXIT_FAILURE);
+
+        MESSAGEL("Allocated " << (numBuckets * sizeof(Bucket) >> 10)
+                              << " KB for transposition table.");
+    }
+
+    clear();
 }
 
 void HashTable::clear()
