@@ -18,33 +18,58 @@
 
 #pragma once
 
+#include "../../config.h"
+#include "../../tuning/tunemap.h"
+
 #include <cstdint>
 
 namespace Search::MCTS {
 
-constexpr float MaxNewVisitsProp = 0.275f;
+inline float MaxNewVisitsProp = 0.275f;
+TUNE(MaxNewVisitsProp);
 
-constexpr float CpuctExploration     = 0.40f;
-constexpr float CpuctExplorationLog  = 0.75f;
-constexpr float CpuctExplorationBase = 336;
-constexpr float CpuctParentVisitBias = 0.1f;
+inline float CpuctExploration     = 0.40f;
+inline float CpuctExplorationLog  = 0.75f;
+inline float CpuctExplorationBase = 336;
+inline float CpuctParentVisitBias = 0.1f;
+TUNE(CpuctExploration);
+TUNE(CpuctExplorationLog);
+TUNE(CpuctExplorationBase);
+TUNE(CpuctParentVisitBias);
 
-constexpr float CpuctUtilityStdevScale     = 0.035f;
-constexpr float CpuctUtilityVarPrior       = 0.18f;
-constexpr float CpuctUtilityVarPriorWeight = 2.14f;
+inline float CpuctUtilityStdevScale     = 0.035f;
+inline float CpuctUtilityVarPrior       = 0.18f;
+inline float CpuctUtilityVarPriorWeight = 2.14f;
+TUNE(CpuctUtilityStdevScale, 0.0f, 0.25f);
+TUNE(CpuctUtilityVarPrior);
+TUNE(CpuctUtilityVarPriorWeight);
 
-constexpr float FpuReductionMax     = 0.075f;
-constexpr float FpuLossProp         = 0.001f;
-constexpr float RootFpuReductionMax = 0.075f;
-constexpr float RootFpuLossProp     = 0.0036f;
-constexpr float FpuUtilityBlendPow  = 1.73f;
+inline float FpuReductionMax     = 0.075f;
+inline float FpuLossProp         = 0.001f;
+inline float RootFpuReductionMax = 0.075f;
+inline float RootFpuLossProp     = 0.0036f;
+inline float FpuUtilityBlendPow  = 1.73f;
+TUNE(FpuReductionMax);
+TUNE(FpuLossProp, 0.0f, 0.01f);
+TUNE(RootFpuReductionMax);
+TUNE(RootFpuLossProp, 0.0f, 0.01f);
+TUNE(FpuUtilityBlendPow);
 
-constexpr uint32_t MinTranspositionSkipVisits = 12;
+inline uint32_t MinTranspositionSkipVisits = 12;
+TUNE(MinTranspositionSkipVisits);
 
-constexpr bool  UseLCBForBestmoveSelection = true;
-constexpr float LCBStdevs                  = 5.0f;
-constexpr float LCBMinVisitProp            = 0.12f;
+inline bool  UseLCBForBestmoveSelection = true;
+inline float LCBStdevs                  = 5.0f;
+inline float LCBMinVisitProp            = 0.12f;
 
-constexpr float PolicyTemperature = 1.0f;
+TUNE(LCBStdevs);
+TUNE(LCBMinVisitProp);
+
+inline float RootPolicyTemperature = 1.0f;
+inline float PolicyTemperature     = 1.0f;
+TUNE(RootPolicyTemperature, 0.5f, 1.5f);
+TUNE(PolicyTemperature, 0.5f, 1.5f);
+
+TUNE(Config::MaxNumVisitsPerPlayout, 1, 256);
 
 }  // namespace Search::MCTS
