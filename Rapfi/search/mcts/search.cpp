@@ -393,7 +393,7 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
                       board,
                       MovePicker::ExtraArgs<MovePicker::ROOT> {
                           true,
-                          PolicyTemperature,
+                          RootPolicyTemperature,
                       });
         bool       noValidMove = node.createEdges(mp);
         assert(!node.isLeaf());
