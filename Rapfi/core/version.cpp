@@ -21,8 +21,8 @@
 #include <sstream>
 
 #define RAPFI_MAJOR_VER    0
-#define RAPFI_MINOR_VER    41
-#define RAPFI_REVISION_VER 02
+#define RAPFI_MINOR_VER    42
+#define RAPFI_REVISION_VER 01
 
 #define MACRO_STR(s)         #s
 #define VERSION_STR(a, b, c) MACRO_STR(a) "." MACRO_STR(b) "." MACRO_STR(c)
