@@ -120,13 +120,14 @@ extern int  NumIterationAfterMate;
 extern int  NumIterationAfterSingularRoot;
 extern int  MaxSearchDepth;
 
-extern bool ExpandWhenFirstEvaluate;
-extern int  MaxNumVisitsPerPlayout;
-extern int  NodesToPrintMCTSRootmoves;
-extern int  TimeToPrintMCTSRootmoves;
-extern int  MaxNonPVRootmovesToPrint;
-extern int  NumNodesAfterSingularRoot;
-extern int  NumNodeTableShardsPowerOfTwo;
+extern bool  ExpandWhenFirstEvaluate;
+extern int   MaxNumVisitsPerPlayout;
+extern int   NodesToPrintMCTSRootmoves;
+extern int   TimeToPrintMCTSRootmoves;
+extern int   MaxNonPVRootmovesToPrint;
+extern int   NumNodesAfterSingularRoot;
+extern int   NumNodeTableShardsPowerOfTwo;
+extern float DrawUtilityPenalty;
 
 // -------------------------------------------------
 // Time management options
