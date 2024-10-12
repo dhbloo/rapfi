@@ -268,7 +268,8 @@ inline float puctSelectionValue(float    childUtility,
     float Q = childUtility;
 
     if (Config::DrawUtilityPenalty != 0)
-        Q -= Config::DrawUtilityPenalty * childDraw * (1 - parentDraw);
+        Q -= Config::DrawUtilityPenalty * ::pow(childDraw, ChildDrawPow)
+             * ::pow(1 - parentDraw, ParentDrawPow);
 
     // Account for virtual losses
     if (childVirtualVisits > 0)

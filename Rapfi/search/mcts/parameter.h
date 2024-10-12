@@ -18,33 +18,56 @@
 
 #pragma once
 
+#include "../../config.h"
+#include "../../tuning/tunemap.h"
+
 #include <cstdint>
 
 namespace Search::MCTS {
 
-constexpr float MaxNewVisitsProp = 0.36f;
+inline float MaxNewVisitsProp = 0.36f;
+TUNE(MaxNewVisitsProp);
 
-constexpr float CpuctExploration     = 0.39f;
-constexpr float CpuctExplorationLog  = 0.98f;
-constexpr float CpuctExplorationBase = 340;
+inline float CpuctExploration     = 0.39f;
+inline float CpuctExplorationLog  = 0.98f;
+inline float CpuctExplorationBase = 340;
+TUNE(CpuctExploration);
+TUNE(CpuctExplorationLog);
+TUNE(CpuctExplorationBase);
 
-constexpr float CpuctUtilityStdevScale     = 0.043f;
-constexpr float CpuctUtilityVarPrior       = 0.16f;
-constexpr float CpuctUtilityVarPriorWeight = 1.87f;
+inline float CpuctUtilityStdevScale     = 0.043f;
+inline float CpuctUtilityVarPrior       = 0.16f;
+inline float CpuctUtilityVarPriorWeight = 1.87f;
+TUNE(CpuctUtilityStdevScale);
+TUNE(CpuctUtilityVarPrior);
+TUNE(CpuctUtilityVarPriorWeight);
 
-constexpr float FpuReductionMax     = 0.06f;
-constexpr float FpuLossProp         = 0.0008f;
-constexpr float RootFpuReductionMax = 0.073f;
-constexpr float RootFpuLossProp     = 0.0036f;
-constexpr float FpuUtilityBlendPow  = 0.84f;
+inline float FpuReductionMax     = 0.06f;
+inline float FpuLossProp         = 0.0008f;
+inline float RootFpuReductionMax = 0.073f;
+inline float RootFpuLossProp     = 0.0036f;
+inline float FpuUtilityBlendPow  = 0.84f;
+TUNE(FpuReductionMax);
+TUNE(FpuLossProp);
+TUNE(RootFpuReductionMax);
+TUNE(RootFpuLossProp);
+TUNE(FpuUtilityBlendPow);
 
-constexpr uint32_t MinTranspositionSkipVisits = 11;
+inline uint32_t MinTranspositionSkipVisits = 11;
 
-constexpr bool  UseLCBForBestmoveSelection = true;
-constexpr float LCBStdevs                  = 6.28f;
-constexpr float LCBMinVisitProp            = 0.1f;
+inline bool  UseLCBForBestmoveSelection = true;
+inline float LCBStdevs                  = 6.28f;
+inline float LCBMinVisitProp            = 0.1f;
 
-constexpr float PolicyTemperature     = 0.91f;
-constexpr float RootPolicyTemperature = 1.05f;
+inline float PolicyTemperature     = 0.91f;
+inline float RootPolicyTemperature = 1.05f;
+TUNE(RootPolicyTemperature, 0.7f, 1.1f);
+TUNE(PolicyTemperature, 0.7f, 1.3f);
+
+inline float ChildDrawPow  = 1.0f;
+inline float ParentDrawPow = 1.0f;
+TUNE(ChildDrawPow);
+TUNE(ParentDrawPow);
+TUNE(Config::DrawUtilityPenalty, 0.0f, 1.0f);
 
 }  // namespace Search::MCTS
