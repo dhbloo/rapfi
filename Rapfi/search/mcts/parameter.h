@@ -24,19 +24,19 @@ namespace Search::MCTS {
 
 constexpr float MaxNewVisitsProp = 0.36f;
 
-constexpr float CpuctExploration     = 0.39f;
-constexpr float CpuctExplorationLog  = 0.98f;
-constexpr float CpuctExplorationBase = 340;
+constexpr float CpuctExploration     = 0.35f;
+constexpr float CpuctExplorationLog  = 1.02f;
+constexpr float CpuctExplorationBase = 328;
 
-constexpr float CpuctUtilityStdevScale     = 0.043f;
-constexpr float CpuctUtilityVarPrior       = 0.16f;
-constexpr float CpuctUtilityVarPriorWeight = 1.87f;
+constexpr float CpuctUtilityStdevScale     = 0.05f;
+constexpr float CpuctUtilityVarPrior       = 0.15f;
+constexpr float CpuctUtilityVarPriorWeight = 1.80f;
 
-constexpr float FpuReductionMax     = 0.06f;
+constexpr float FpuReductionMax     = 0.055f;
 constexpr float FpuLossProp         = 0.0008f;
-constexpr float RootFpuReductionMax = 0.073f;
-constexpr float RootFpuLossProp     = 0.0036f;
-constexpr float FpuUtilityBlendPow  = 0.84f;
+constexpr float RootFpuReductionMax = 0.07f;
+constexpr float RootFpuLossProp     = 0.003f;
+constexpr float FpuUtilityBlendPow  = 0.75f;
 
 constexpr uint32_t MinTranspositionSkipVisits = 11;
 
@@ -44,7 +44,7 @@ constexpr bool  UseLCBForBestmoveSelection = true;
 constexpr float LCBStdevs                  = 6.28f;
 constexpr float LCBMinVisitProp            = 0.1f;
 
-constexpr float PolicyTemperature     = 0.91f;
+constexpr float PolicyTemperature     = 0.90f;
 constexpr float RootPolicyTemperature = 1.05f;
 
 }  // namespace Search::MCTS

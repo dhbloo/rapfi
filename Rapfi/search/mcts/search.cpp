@@ -257,6 +257,8 @@ inline float fpuValue(float parentAvgUtility, float parentRawUtility, float expl
 
 /// Compute PUCT selection value with the given child statistics.
 inline float puctSelectionValue(float    childUtility,
+                                float    childDraw,
+                                float    parentDraw,
                                 float    childPolicy,
                                 uint32_t childVisits,
                                 uint32_t childVirtualVisits,
@@ -264,6 +266,11 @@ inline float puctSelectionValue(float    childUtility,
 {
     float U = cpuctExploration * childPolicy / (1 + childVisits);
     float Q = childUtility;
+
+    // Reduce utility value for drawish child nodes for PUCT selection
+    // Encourage exploration for less drawish child nodes
+    if (Config::DrawUtilityPenalty != 0)
+        Q -= Config::DrawUtilityPenalty * childDraw * (1 - parentDraw);
 
     // Account for virtual losses
     if (childVirtualVisits > 0)
@@ -302,6 +309,7 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
     SearchThread *thisThread = board.thisThread();
 
     uint32_t parentVisits     = node.getVisits();
+    float    parentDraw       = node.getD();
     float    cpuctExploration = cpuctExplorationFactor(parentVisits);
 
     // Apply dynamic cpuct scaling based on parent utility variance if needed
@@ -346,7 +354,10 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
         uint32_t childVisits        = childEdge.getVisits();
         uint32_t childVirtualVisits = childNode->getVirtualVisits();
         float    childUtility       = -childNode->getQ();
+        float    childDraw          = childNode->getD();
         float    selectionValue     = puctSelectionValue(childUtility,
+                                                  childDraw,
+                                                  parentDraw,
                                                   childPolicy,
                                                   childVisits,
                                                   childVirtualVisits,
@@ -368,6 +379,8 @@ std::pair<Edge *, Node *> selectChild(Node &node, const Board &board)
         uint32_t childVisits        = 0;  // Unexplored edge must has zero edge visit
         uint32_t childVirtualVisits = 0;  // Unexplored edge must has zero virtual visit
         float    selectionValue     = puctSelectionValue(fpuUtility,
+                                                  parentDraw,
+                                                  parentDraw,
                                                   childPolicy,
                                                   childVisits,
                                                   childVirtualVisits,

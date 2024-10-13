@@ -129,6 +129,8 @@ int MaxNonPVRootmovesToPrint = 10;
 int NumNodesAfterSingularRoot = 100;
 /// The power of two number of shards that the node table has.
 int NumNodeTableShardsPowerOfTwo = 10;
+/// The ratio to decrase utility when child draw rate is high.
+float DrawUtilityPenalty = 0.35f;
 
 // Time management options
 
@@ -430,6 +432,7 @@ void Config::readSearch(const cpptoml::table &t)
         t.get_as<int>("num_nodes_after_singular_root").value_or(NumNodesAfterSingularRoot);
     NumNodeTableShardsPowerOfTwo =
         t.get_as<int>("num_node_table_shards_power_of_two").value_or(NumNodeTableShardsPowerOfTwo);
+    DrawUtilityPenalty = t.get_as<double>("draw_utility_penalty").value_or(DrawUtilityPenalty);
 
     // Read time management options
     if (auto tm = t.get_table("timectl")) {
