@@ -129,6 +129,14 @@ void SearchThread::clear()
     balance2Moves.clear();
     numNodes = 0;
     selDepth = 0;
+
+    // Setup dbClient for each thread
+    if (threads.dbStorage() && (!dbClient || &dbClient->getStorage() != threads.dbStorage())) {
+        dbClient = std::make_unique<Database::DBClient>(*threads.dbStorage(),
+                                                        Database::RECORD_MASK_LVDB,
+                                                        Config::DatabaseCacheSize,
+                                                        Config::DatabaseRecordCacheSize);
+    }
 }
 
 void MainSearchThread::clear()
@@ -307,18 +315,8 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
     assert(searcher());
 
     // Clear and init all threads state
-    for (size_t i = 1; i < size(); i++) {
-        (*this)[i]->runTask([this](SearchThread &th) {
-            th.clear();
-
-            // Create dbClient for each thread
-            if (dbStorage() && !th.dbClient)
-                th.dbClient = std::make_unique<Database::DBClient>(*dbStorage(),
-                                                                   Database::RECORD_MASK_LVDB,
-                                                                   Config::DatabaseCacheSize,
-                                                                   Config::DatabaseRecordCacheSize);
-        });
-    }
+    for (size_t i = 1; i < size(); i++)
+        (*this)[i]->runTask([this](SearchThread &th) { th.clear(); });
 
     main()->clear();
     main()->inPonder      = inPonder;

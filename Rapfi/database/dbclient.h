@@ -81,6 +81,9 @@ public:
     /// This will can sync() before destroying current database instance.
     ~DBClient();
 
+    /// Returns the underlying database storage instance.
+    DBStorage &getStorage() const { return storage; }
+
     /// Query db record of the current position.
     /// @return Whether current position exists in the database.
     bool query(const Board &board, Rule rule, DBRecord &record);

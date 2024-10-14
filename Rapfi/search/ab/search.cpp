@@ -758,34 +758,37 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
                 dbLabelBound = BOUND_EXACT;
                 goto try_database_cut;
             default:  // Read depth, bound, value
-            try_database_cut:
-                if (!RootNode) {
-                    int  dbDepth = dbRecord.depth() + Config::DatabaseQueryResultDepthBoundBias;
-                    bool dbCut =
-                        dbDepth > depth
-                        && (dbValue >= beta ? (dbBound & BOUND_LOWER) : (dbBound & BOUND_UPPER));
-                    if (!PvNode && dbCut
-                        || dbLabelBound == BOUND_LOWER && dbValue >= beta   // Win-score-cut
-                        || dbLabelBound == BOUND_UPPER && dbValue <= alpha  // Loss-score-cut
-                        || dbLabelBound == BOUND_EXACT                      // Draw-score-cut
-                    ) {
-                        TT.store(posKey,
-                                 dbValue,
-                                 ss->staticEval,
-                                 ss->ttPv,
-                                 dbBound,
-                                 Pos::NONE,
-                                 dbLabelBound == BOUND_EXACT
-                                     ? (int)DEPTH_UPPER_BOUND
-                                     : std::min(dbDepth, (int)DEPTH_UPPER_BOUND),
-                                 ss->ply);
-                        return dbValue;
-                    }
+                goto try_database_cut;
 
-                    // Expand search window for database cut in PvNode
-                    if (PvNode && (dbCut || dbLabelBound != BOUND_NONE))
-                        alpha = -VALUE_INFINITE, beta = VALUE_INFINITE;
+            try_database_cut:
+                if (RootNode)
+                    break;
+
+                int  dbDepth = dbRecord.depth() + Config::DatabaseQueryResultDepthBoundBias;
+                bool dbCut =
+                    dbDepth > depth
+                    && (dbValue >= beta ? (dbBound & BOUND_LOWER) : (dbBound & BOUND_UPPER));
+                if (!PvNode && dbCut
+                    || dbLabelBound == BOUND_LOWER && dbValue >= beta   // Win-score-cut
+                    || dbLabelBound == BOUND_UPPER && dbValue <= alpha  // Loss-score-cut
+                    || dbLabelBound == BOUND_EXACT                      // Draw-score-cut
+                ) {
+                    TT.store(posKey,
+                             dbValue,
+                             ss->staticEval,
+                             ss->ttPv,
+                             dbBound,
+                             Pos::NONE,
+                             dbLabelBound == BOUND_EXACT
+                                 ? (int)DEPTH_UPPER_BOUND
+                                 : std::min(dbDepth, (int)DEPTH_UPPER_BOUND),
+                             ss->ply);
+                    return dbValue;
                 }
+
+                // Expand search window for database cut in PvNode
+                if (PvNode && (dbCut || dbLabelBound != BOUND_NONE))
+                    alpha = -VALUE_INFINITE, beta = VALUE_INFINITE;
             }
         }
     }
