@@ -47,6 +47,8 @@ Pos inputCoordConvert(int x, int y, int boardsize);
 int outputCoordXConvert(Pos pos, int boardsize);
 int outputCoordYConvert(Pos pos, int boardsize);
 
+Pos parseCoord(std::string coordStr);
+
 // -------------------------------------------------
 // Formatters
 

@@ -550,10 +550,8 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
 
             *last++ = b4Pos;
 
-            for (int d = 0; d < 4; d++) {
-                if (d != dir)
-                    last = findAllB3CounterDefence(b4Pos, d, last);
-            }
+            for (int d = 0; d < 4; d++)
+                last = findAllB3CounterDefence(b4Pos, d, last);
         }
     }
 

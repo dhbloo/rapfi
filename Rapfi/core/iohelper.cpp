@@ -81,6 +81,18 @@ int outputCoordYConvert(Pos pos, int boardsize)
         return pos.y();
 }
 
+Pos parseCoord(std::string coordStr)
+{
+    if (coordStr == "Pass" || coordStr == "pass")
+        return Pos::PASS;
+    if (coordStr == "None" || coordStr == "none")
+        return Pos::NONE;
+
+    int x = std::toupper(coordStr[0]) - 'A';
+    int y = std::atoi(coordStr.data() + 1) - '1';
+    return Pos(x, y);
+}
+
 // -------------------------------------------------
 
 std::ostream &operator<<(std::ostream &out, Pos pos)

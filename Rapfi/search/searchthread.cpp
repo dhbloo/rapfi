@@ -314,10 +314,6 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
     assert(size() > 0);
     assert(searcher());
 
-    // Clear and init all threads state
-    for (size_t i = 1; i < size(); i++)
-        (*this)[i]->runTask([this](SearchThread &th) { th.clear(); });
-
     main()->clear();
     main()->inPonder      = inPonder;
     main()->searchOptions = options;
@@ -386,14 +382,14 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
         }
     }
 
-    // Copy board and root moves from main thread to other threads
+    // Clear threads state and copy board and root moves to other threads sequentially
     for (size_t i = 1; i < size(); i++) {
-        (*this)[i]->runTask([this](SearchThread &th) {
-            th.setBoardAndEvaluator(*main()->board);
-            th.rootMoves = main()->rootMoves;
-            if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO)
-                th.balance2Moves = main()->balance2Moves;
-        });
+        SearchThread &th = *(*this)[i];
+        th.clear();
+        th.setBoardAndEvaluator(*main()->board);
+        th.rootMoves = main()->rootMoves;
+        if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO)
+            th.balance2Moves = main()->balance2Moves;
     }
 
     main()->runTask([searcher = searcher()](SearchThread &th) {
