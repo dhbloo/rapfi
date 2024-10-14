@@ -721,20 +721,23 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Step 5. Database query
     Database::DBRecord dbRecord;
-    bool               dbHit        = false;
+    bool               dbHit = false, dbCheckChild = false;
     Bound              dbLabelBound = BOUND_NONE, dbBound = BOUND_NONE;
     Value              dbValue;
-    if (thisThread->dbClient && !skipMove  // Do not query database in singular extension
-        && ss->ply <= Config::DatabaseQueryPly
-                          + searchData->rootDepth
+    if (thisThread->dbClient) {
+        Database::DBClient &dbClient          = *thisThread->dbClient;
+        int                 queryPlyIncrement = searchData->rootDepth
                                 / (PvNode ? Config::DatabaseQueryPVIterPerPlyIncrement
-                                          : Config::DatabaseQueryNonPVIterPerPlyIncrement)) {
-        Database::DBClient &dbClient = *thisThread->dbClient;
+                                          : Config::DatabaseQueryNonPVIterPerPlyIncrement);
+        int queryPly = Config::DatabaseQueryPly + queryPlyIncrement;
 
-        if (dbClient.query(board, Rule, dbRecord)) {
-            dbHit   = true;
-            dbValue = storedValueToSearchValue(dbRecord.value, ss->ply);
-            dbBound = dbRecord.bound();
+        if (!skipMove               // Skip query in singular extension
+            && ss->ply <= queryPly  // Only query in the first plies to avoid large speed loss
+            && dbClient.query(board, Rule, dbRecord)) {
+            dbHit        = true;
+            dbValue      = storedValueToSearchValue(dbRecord.value, ss->ply);
+            dbBound      = dbRecord.bound();
+            dbCheckChild = ss->ply < queryPly;
 
             switch (dbRecord.label) {
             case Database::LABEL_NULL: break;
@@ -998,7 +1001,8 @@ moves_loop:
 
         // Step 12. Pruning at shallow depth
         // Do pruning only when we have non-losing moves, otherwise we may have a false mate.
-        if (!RootNode && bestValue > VALUE_MATED_IN_MAX_PLY) {
+        // Also skip pruning if there might be a child database record we want to read.
+        if (!RootNode && !dbCheckChild && bestValue > VALUE_MATED_IN_MAX_PLY) {
             // Move count pruning: skip move if movecount is above threshold (~107 elo)
             if (moveCount >= futilityMoveCount(depth, improvement > 0))
                 continue;
