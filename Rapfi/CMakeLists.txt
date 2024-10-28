@@ -55,7 +55,6 @@ set(CORE_SOURCES
 
     eval/eval.cpp
     eval/evaluator.cpp
-    eval/mix8nnue.cpp
     eval/mix9nnue.cpp
     eval/mix9litennue.cpp
 
@@ -113,7 +112,6 @@ set(HEADERS
     eval/crosscheck.h
     eval/eval.h
     eval/evaluator.h
-    eval/mix8nnue.h
     eval/mix9nnue.h
     eval/mix9litennue.h
     eval/simdops.h
