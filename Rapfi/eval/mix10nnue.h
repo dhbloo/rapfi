@@ -1,6 +1,6 @@
 /*
  *  Rapfi, a Gomoku/Renju playing engine supporting piskvork protocol.
- *  Copyright (C) 2022  Rapfi developers
+ *  Copyright (C) 2024  Rapfi developers
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -27,31 +27,27 @@
 #include <string>
 #include <vector>
 
-namespace Evaluation::mix9 {
+namespace Evaluation::mix10 {
 
 using namespace Evaluation;
 
-constexpr uint32_t ArchHashBase    = 0x247e6c70;
+constexpr uint32_t ArchHashBase    = 0xb53b0258;
 constexpr int      ShapeNum        = 442503;
-constexpr int      FeatureDim      = 64;
-constexpr int      PolicyDim       = 32;
+constexpr int      FeatureDim      = 128;
+constexpr int      PolicyDim       = 64;
 constexpr int      ValueDim        = 64;
-constexpr int      FeatDWConvDim   = 32;
+constexpr int      FeatDWConvDim   = 64;
 constexpr int      PolicyPWConvDim = 16;
 constexpr int      NumHeadBucket   = 1;
 
 template <int OutSize, int InSize>
-struct StarBlockWeight
+struct LinearWeight
 {
-    int8_t  value_corner_up1_weight[(OutSize * 2) * InSize];
-    int32_t value_corner_up1_bias[(OutSize * 2)];
-    int8_t  value_corner_up2_weight[(OutSize * 2) * InSize];
-    int32_t value_corner_up2_bias[(OutSize * 2)];
-    int8_t  value_corner_down_weight[OutSize * OutSize];
-    int32_t value_corner_down_bias[OutSize];
+    int8_t  weight[OutSize * InSize];
+    int32_t bias[OutSize];
 };
 
-struct alignas(simd::NativeAlignment) Mix9Weight
+struct alignas(simd::NativeAlignment) Mix10Weight
 {
     // 1  mapping layer
     int16_t mapping[2][ShapeNum][FeatureDim];
@@ -63,34 +59,38 @@ struct alignas(simd::NativeAlignment) Mix9Weight
     struct HeadBucket
     {
         // 3  Policy dynamic pointwise conv
-        int8_t  policy_pwconv_layer_l1_weight[(PolicyDim * 2) * FeatureDim];
-        int32_t policy_pwconv_layer_l1_bias[PolicyDim * 2];
-        int8_t  policy_pwconv_layer_l2_weight[(PolicyPWConvDim * PolicyDim + PolicyPWConvDim)
-                                             * (PolicyDim * 2)];
-        int32_t policy_pwconv_layer_l2_bias[(PolicyPWConvDim * PolicyDim + PolicyPWConvDim)];
+        LinearWeight<PolicyDim * 2, FeatureDim> policy_pwconv_layer_l1;
+        LinearWeight<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>
+            policy_pwconv_layer_l2;
 
-        // 4  Value Group MLP (layer 1,2)
-        StarBlockWeight<ValueDim, FeatureDim> value_corner;
-        StarBlockWeight<ValueDim, FeatureDim> value_edge;
-        StarBlockWeight<ValueDim, FeatureDim> value_center;
-        StarBlockWeight<ValueDim, ValueDim>   value_quad;
+        // 4  Small Value Head MLP (layer 1,2,3)
+        LinearWeight<FeatureDim, FeatureDim> value_small_l1;
+        LinearWeight<FeatureDim, FeatureDim> value_small_l2;
+        LinearWeight<4, FeatureDim>          value_small_l3;
 
-        // 5  Value MLP (layer 1,2,3)
-        int8_t  value_l1_weight[ValueDim * (FeatureDim + ValueDim * 4)];
-        int32_t value_l1_bias[ValueDim];
-        int8_t  value_l2_weight[ValueDim * ValueDim];
-        int32_t value_l2_bias[ValueDim];
-        int8_t  value_l3_weight[4 * ValueDim];
-        int32_t value_l3_bias[4];
+        char __padding_to_64bytes_0[48];
 
-        // 6  Policy output linear
+        // 5  Large Value Gate & Group MLP
+        LinearWeight<FeatureDim, FeatureDim> value_gate;
+        LinearWeight<ValueDim, ValueDim>     value_corner;
+        LinearWeight<ValueDim, ValueDim>     value_edge;
+        LinearWeight<ValueDim, ValueDim>     value_center;
+        LinearWeight<ValueDim, ValueDim>     value_quad;
+
+        // 6  Large Value Head MLP (layer 1,2,3)
+        LinearWeight<ValueDim, FeatureDim + ValueDim * 4> value_l1;
+        LinearWeight<ValueDim, ValueDim>                  value_l2;
+        LinearWeight<4, ValueDim>                         value_l3;
+
+        // 7  Policy output linear
         float policy_output_weight[16];
         float policy_output_bias;
-        char  __padding_to_64bytes_1[44];
+
+        char __padding_to_64bytes_1[44];
     } buckets[NumHeadBucket];
 };
 
-class Mix9Accumulator
+class Mix10Accumulator
 {
 public:
     struct alignas(simd::NativeAlignment) ValueSumType
@@ -99,21 +99,28 @@ public:
 
         std::array<int32_t, FeatureDim> global;
         std::array<int32_t, FeatureDim> group[NGroup][NGroup];
+
+        std::array<int8_t, FeatureDim> small_value_feature;
+        bool                           small_value_feature_valid;
     };
 
-    Mix9Accumulator(int boardSize);
-    ~Mix9Accumulator();
+    Mix10Accumulator(int boardSize);
+    ~Mix10Accumulator();
 
     /// Init accumulator state to empty board.
-    void clear(const Mix9Weight &w);
+    void clear(const Mix10Weight &w);
     /// Incremental update mix6 network state.
-    void move(const Mix9Weight &w, Color pieceColor, int x, int y);
+    void move(const Mix10Weight &w, Color pieceColor, int x, int y);
     void undo() { currentVersion--; }
 
-    /// Calculate value (win/loss/draw tuple) of current network state.
-    std::tuple<float, float, float> evaluateValue(const Mix9Weight &w);
+    void updateSharedSmallHead(const Mix10Weight &w);
+
+    /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
+    std::tuple<float, float, float, float> evaluateValueSmall(const Mix10Weight &w);
+    /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
+    std::tuple<float, float, float, float> evaluateValueLarge(const Mix10Weight &w);
     /// Calculate policy value of current network state.
-    void evaluatePolicy(const Mix9Weight &w, PolicyBuffer &policyBuffer);
+    void evaluatePolicy(const Mix10Weight &w, PolicyBuffer &policyBuffer);
 
 private:
     friend class Mix8Evaluator;
@@ -146,14 +153,14 @@ private:
     int  getBucketIndex() { return 0; }
 };
 
-class Mix9Evaluator : public Evaluator
+class Mix10Evaluator : public Evaluator
 {
 public:
-    Mix9Evaluator(int                   boardSize,
-                  Rule                  rule,
-                  std::filesystem::path blackWeightPath,
-                  std::filesystem::path whiteWeightPath);
-    ~Mix9Evaluator();
+    Mix10Evaluator(int                   boardSize,
+                   Rule                  rule,
+                   std::filesystem::path blackWeightPath,
+                   std::filesystem::path whiteWeightPath);
+    ~Mix10Evaluator();
 
     void initEmptyBoard();
     void beforeMove(const Board &board, Pos pos);
@@ -181,9 +188,9 @@ private:
     /// Record new board action, but not update accumulator instantly.
     void addCache(Color side, int x, int y, bool isUndo);
 
-    Mix9Weight /* non-owning ptr */ *weight[2];
-    std::unique_ptr<Mix9Accumulator> accumulator[2];
-    std::vector<MoveCache>           moveCache[2];
+    Mix10Weight /* non-owning ptr */ *weight[2];
+    std::unique_ptr<Mix10Accumulator> accumulator[2];
+    std::vector<MoveCache>            moveCache[2];
 };
 
-}  // namespace Evaluation::mix9
+}  // namespace Evaluation::mix10

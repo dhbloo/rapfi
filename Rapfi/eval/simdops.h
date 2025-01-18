@@ -2505,88 +2505,38 @@ int16_t *crelu(int16_t output[Size], const int32_t input[Size])
     return output + Size;
 }
 
-enum class Activation { None, Relu };
-
-/// Apply linear layer and relu layer.
-template <Activation Activation,
-          int        OutDim,
-          int        InDim,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType,
-          bool            Bias      = true>
-void linearLayer(T       out[],
-                 const T (&in)[InDim],
-                 const T (&weight)[InDim][OutDim],
-                 const T (&bias)[OutDim])
-{
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(out));
-    assert(isPtrAligned<Alignment>(in));
-    assert(isPtrAligned<Alignment>(weight));
-    assert(isPtrAligned<Alignment>(bias));
-
-    constexpr size_t InstAlignSize   = simdBitsOfInstType(Inst) / 8;
-    constexpr size_t OutDimAligned   = alignDimSize<InstAlignSize, T>(OutDim);
-    constexpr size_t WeightAlignment = OutDimAligned == OutDim ? Alignment : 1;
-    typedef detail::VecBatch<OutDimAligned, T, Inst>       B;
-    typedef detail::VecLoadStore<T, Alignment, Inst>       LS;
-    typedef detail::VecLoadStore<T, WeightAlignment, Inst> LSWeight;
-    typedef detail::VecOp<T, Inst>                         Op;
-
-    for (int b = 0; b < B::NumBatch; b++) {
-        auto y = Bias ? LS::load(&bias[b * B::RegWidth]) : Op::setzero();
-        for (int inC = 0; inC < InDim; inC++) {
-            auto x = Op::set1(in[inC]);
-            auto w = LSWeight::load(&weight[inC][b * B::RegWidth]);
-            y      = Op::fmadd(w, x, y);
-        }
-
-        if constexpr (Activation == Activation::Relu) {
-            y = Op::max(y, Op::setzero());
-        }
-
-        LS::store(&out[b * B::RegWidth], y);
-    }
-}
-
-template <Activation Activation,
-          int        OutDim,
-          int        InDim,
-          typename T,
+/// Compute the pairwise dot product of u7 and i8 array and store the int8 results.
+template <int             OutSize,
+          int             Divisor,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType>
-void linearLayer(T out[], const T (&in)[InDim], const T (&weight)[InDim][OutDim])
+int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_i8[OutSize * 2])
 {
-    linearLayer<Activation, OutDim, InDim, T, Alignment, Inst, false>(
-        out,
-        in,
-        weight,
-        *reinterpret_cast<const T(*)[OutDim]>(out));
-}
+    static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
+    constexpr int Log2Divisor = floorLog2(Divisor);
 
-template <int Size,
-          typename T,
-          int             Alignment = NativeAlignment,
-          InstructionType Inst      = NativeInstType>
-void preluLayer(T (&out)[Size], const T (&in)[Size], const T (&weight)[Size])
-{
-    static_assert(isAlignSizeOK(Alignment));
-    assert(isPtrAligned<Alignment>(out));
-    assert(isPtrAligned<Alignment>(in));
-    assert(isPtrAligned<Alignment>(weight));
+    typedef detail::VecBatch<OutSize, int8_t, Inst>       OutB;
+    typedef detail::VecLoadStore<int8_t, Alignment, Inst> I8LS;
+    typedef detail::VecOp<int8_t, Inst>                   I8Op;
+    typedef detail::VecOp<int16_t, Inst>                  I16Op;
+    typedef detail::VecPack<int16_t, int8_t, Inst>        I16Pack;
 
-    typedef detail::VecBatch<Size, T, Inst>          B;
-    typedef detail::VecLoadStore<T, Alignment, Inst> LS;
-    typedef detail::VecOp<T, Inst>                   Op;
+    for (int i = 0; i < OutB::NumBatch; i++) {
+        auto in10 = I8LS::load(input_u7 + (2 * i + 0) * OutB::RegWidth);  // unsigned
+        auto in11 = I8LS::load(input_u7 + (2 * i + 1) * OutB::RegWidth);  // unsigned
+        auto in20 = I8LS::load(input_i8 + (2 * i + 0) * OutB::RegWidth);  // signed
+        auto in21 = I8LS::load(input_i8 + (2 * i + 1) * OutB::RegWidth);  // signed
 
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto data0    = LS::load(&in[i * B::RegWidth]);
-        auto weight0  = LS::load(&weight[i * B::RegWidth]);
-        auto product0 = Op::mul(data0, weight0);
-        auto result0  = Op::max(data0, product0);
-        LS::store(&out[i * B::RegWidth], result0);
+        auto dotsum0i16 = I8Op::dot2_u7i8(in10, in20);
+        auto dotsum1i16 = I8Op::dot2_u7i8(in11, in21);
+        dotsum0i16      = I16Op::template srai<Log2Divisor>(dotsum0i16);
+        dotsum1i16      = I16Op::template srai<Log2Divisor>(dotsum1i16);
+        auto dotsumi8   = I16Pack::packs_permuted(dotsum0i16, dotsum1i16);
+
+        I8LS::store(output + i * OutB::RegWidth, dotsumi8);
     }
+
+    return output + OutSize;
 }
 
 }  // namespace Evaluation::simd

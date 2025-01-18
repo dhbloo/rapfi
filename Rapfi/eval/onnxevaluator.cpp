@@ -535,13 +535,13 @@ void OnnxEvaluator::afterUndo(const Board &board, Pos pos)
     }
 }
 
-ValueType OnnxEvaluator::evaluateValue(const Board &board)
+ValueType OnnxEvaluator::evaluateValue(const Board &board, AccLevel level)
 {
     Color self = board.sideToMove();
     return accumulator[self]->evaluateValue(*model);
 }
 
-void OnnxEvaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer)
+void OnnxEvaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, AccLevel level)
 {
     Color self = board.sideToMove();
     accumulator[self]->evaluatePolicy(*model, policyBuffer);

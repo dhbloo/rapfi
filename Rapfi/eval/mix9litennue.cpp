@@ -902,7 +902,7 @@ void Mix9LiteEvaluator::afterUndo(const Board &board, Pos pos)
     addCache(board.sideToMove(), pos.x(), pos.y(), true);
 }
 
-ValueType Mix9LiteEvaluator::evaluateValue(const Board &board)
+ValueType Mix9LiteEvaluator::evaluateValue(const Board &board, AccLevel level)
 {
     Color self = board.sideToMove(), oppo = ~self;
 
@@ -913,7 +913,9 @@ ValueType Mix9LiteEvaluator::evaluateValue(const Board &board)
     return ValueType(win, loss, draw, true);
 }
 
-void Mix9LiteEvaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer)
+void Mix9LiteEvaluator::evaluatePolicy(const Board  &board,
+                                       PolicyBuffer &policyBuffer,
+                                       AccLevel      level)
 {
     Color self = board.sideToMove();
 

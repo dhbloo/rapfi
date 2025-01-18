@@ -121,8 +121,8 @@ enum Value {
     VALUE_MATE_FROM_DATABASE  = VALUE_MATE_IN_MAX_PLY,
     VALUE_MATED_FROM_DATABASE = VALUE_MATED_IN_MAX_PLY,
 
-    VALUE_EVAL_MAX = 20000,
-    VALUE_EVAL_MIN = -20000
+    VALUE_EVAL_MAX = 6000,
+    VALUE_EVAL_MIN = -6000,
 };
 
 constexpr Value operator+(Value d1, Value d2)

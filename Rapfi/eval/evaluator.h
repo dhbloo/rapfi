@@ -65,6 +65,17 @@ private:
     float drawProb = -1.0f;
 };
 
+/// AccLevel represents the accuracy level of the model's evaluation.
+/// Lower level means higher accuracy and slower evaluation speed,
+/// while higher level means lower accuracy and faster evaluation speed.
+enum AccLevel {
+    ACC_LEVEL_BEST = 0,
+    ACC_LEVEL_HIGH = 1,
+    ACC_LEVEL_MID  = 2,
+    ACC_LEVEL_LOW  = 3,
+    ACC_LEVEL_MAX_NB,
+};
+
 /// PolicyBuffer is a container for float policy values on board.
 class PolicyBuffer
 {
@@ -146,10 +157,16 @@ public:
     /// and afterMove() by default.
     virtual void syncWithBoard(const Board &board);
 
-    /// Evaluates value for current side to move.
-    virtual ValueType evaluateValue(const Board &board) = 0;
+    /// Evaluates value for current side to move with the specified level of accuracy.
+    virtual ValueType evaluateValue(const Board &board, AccLevel level = ACC_LEVEL_BEST) = 0;
     /// Evaluates policy for current side to move.
-    virtual void evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer) = 0;
+    virtual void evaluatePolicy(const Board  &board,
+                                PolicyBuffer &policyBuffer,
+                                AccLevel      level = ACC_LEVEL_BEST) = 0;
+    /// Gets the supported number of value's accuracy levels.
+    virtual int getNumValueAccLevel() const { return 1; }
+    /// Gets the supported number of policy's accuracy levels.
+    virtual int getNumPolicyAccLevel() const { return 1; }
 
     const int  boardSize;
     const Rule rule;

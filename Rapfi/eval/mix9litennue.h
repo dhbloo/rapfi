@@ -158,8 +158,8 @@ public:
     void beforeMove(const Board &board, Pos pos);
     void afterUndo(const Board &board, Pos pos);
 
-    ValueType evaluateValue(const Board &board);
-    void      evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer);
+    ValueType evaluateValue(const Board &board, AccLevel level);
+    void      evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, AccLevel level);
 
 private:
     struct MoveCache

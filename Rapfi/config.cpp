@@ -23,6 +23,7 @@
 #include "database/dbstorage.h"
 #include "database/yxdbstorage.h"
 #include "eval/evaluator.h"
+#include "eval/mix10nnue.h"
 #include "eval/mix9litennue.h"
 #include "eval/mix9nnue.h"
 #include "game/pattern.h"
@@ -651,6 +652,22 @@ void Config::readEvaluator(const cpptoml::table &t)
                                                                                  rule,
                                                                                  blackWeightPath,
                                                                                  whiteWeightPath);
+            },
+            true));
+    }
+    else if (*evaluatorType == "mix10nnue") {
+        Search::Threads.setupEvaluator(warpEvaluatorMaker(
+            [=](int                   boardSize,
+                Rule                  rule,
+                std::filesystem::path weightPath,
+                const cpptoml::table &weightCfg) {
+                auto [blackWeightPath, whiteWeightPath] =
+                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
+
+                return std::make_unique<Evaluation::mix10::Mix10Evaluator>(boardSize,
+                                                                           rule,
+                                                                           blackWeightPath,
+                                                                           whiteWeightPath);
             },
             true));
     }
