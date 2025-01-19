@@ -31,14 +31,17 @@ namespace Evaluation::mix10 {
 
 using namespace Evaluation;
 
-constexpr uint32_t ArchHashBase    = 0xb53b0258;
-constexpr int      ShapeNum        = 442503;
-constexpr int      FeatureDim      = 128;
-constexpr int      PolicyDim       = 64;
-constexpr int      ValueDim        = 64;
-constexpr int      FeatDWConvDim   = 64;
-constexpr int      PolicyPWConvDim = 16;
-constexpr int      NumHeadBucket   = 1;
+constexpr uint32_t ArchHashBase  = 0xb53b0258;
+constexpr int      ShapeNum      = 442503;
+constexpr int      FeatureDim    = 128;
+constexpr int      FeatDWConvDim = 64;
+constexpr int      NumHeadBucket = 1;
+
+constexpr int PolicySInDim  = std::max(FeatDWConvDim / 2, 16);
+constexpr int PolicySOutDim = std::max(FeatDWConvDim / 4, 16);
+constexpr int PolicyLInDim  = std::max(FeatDWConvDim, 16);
+constexpr int PolicyLMidDim = std::max(FeatDWConvDim / 2, 16);
+constexpr int PolicyLOutDim = std::max(FeatDWConvDim / 4, 16);
 
 template <int OutSize, int InSize>
 struct LinearWeight
@@ -58,35 +61,44 @@ struct alignas(simd::NativeAlignment) Mix10Weight
 
     struct HeadBucket
     {
-        // 3  Policy dynamic pointwise conv
-        LinearWeight<PolicyDim * 2, FeatureDim> policy_pwconv_layer_l1;
-        LinearWeight<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>
-            policy_pwconv_layer_l2;
+        // 3  Small Policy dynamic pointwise conv
+        LinearWeight<FeatureDim, FeatureDim>                        policy_small_pwconv_weight_l1;
+        LinearWeight<PolicySOutDim *(PolicySInDim + 1), FeatureDim> policy_small_pwconv_weight_l2;
 
-        // 4  Small Value Head MLP (layer 1,2,3)
+        // 4  Large Policy dynamic pointwise conv
+        LinearWeight<FeatureDim * 2, FeatureDim> policy_large_pwconv_weight_shared;
+        LinearWeight<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>
+            policy_large_pwconv_weight_1;
+        LinearWeight<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2>
+            policy_large_pwconv_weight_2;
+
+        // 5  Small Value Head MLP (layer 1,2,3)
         LinearWeight<FeatureDim, FeatureDim> value_small_l1;
         LinearWeight<FeatureDim, FeatureDim> value_small_l2;
-        LinearWeight<4, FeatureDim>          value_small_l3;
+        LinearWeight<32, FeatureDim>         value_small_l3;
+        LinearWeight<4, 32>                  value_small_l4;
 
         char __padding_to_64bytes_0[48];
 
-        // 5  Large Value Gate & Group MLP
-        LinearWeight<FeatureDim, FeatureDim> value_gate;
-        LinearWeight<ValueDim, ValueDim>     value_corner;
-        LinearWeight<ValueDim, ValueDim>     value_edge;
-        LinearWeight<ValueDim, ValueDim>     value_center;
-        LinearWeight<ValueDim, ValueDim>     value_quad;
+        // 6  Large Value Gate & Group MLP
+        LinearWeight<FeatureDim * 2, FeatureDim> value_gate;
+        LinearWeight<FeatureDim, FeatureDim>     value_corner;
+        LinearWeight<FeatureDim, FeatureDim>     value_edge;
+        LinearWeight<FeatureDim, FeatureDim>     value_center;
+        LinearWeight<FeatureDim, FeatureDim>     value_quad;
 
-        // 6  Large Value Head MLP (layer 1,2,3)
-        LinearWeight<ValueDim, FeatureDim + ValueDim * 4> value_l1;
-        LinearWeight<ValueDim, ValueDim>                  value_l2;
-        LinearWeight<4, ValueDim>                         value_l3;
+        // 7  Large Value Head MLP (layer 1,2,3)
+        LinearWeight<FeatureDim, FeatureDim * 5> value_l1;
+        LinearWeight<32, FeatureDim>             value_l2;
+        LinearWeight<4, 32>                      value_l3;
 
-        // 7  Policy output linear
-        float policy_output_weight[16];
-        float policy_output_bias;
+        // 8  Policy output linear
+        float policy_small_output_weight[PolicySOutDim];
+        float policy_large_output_weight[PolicyLOutDim];
+        float policy_small_output_bias;
+        float policy_large_output_bias;
 
-        char __padding_to_64bytes_1[44];
+        char __padding_to_64bytes_1[40];
     } buckets[NumHeadBucket];
 };
 
@@ -120,7 +132,9 @@ public:
     /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
     std::tuple<float, float, float, float> evaluateValueLarge(const Mix10Weight &w);
     /// Calculate policy value of current network state.
-    void evaluatePolicy(const Mix10Weight &w, PolicyBuffer &policyBuffer);
+    void evaluatePolicySmall(const Mix10Weight &w, PolicyBuffer &policyBuffer);
+    /// Calculate policy value of current network state.
+    void evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &policyBuffer);
 
 private:
     friend class Mix8Evaluator;

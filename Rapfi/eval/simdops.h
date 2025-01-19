@@ -50,11 +50,25 @@ constexpr size_t simdBitsOfInstType(InstructionType instType)
     }
 }
 
+/// Check if the given instruction type is the minimal length on this platform.
+constexpr bool isMinimalInstType(InstructionType instType)
+{
+    switch (instType) {
+    default: return true;
+    case SSE: return true;
+    case AVX2: return false;
+    case AVX512: return false;
+    case NEON: return true;
+    case WASM_SIMD: return true;
+    }
+}
+
 /// Returns the next lower instruction type.
 constexpr InstructionType getInstTypeOfWidth(InstructionType instType, size_t width)
 {
-    return simdBitsOfInstType(instType) <= width
-               ? instType
+    return simdBitsOfInstType(instType) <= width ? instType
+           : isMinimalInstType(instType)
+               ? SCALAR
                : getInstTypeOfWidth(static_cast<InstructionType>(instType - 1), width);
 }
 
@@ -2008,7 +2022,8 @@ namespace detail {
         Alignment,
         I,
         std::enable_if_t<!(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)
-                         && (OutSize >= 4 && OutSize % 4 == 0)>>
+                         && (OutSize >= 4 && OutSize % 4 == 0)
+                         && (detail::VecBatch<InSize, int8_t, I, true>::NumExtra == 0)>>
     {
         template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
         static void
@@ -2016,6 +2031,7 @@ namespace detail {
         {
             constexpr InstructionType I128 = SSE;
 
+            typedef detail::VecBatch<InSize, int8_t, I>            B;
             typedef detail::VecLoadStore<int8_t, Alignment, I>     I8LS;
             typedef detail::VecLoadStore<int32_t, Alignment, I128> I32LS128;
             typedef detail::VecOp<int8_t, I>                       I8Op;
@@ -2038,7 +2054,6 @@ namespace detail {
                 auto sum3 = I32Op::setzero();
 
                 // Each innermost loop processes a 32x4 chunk of weights, so 128 weights at a time!
-                typedef detail::VecBatch<InSize, int8_t, I> B;
                 for (int j = 0; j < B::NumBatch; j++) {
                     // We unroll by 4 so that we can reuse this value, reducing the number of
                     // memory operations required.
@@ -2072,6 +2087,60 @@ namespace detail {
                 if constexpr (PostReLU)
                     outval = I32Op128::max(outval, I32Op128::setzero());
                 I32LS128::store(output + i * 4, outval);
+            }
+        }
+    };
+
+    template <int OutSize, int InSize, int Alignment, InstructionType I>
+    struct Affine<
+        OutSize,
+        InSize,
+        int8_t,
+        Alignment,
+        I,
+        std::enable_if_t<!(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)
+                         && (OutSize >= 4 && OutSize % 4 == 0)
+                         && (detail::VecBatch<InSize, int8_t, I, true>::NumExtra > 0)
+                         && (detail::VecBatch<InSize, int8_t, I, true>::NumBatch == 0)>>
+    {
+        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
+        static void
+        forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
+        {
+            if constexpr (!detail::VecBatch<InSize,
+                                            int8_t,
+                                            getInstTypeOfWidth(simd::NativeInstType, 256),
+                                            true>::NumExtra) {
+                Affine<OutSize,
+                       InSize,
+                       int8_t,
+                       std::min(Alignment, 32),
+                       getInstTypeOfWidth(simd::NativeInstType, 256)>::
+                    template forward<SignedInput, Bias, PreReLU, PostReLU>(output,
+                                                                           input,
+                                                                           weight,
+                                                                           bias);
+            }
+            else if constexpr (!detail::VecBatch<InSize,
+                                                 int8_t,
+                                                 getInstTypeOfWidth(simd::NativeInstType, 128),
+                                                 true>::NumExtra) {
+                Affine<OutSize,
+                       InSize,
+                       int8_t,
+                       std::min(Alignment, 16),
+                       getInstTypeOfWidth(simd::NativeInstType, 128)>::
+                    template forward<SignedInput, Bias, PreReLU, PostReLU>(output,
+                                                                           input,
+                                                                           weight,
+                                                                           bias);
+            }
+            else {
+                static_assert(always_false_v<std::integral_constant<int, OutSize>,
+                                             std::integral_constant<int, InSize>,
+                                             std::integral_constant<int, Alignment>,
+                                             std::integral_constant<InstructionType, I>>,
+                              "No valid implementation for this affine parameter");
             }
         }
     };
@@ -2124,74 +2193,6 @@ namespace detail {
                 if constexpr (PostReLU)
                     acc[j] = I32Op::max(acc[j], I32Op::setzero());
                 I32LS::store(output + j * OutB::RegWidth, acc[j]);
-            }
-        }
-    };
-
-    template <int OutSize, int InSize, int Alignment, InstructionType I>
-    struct Affine<
-        OutSize,
-        InSize,
-        int16_t,
-        Alignment,
-        I,
-        std::enable_if_t<!(OutSize > 1 && VecBatch<OutSize, int32_t, I, true>::NumExtra == 0)
-                         && (OutSize >= 4 && OutSize % 4 == 0)>>
-    {
-        template <bool SignedInput, bool Bias, bool PreReLU, bool PostReLU>
-        static void
-        forward(int32_t *output, const int16_t *input, const int16_t *weight, const int32_t *bias)
-        {
-            constexpr InstructionType I128 = SSE;
-
-            typedef detail::VecLoadStore<int16_t, Alignment, I>    I16LS;
-            typedef detail::VecLoadStore<int32_t, Alignment, I128> I32LS128;
-            typedef detail::VecOp<int16_t, I>                      I16Op;
-            typedef detail::VecOp<int32_t, I>                      I32Op;
-            typedef detail::VecOp<int32_t, I128>                   I32Op128;
-
-            constexpr int OutNumBatches = OutSize / 4;
-            for (int i = 0; i < OutNumBatches; i++) {
-                // Prepare weight offsets. One offset for one row of weights.
-                // This is a simple index into a 2d array.
-                const int offset0 = (i * 4 + 0) * InSize;
-                const int offset1 = (i * 4 + 1) * InSize;
-                const int offset2 = (i * 4 + 2) * InSize;
-                const int offset3 = (i * 4 + 3) * InSize;
-
-                // Accumulation starts from 0, we add the bias only at the end.
-                auto sum0 = I32Op::setzero();
-                auto sum1 = I32Op::setzero();
-                auto sum2 = I32Op::setzero();
-                auto sum3 = I32Op::setzero();
-
-                // Each innermost loop processes a 16x4 chunk of weights, so 64 weights at a time!
-                typedef detail::VecBatch<InSize, int16_t, I> B;
-                for (int j = 0; j < B::NumBatch; j++) {
-                    // We unroll by 4 so that we can reuse this value, reducing the number of
-                    // memory operations required.
-                    auto in = I16LS::load(input + j * B::RegWidth);
-                    if constexpr (PreReLU)
-                        in = I16Op::max(in, I32Op::setzero());
-
-                    // Processes a 2Lx1 chunk of int16 and produces a Lx1 chunk of int32.
-                    const auto w0 = I16LS::load(weight + offset0 + j * B::RegWidth);
-                    const auto w1 = I16LS::load(weight + offset1 + j * B::RegWidth);
-                    const auto w2 = I16LS::load(weight + offset2 + j * B::RegWidth);
-                    const auto w3 = I16LS::load(weight + offset3 + j * B::RegWidth);
-                    sum0          = I32Op::add(sum0, I16Op::dot2(in, w0));
-                    sum1          = I32Op::add(sum1, I16Op::dot2(in, w1));
-                    sum2          = I32Op::add(sum2, I16Op::dot2(in, w2));
-                    sum3          = I32Op::add(sum3, I16Op::dot2(in, w3));
-                }
-
-                // Adds horizontally L values from each sum together, producing 4 int32 values.
-                auto outval = I32Op::hsum4(sum0, sum1, sum2, sum3);
-                if constexpr (Bias)
-                    outval = I32Op128::add(outval, I32LS128::load(bias + i * 4));
-                if constexpr (PostReLU)
-                    outval = I32Op128::max(outval, I32Op128::setzero());
-                I32LS128::store(output + i * 4, outval);
             }
         }
     };
