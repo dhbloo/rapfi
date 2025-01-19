@@ -421,6 +421,7 @@ void Mix10Accumulator::clear(const Mix10Weight &w)
         }
 
         valueSum.small_value_feature_valid = false;
+        valueSum.large_value_feature_valid = false;
     }
 
     // Reset version and init version table to be zeros
@@ -637,6 +638,7 @@ void Mix10Accumulator::move(const Mix10Weight &w, Color pieceColor, int x, int y
                 I32LS::store(valueSumNew.group[i][j].data() + b * VSumB::RegWidth, vNew);
             }
     valueSumNew.small_value_feature_valid = false;
+    valueSumNew.large_value_feature_valid = false;
 }
 
 void Mix10Accumulator::updateSharedSmallHead(const Mix10Weight &w)
@@ -660,33 +662,15 @@ void Mix10Accumulator::updateSharedSmallHead(const Mix10Weight &w)
     valueSum.small_value_feature_valid = true;
 }
 
-std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueSmall(const Mix10Weight &w)
+void Mix10Accumulator::updateSharedLargeHead(const Mix10Weight &w)
 {
-    updateSharedSmallHead(w);
-
-    const auto &valueSum = valueSumTable[currentVersion];
+    auto       &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
 
-    alignas(Alignment) int8_t layer3[32];
-    linearBlock(layer3, valueSum.small_value_feature.data(), bucket.value_small_l3);
+    if (valueSum.large_value_feature_valid)
+        return;
 
-    // small value head layer 3 final
-    alignas(Alignment) int32_t layer4i32[4];
-    simd::linear<4, FeatureDim>(layer4i32,
-                                layer3,
-                                bucket.value_small_l4.weight,
-                                bucket.value_small_l4.bias);
-
-    const float scale = 1.0f / (128 * 128);
-    return {layer4i32[0] * scale, layer4i32[1] * scale, layer4i32[2] * scale, layer4i32[3] * scale};
-}
-
-std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueLarge(const Mix10Weight &w)
-{
     updateSharedSmallHead(w);
-
-    const auto &valueSum = valueSumTable[currentVersion];
-    const auto &bucket   = w.buckets[getBucketIndex()];
 
     // group feature sum
     alignas(Alignment) int8_t group0_in[ValueSumType::NGroup][ValueSumType::NGroup][FeatureDim];
@@ -754,12 +738,41 @@ std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueLarge(cons
     linearBlock(layer0 + 4 * FeatureDim, group2[1][1], bucket.value_quad);
 
     // linear 1
-    alignas(Alignment) int8_t layer1[FeatureDim];
-    linearBlock(layer1, layer0, bucket.value_l1);
+    linearBlock(valueSum.large_value_feature.data(), layer0, bucket.value_l1);
+    valueSum.large_value_feature_valid = true;
+}
+
+std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueSmall(const Mix10Weight &w)
+{
+    updateSharedSmallHead(w);
+
+    const auto &valueSum = valueSumTable[currentVersion];
+    const auto &bucket   = w.buckets[getBucketIndex()];
+
+    alignas(Alignment) int8_t layer3[32];
+    linearBlock(layer3, valueSum.small_value_feature.data(), bucket.value_small_l3);
+
+    // small value head layer 3 final
+    alignas(Alignment) int32_t layer4i32[4];
+    simd::linear<4, 32>(layer4i32,
+                        layer3,
+                        bucket.value_small_l4.weight,
+                        bucket.value_small_l4.bias);
+
+    const float scale = 1.0f / (128 * 128);
+    return {layer4i32[0] * scale, layer4i32[1] * scale, layer4i32[2] * scale, layer4i32[3] * scale};
+}
+
+std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueLarge(const Mix10Weight &w)
+{
+    updateSharedLargeHead(w);
+
+    const auto &valueSum = valueSumTable[currentVersion];
+    const auto &bucket   = w.buckets[getBucketIndex()];
 
     // linear 2
     alignas(Alignment) int8_t layer2[32];
-    linearBlock(layer2, layer1, bucket.value_l2);
+    linearBlock(layer2, valueSum.large_value_feature.data(), bucket.value_l2);
 
     // linear 3 final
     alignas(Alignment) int32_t layer3i32[4];
@@ -836,7 +849,7 @@ void Mix10Accumulator::evaluatePolicySmall(const Mix10Weight &w, PolicyBuffer &p
 
 void Mix10Accumulator::evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &policyBuffer)
 {
-    updateSharedSmallHead(w);
+    updateSharedLargeHead(w);
 
     const auto &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
@@ -844,7 +857,7 @@ void Mix10Accumulator::evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &p
     // policy pwconv weight layer
     alignas(Alignment) int8_t layer1[FeatureDim * 2];
     linearBlock(layer1,
-                valueSum.small_value_feature.data(),
+                valueSum.large_value_feature.data(),
                 bucket.policy_large_pwconv_weight_shared);
 
     alignas(Alignment) int32_t layer2i32[PolicyLMidDim * (PolicyLInDim + 1)];

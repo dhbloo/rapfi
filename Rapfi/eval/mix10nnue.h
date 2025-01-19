@@ -113,7 +113,9 @@ public:
         std::array<int32_t, FeatureDim> group[NGroup][NGroup];
 
         std::array<int8_t, FeatureDim> small_value_feature;
+        std::array<int8_t, FeatureDim> large_value_feature;
         bool                           small_value_feature_valid;
+        bool                           large_value_feature_valid;
     };
 
     Mix10Accumulator(int boardSize);
@@ -126,6 +128,7 @@ public:
     void undo() { currentVersion--; }
 
     void updateSharedSmallHead(const Mix10Weight &w);
+    void updateSharedLargeHead(const Mix10Weight &w);
 
     /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
     std::tuple<float, float, float, float> evaluateValueSmall(const Mix10Weight &w);
