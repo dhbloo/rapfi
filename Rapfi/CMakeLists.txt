@@ -224,6 +224,7 @@ if(EMSCRIPTEN)
         string(CONCAT EMCC_FLAGS ${EMCC_FLAGS}
             "-s USE_PTHREADS=1 "
             "-s PROXY_TO_PTHREAD=1 "
+            "-s TEXTDECODER=0 "
         )
     endif()
 

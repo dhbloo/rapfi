@@ -7,6 +7,7 @@ Module["noExitRuntime"] = true; // Only exit when we explicitly want to do so
 
 if (!Module["preRun"]) Module["preRun"] = [];
 Module["preRun"].push(function () {
+  let stdin_queue = [];
   let stdin_buffer = { data: "", index: 0 };
   let stdout_buffer = "";
   let stderr_buffer = "";
@@ -14,7 +15,11 @@ Module["preRun"].push(function () {
   function stdin() {
     if (stdin_buffer.index < stdin_buffer.data.length)
       return stdin_buffer.data.charCodeAt(stdin_buffer.index++);
-    else return null;
+    else if (stdin_queue.length > 0) {
+      stdin_buffer.data = stdin_queue.shift();
+      stdin_buffer.index = 0;
+      return stdin_buffer.data.charCodeAt(stdin_buffer.index++);
+    } else return null;
   }
 
   const newline_charcode = "\n".charCodeAt(0)
@@ -39,8 +44,7 @@ Module["preRun"].push(function () {
   FS.init(stdin, stdout, stderr);
   const execute_command = Module["cwrap"]("gomocupLoopOnce", "number", []);
   Module["sendCommand"] = function (data) {
-    stdin_buffer.data = data + "\n";
-    stdin_buffer.index = 0;
+    stdin_queue.push(data + "\n");
     execute_command();
   };
   Module["terminate"] = function () {
