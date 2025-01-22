@@ -1034,7 +1034,7 @@ void Mix10Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuff
 
     // Apply all incremental update and calculate policy
     clearCache(self);
-    accumulator[self]->evaluatePolicyLarge(*weight[self], policyBuffer);
+    accumulator[self]->evaluatePolicySmall(*weight[self], policyBuffer);
 }
 
 void Mix10Evaluator::clearCache(Color side)
