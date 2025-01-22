@@ -1023,7 +1023,7 @@ ValueType Mix10Evaluator::evaluateValue(const Board &board, AccLevel level)
 
     // Apply all incremental update for both sides and calculate value
     clearCache(self);
-    auto [win, loss, draw, uncertainty] = accumulator[self]->evaluateValueLarge(*weight[self]);
+    auto [win, loss, draw, uncertainty] = accumulator[self]->evaluateValueSmall(*weight[self]);
 
     return ValueType(win, loss, draw, true);
 }
