@@ -38,7 +38,7 @@ jobs:
         run: printf 'end' | build/rapfi-linux-avx2
 
       - name: Upload
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Fishtest
           path: Rapfi/build/rapfi-linux-avx2

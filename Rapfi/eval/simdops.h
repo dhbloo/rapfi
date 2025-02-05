@@ -2029,7 +2029,7 @@ namespace detail {
         static void
         forward(int32_t *output, const int8_t *input, const int8_t *weight, const int32_t *bias)
         {
-            constexpr InstructionType I128 = SSE;
+            constexpr InstructionType I128 = getInstTypeOfWidth(I, 128);
 
             typedef detail::VecBatch<InSize, int8_t, I>            B;
             typedef detail::VecLoadStore<int8_t, Alignment, I>     I8LS;
@@ -2516,7 +2516,7 @@ int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_
     static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
     constexpr int Log2Divisor = floorLog2(Divisor);
 
-    typedef detail::VecBatch<OutSize, int8_t, Inst>       OutB;
+    typedef detail::VecBatch<OutSize, int8_t, Inst, true> OutB;
     typedef detail::VecLoadStore<int8_t, Alignment, Inst> I8LS;
     typedef detail::VecOp<int8_t, Inst>                   I8Op;
     typedef detail::VecOp<int16_t, Inst>                  I16Op;
@@ -2535,6 +2535,35 @@ int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_
         auto dotsumi8   = I16Pack::packs_permuted(dotsum0i16, dotsum1i16);
 
         I8LS::store(output + i * OutB::RegWidth, dotsumi8);
+    }
+
+    if constexpr (OutB::NumExtra > 0) {
+        constexpr InstructionType I128 = getInstTypeOfWidth(Inst, 128);
+
+        typedef detail::VecBatch<OutB::NumExtra, int8_t, I128> OutBExtra;
+        typedef detail::VecLoadStore<int8_t, Alignment, I128>  I8LS128;
+        typedef detail::VecOp<int8_t, I128>                    I8Op128;
+        typedef detail::VecOp<int16_t, I128>                   I16Op128;
+        typedef detail::VecPack<int16_t, int8_t, I128>         I16Pack128;
+
+        for (int i = 0; i < OutBExtra::NumBatch; i++) {
+            auto in10 = I8LS128::load(input_u7 + 2 * OutB::BatchedSize
+                                      + (2 * i + 0) * OutBExtra::RegWidth);  // unsigned
+            auto in11 = I8LS128::load(input_u7 + 2 * OutB::BatchedSize
+                                      + (2 * i + 1) * OutBExtra::RegWidth);  // unsigned
+            auto in20 = I8LS128::load(input_i8 + 2 * OutB::BatchedSize
+                                      + (2 * i + 0) * OutBExtra::RegWidth);  // signed
+            auto in21 = I8LS128::load(input_i8 + 2 * OutB::BatchedSize
+                                      + (2 * i + 1) * OutBExtra::RegWidth);  // signed
+
+            auto dotsum0i16 = I8Op128::dot2_u7i8(in10, in20);
+            auto dotsum1i16 = I8Op128::dot2_u7i8(in11, in21);
+            dotsum0i16      = I16Op128::template srai<Log2Divisor>(dotsum0i16);
+            dotsum1i16      = I16Op128::template srai<Log2Divisor>(dotsum1i16);
+            auto dotsumi8   = I16Pack128::packs_permuted(dotsum0i16, dotsum1i16);
+
+            I8LS128::store(output + OutB::BatchedSize + i * OutBExtra::RegWidth, dotsumi8);
+        }
     }
 
     return output + OutSize;

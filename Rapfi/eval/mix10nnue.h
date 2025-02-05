@@ -33,7 +33,7 @@ using namespace Evaluation;
 
 constexpr uint32_t ArchHashBase  = 0xb53b0258;
 constexpr int      ShapeNum      = 442503;
-constexpr int      FeatureDim    = 128;
+constexpr int      FeatureDim    = 64;
 constexpr int      FeatDWConvDim = 64;
 constexpr int      NumHeadBucket = 1;
 

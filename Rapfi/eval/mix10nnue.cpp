@@ -342,6 +342,16 @@ void Mix10Accumulator::clear(const Mix10Weight &w)
         typedef Batch<FeatDWConvDim, int16_t> ConvB;
         typedef Batch<FeatureDim, int32_t>    VSumB;
 
+        auto addToAccumulator = [](std::array<int32_t, FeatureDim> &vSum, auto v0, auto v1, int b) {
+            auto vSumPtr = vSum.data() + b * 2 * VSumB::RegWidth;
+            auto vSum0   = I32LS::load(vSumPtr);
+            auto vSum1   = I32LS::load(vSumPtr + VSumB::RegWidth);
+            vSum0        = I32Op::add(vSum0, v0);
+            vSum1        = I32Op::add(vSum1, v1);
+            I32LS::store(vSumPtr, vSum0);
+            I32LS::store(vSumPtr + VSumB::RegWidth, vSum1);
+        };
+
         for (int y = 0, innerIdx = 0; y < boardSize; y++) {
             for (int x = 0; x < boardSize; x++, innerIdx++) {
                 // Init mapSum from four directions
@@ -380,18 +390,8 @@ void Mix10Accumulator::clear(const Mix10Weight &w)
                     feature       = I16Op::max(feature, I16Op::setzero());
                     auto [v0, v1] = Convert<int16_t, int32_t>::convert(feature);
 
-                    auto addToAccumulator =
-                        [&, v0_ = v0, v1_ = v1](std::array<int32_t, FeatureDim> &vSum) {
-                            auto vSumPtr = vSum.data() + b * 2 * VSumB::RegWidth;
-                            auto vSum0   = I32LS::load(vSumPtr);
-                            auto vSum1   = I32LS::load(vSumPtr + VSumB::RegWidth);
-                            vSum0        = I32Op::add(vSum0, v0_);
-                            vSum1        = I32Op::add(vSum1, v1_);
-                            I32LS::store(vSumPtr, vSum0);
-                            I32LS::store(vSumPtr + VSumB::RegWidth, vSum1);
-                        };
-                    addToAccumulator(valueSum.global);
-                    addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]]);
+                    addToAccumulator(valueSum.global, v0, v1, b);
+                    addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]], v0, v1, b);
                 }
             }
         }
@@ -404,18 +404,8 @@ void Mix10Accumulator::clear(const Mix10Weight &w)
                     feature       = I16Op::max(feature, I16Op::setzero());  // relu
                     auto [v0, v1] = Convert<int16_t, int32_t>::convert(feature);
 
-                    auto addToAccumulator =
-                        [&, v0_ = v0, v1_ = v1](std::array<int32_t, FeatureDim> &vSum) {
-                            auto vSumPtr = vSum.data() + b * 2 * VSumB::RegWidth;
-                            auto vSum0   = I32LS::load(vSumPtr);
-                            auto vSum1   = I32LS::load(vSumPtr + VSumB::RegWidth);
-                            vSum0        = I32Op::add(vSum0, v0_);
-                            vSum1        = I32Op::add(vSum1, v1_);
-                            I32LS::store(vSumPtr, vSum0);
-                            I32LS::store(vSumPtr + VSumB::RegWidth, vSum1);
-                        };
-                    addToAccumulator(valueSum.global);
-                    addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]]);
+                    addToAccumulator(valueSum.global, v0, v1, b);
+                    addToAccumulator(valueSum.group[groupIndex[y]][groupIndex[x]], v0, v1, b);
                 }
             }
         }
@@ -1034,7 +1024,7 @@ void Mix10Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuff
 
     // Apply all incremental update and calculate policy
     clearCache(self);
-    accumulator[self]->evaluatePolicyLarge(*weight[self], policyBuffer);
+    accumulator[self]->evaluatePolicySmall(*weight[self], policyBuffer);
 }
 
 void Mix10Evaluator::clearCache(Color side)
