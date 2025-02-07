@@ -59,9 +59,16 @@ std::vector<Pos> parsePositionString(std::string_view posStr, int boardWidth, in
 // forward declaration
 namespace cxxopts {
 class ParseResult;
+class Options;
 }
 
 namespace Command {
+
+/// Add options regarding playing/thinking to the options object.
+void addPlayOptions(cxxopts::Options &options);
+
+/// Add opengen options to the options object.
+void addOpengenOptions(cxxopts::Options &options, const Opening::OpeningGenConfig& defaultCfg);
 
 /// Parse opengen config from arguments.
 /// Throws std::invalid_argument if arguments are not correct.
