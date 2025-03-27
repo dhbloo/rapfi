@@ -60,7 +60,6 @@ jobs:
           - { name: avxvnni, cmake_command: "-DUSE_AVX2=ON -DUSE_VNNI=ON" }
           - { name: avx512, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON" }
           - { name: avx512vnni, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON -DUSE_VNNI=ON" }
-
     defaults:
       run:
         working-directory: Rapfi
@@ -71,7 +70,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: true
+          submodules: ${{ matrix.arch.name == 'avx2' }}
 
       - name: Download latest clang compiler on linux
         if: matrix.target.name == 'linux-clang'
@@ -97,7 +96,7 @@ jobs:
         run: |
           rm -rf build && mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release ${{ matrix.target.cmake_command }} ${{ matrix.arch.cmake_command }}
-          cmake --build . -j2 && strip pbrain-rapfi*
+          cmake --build . -j && strip pbrain-rapfi*
           mv -v pbrain-rapfi pbrain-rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
 
       - name: Check bench signature
@@ -115,6 +114,38 @@ jobs:
           name: Rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
           path: Rapfi/build/pbrain-rapfi*
 
+  Rapfi-MacOS:
+    name: MacOS-apple-silicon
+    runs-on: macos-latest
+    env:
+      CC: clang
+      CXX: clang++
+    defaults:
+      run:
+        working-directory: Rapfi
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_AVX2=OFF -DUSE_SSE=OFF -DUSE_NEON=ON -DUSE_NEON_DOTPROD=ON
+          cmake --build . -j && strip pbrain-rapfi
+          mv -v pbrain-rapfi pbrain-rapfi-macos-apple-silicon
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rapfi-MacOS-apple-silicon
+          path: Rapfi/build/pbrain-rapfi-macos-apple-silicon
+
+
   Fishtest:
     name: linux-avx2
     runs-on: ubuntu-20.04
@@ -128,6 +159,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Build
         run: |

@@ -74,7 +74,7 @@ set(CORE_SOURCES
     search/ab/search.cpp
     search/mcts/node.cpp
     search/mcts/search.cpp
-    
+
     config.cpp
     internalConfig.cpp
     main.cpp
@@ -378,7 +378,7 @@ if(MSVC)
     if(USE_ASAN)
 	    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fsanitize=address")
 	endif()
-	
+
     if(CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
         set_target_properties(rapfi PROPERTIES LINK_FLAGS "/PROFILE")
     endif()
@@ -430,6 +430,8 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "C
     elseif(NOT EMSCRIPTEN)
         if(NO_MULTI_THREADING AND NO_COMMAND_MODULES)
             target_link_libraries(rapfi PRIVATE -static)
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+            target_link_libraries(rapfi PRIVATE pthread)
         else()
 		    target_link_libraries(rapfi PRIVATE pthread atomic)
         endif()
