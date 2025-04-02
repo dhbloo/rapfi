@@ -325,25 +325,23 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
     // Expand board candidate if needed
     Opening::expandCandidate(*main()->board);
 
-    // Generate root moves for main search thread
-    MovePicker movePicker(options.rule, *main()->board, MovePicker::ExtraArgs<MovePicker::ROOT> {});
-    while (Pos m = movePicker()) {
+    auto addMoveToRootMoves = [this](Pos m) {
         // Ignore blocked moves
-        if (std::count(options.blockMoves.begin(), options.blockMoves.end(), m))
-            continue;
+        if (std::count(main()->searchOptions.blockMoves.begin(),
+                       main()->searchOptions.blockMoves.end(),
+                       m))
+            return;
 
-        if (options.balanceMode == Search::SearchOptions::BALANCE_TWO) {
+        if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO) {
             // Use candidates before first move
             std::unordered_set<Pos> cands;
             FOR_EVERY_CAND_POS(main()->board, pos)
             {
                 cands.insert(pos);
             }
-
-            main()->board->move(options.rule, m);
-
+            main()->board->move(main()->searchOptions.rule, m);
             // Generate second move for balance2
-            MovePicker movePicker2(options.rule,
+            MovePicker movePicker2(main()->searchOptions.rule,
                                    *main()->board,
                                    MovePicker::ExtraArgs<MovePicker::ROOT> {});
             while (Pos m2 = movePicker2()) {
@@ -353,11 +351,29 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
                     main()->balance2Moves[bm] = main()->rootMoves.size() - 1;
                 }
             }
-
-            main()->board->undo(options.rule);
+            main()->board->undo(main()->searchOptions.rule);
         }
         else {
             main()->rootMoves.emplace_back(m);
+        }
+    };
+
+    // Generate root moves for main search thread
+    MovePicker movePicker(options.rule, *main()->board, MovePicker::ExtraArgs<MovePicker::ROOT> {});
+    while (Pos m = movePicker()) {
+        addMoveToRootMoves(m);
+    }
+
+    // If all legal moves are blocked, we select all candidate moves as root moves
+    if (main()->rootMoves.empty() && options.blockMoves.size() > 0) {
+        std::unordered_set<Pos> cands;
+        FOR_EVERY_CAND_POS(main()->board, pos)
+        {
+            cands.insert(pos);
+        }
+
+        for (const auto &m : cands) {
+            addMoveToRootMoves(m);
         }
     }
 
