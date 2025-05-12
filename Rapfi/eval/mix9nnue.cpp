@@ -41,7 +41,7 @@ constexpr auto Power3 = []() {
 }();
 
 constexpr int DX[4] = {1, 0, 1, 1};
-constexpr int DY[4] = {0, 1, 1, -1};
+constexpr int DY[4] = {0, 1, -1, 1};
 
 // Max inner and outer point changes, indexed by board size
 constexpr int MaxInnerChanges[23] = {1,    6,     33,    102,   233,   446,   761,  1166,
@@ -316,14 +316,14 @@ void Mix9Accumulator::initIndexTable()
             int   disty0 = std::min(y - 0, half);
             int   disty1 = std::min(boardSize - 1 - y, half);
 
-            // DX[1]=0, DY[1]=1
+            // DX[0]=1, DY[0]=0
             idxs[0] = get_boarder_encoding(distx0, distx1);
             // DX[1]=0, DY[1]=1
             idxs[1] = get_boarder_encoding(disty0, disty1);
-            // DX[2]=1, DY[2]=1
-            idxs[2] = get_boarder_encoding(std::min(distx0, disty0), std::min(distx1, disty1));
-            // DX[3]=1, DY[3]=-1
-            idxs[3] = get_boarder_encoding(std::min(distx0, disty1), std::min(distx1, disty0));
+            // DX[2]=1, DY[2]=-1
+            idxs[2] = get_boarder_encoding(std::min(distx0, disty1), std::min(distx1, disty0));
+            // DX[3]=1, DY[3]=1
+            idxs[3] = get_boarder_encoding(std::min(distx0, disty0), std::min(distx1, disty1));
 
             assert(idxs[0] < ShapeNum);
             assert(idxs[1] < ShapeNum);
