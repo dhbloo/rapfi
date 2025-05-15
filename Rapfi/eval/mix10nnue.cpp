@@ -41,7 +41,7 @@ constexpr auto Power3 = []() {
 }();
 
 constexpr int DX[4] = {1, 0, 1, 1};
-constexpr int DY[4] = {0, 1, 1, -1};
+constexpr int DY[4] = {0, 1, -1, 1};
 
 // Max inner and outer point changes, indexed by board size
 constexpr int MaxInnerChanges[23] = {1,    6,     33,    102,   233,   446,   761,  1166,
@@ -51,11 +51,11 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
                                      3945,  5747,  7889,  10371, 13193, 16355, 19857, 23699,
                                      27881, 32403, 37265, 42467, 48009, 53891, 60113};
 
-struct Mix10BinaryWeightLoader : WeightLoader<Mix10Weight>
+struct Mix10WeightLoader : WeightLoader<mix10::Weight>
 {
-    std::unique_ptr<Mix10Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
+    std::unique_ptr<Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
     {
-        auto w = std::make_unique<Mix10Weight>();
+        auto w = std::make_unique<Weight>();
 
         read_compressed_mapping(in, *w);
         in.read(reinterpret_cast<char *>(&w->feature_dwconv_weight[0][0]),
@@ -73,7 +73,7 @@ struct Mix10BinaryWeightLoader : WeightLoader<Mix10Weight>
             return nullptr;
     }
 
-    void read_compressed_mapping(std::istream &in, Mix10Weight &w)
+    void read_compressed_mapping(std::istream &in, Weight &w)
     {
         constexpr int      MappingBits   = 10;
         constexpr uint64_t MappingMask   = (1 << MappingBits) - 1;
@@ -116,7 +116,7 @@ struct Mix10BinaryWeightLoader : WeightLoader<Mix10Weight>
         }
     }
 
-    void preprocess(Mix10Weight &w)
+    void preprocess(Weight &w)
     {
         for (int bucketIdx = 0; bucketIdx < NumHeadBucket; bucketIdx++) {
             auto &b = w.buckets[bucketIdx];
@@ -165,7 +165,7 @@ struct Mix10BinaryWeightLoader : WeightLoader<Mix10Weight>
     }
 };
 
-static Evaluation::WeightRegistry<Mix10BinaryWeightLoader> Mix10WeightRegistry;
+static Evaluation::WeightRegistry<Mix10WeightLoader> WeightReg;
 
 constexpr int                   Alignment = simd::NativeAlignment;
 constexpr simd::InstructionType IT        = simd::NativeInstType;
@@ -188,7 +188,7 @@ template <bool SignedInput = false,
           int  OutSize     = 0,
           int  InSize      = 0>
 inline void
-linearBlock(int8_t output[], const int8_t input[], const LinearWeight<OutSize, InSize> &layerWeight)
+linearBlock(int8_t output[], const int8_t input[], const FCWeight<OutSize, InSize> &layerWeight)
 {
     alignas(Alignment) int32_t outputi32[OutSize];
     simd::linear<OutSize, InSize, SignedInput>(outputi32,
@@ -206,7 +206,7 @@ linearBlock(int8_t output[], const int8_t input[], const LinearWeight<OutSize, I
 
 namespace Evaluation::mix10 {
 
-Mix10Accumulator::Mix10Accumulator(int boardSize)
+Accumulator::Accumulator(int boardSize)
     : boardSize(boardSize)
     , outerBoardSize(boardSize + 2)
     , currentVersion(-1)
@@ -243,7 +243,7 @@ Mix10Accumulator::Mix10Accumulator(int boardSize)
     initIndexTable();
 }
 
-Mix10Accumulator::~Mix10Accumulator()
+Accumulator::~Accumulator()
 {
     MemAlloc::alignedFree(valueSumTable);
     delete[] versionChangeNumTable;
@@ -254,7 +254,7 @@ Mix10Accumulator::~Mix10Accumulator()
     MemAlloc::alignedFree(mapConv);
 }
 
-void Mix10Accumulator::initIndexTable()
+void Accumulator::initIndexTable()
 {
     constexpr int length = 11;  // length of line shape
     constexpr int half   = length / 2;
@@ -309,14 +309,14 @@ void Mix10Accumulator::initIndexTable()
             int   disty0 = std::min(y - 0, half);
             int   disty1 = std::min(boardSize - 1 - y, half);
 
-            // DX[1]=0, DY[1]=1
+            // DX[0]=1, DY[0]=0
             idxs[0] = get_boarder_encoding(distx0, distx1);
             // DX[1]=0, DY[1]=1
             idxs[1] = get_boarder_encoding(disty0, disty1);
-            // DX[2]=1, DY[2]=1
-            idxs[2] = get_boarder_encoding(std::min(distx0, disty0), std::min(distx1, disty1));
-            // DX[3]=1, DY[3]=-1
-            idxs[3] = get_boarder_encoding(std::min(distx0, disty1), std::min(distx1, disty0));
+            // DX[2]=1, DY[2]=-1
+            idxs[2] = get_boarder_encoding(std::min(distx0, disty1), std::min(distx1, disty0));
+            // DX[3]=1, DY[3]=1
+            idxs[3] = get_boarder_encoding(std::min(distx0, disty0), std::min(distx1, disty1));
 
             assert(idxs[0] < ShapeNum);
             assert(idxs[1] < ShapeNum);
@@ -325,7 +325,7 @@ void Mix10Accumulator::initIndexTable()
         }
 }
 
-void Mix10Accumulator::clear(const Mix10Weight &w)
+void Accumulator::clear(const Weight &w)
 {
     if (currentVersion == -1) {
         // Init mapConv to bias
@@ -418,7 +418,7 @@ void Mix10Accumulator::clear(const Mix10Weight &w)
     currentVersion = 0;
 }
 
-void Mix10Accumulator::move(const Mix10Weight &w, Color pieceColor, int x, int y)
+void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
 {
     assert(pieceColor == BLACK || pieceColor == WHITE);
 
@@ -631,7 +631,7 @@ void Mix10Accumulator::move(const Mix10Weight &w, Color pieceColor, int x, int y
     valueSumNew.large_value_feature_valid = false;
 }
 
-void Mix10Accumulator::updateSharedSmallHead(const Mix10Weight &w)
+void Accumulator::updateSharedSmallHead(const Weight &w)
 {
     auto       &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
@@ -652,7 +652,7 @@ void Mix10Accumulator::updateSharedSmallHead(const Mix10Weight &w)
     valueSum.small_value_feature_valid = true;
 }
 
-void Mix10Accumulator::updateSharedLargeHead(const Mix10Weight &w)
+void Accumulator::updateSharedLargeHead(const Weight &w)
 {
     auto       &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
@@ -732,7 +732,7 @@ void Mix10Accumulator::updateSharedLargeHead(const Mix10Weight &w)
     valueSum.large_value_feature_valid = true;
 }
 
-std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueSmall(const Mix10Weight &w)
+std::tuple<float, float, float, float> Accumulator::evaluateValueSmall(const Weight &w)
 {
     updateSharedSmallHead(w);
 
@@ -753,7 +753,7 @@ std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueSmall(cons
     return {layer4i32[0] * scale, layer4i32[1] * scale, layer4i32[2] * scale, layer4i32[3] * scale};
 }
 
-std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueLarge(const Mix10Weight &w)
+std::tuple<float, float, float, float> Accumulator::evaluateValueLarge(const Weight &w)
 {
     updateSharedLargeHead(w);
 
@@ -772,7 +772,7 @@ std::tuple<float, float, float, float> Mix10Accumulator::evaluateValueLarge(cons
     return {layer3i32[0] * scale, layer3i32[1] * scale, layer3i32[2] * scale, layer3i32[3] * scale};
 }
 
-void Mix10Accumulator::evaluatePolicySmall(const Mix10Weight &w, PolicyBuffer &policyBuffer)
+void Accumulator::evaluatePolicySmall(const Weight &w, PolicyBuffer &policyBuffer)
 {
     updateSharedSmallHead(w);
 
@@ -837,7 +837,7 @@ void Mix10Accumulator::evaluatePolicySmall(const Mix10Weight &w, PolicyBuffer &p
     }
 }
 
-void Mix10Accumulator::evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &policyBuffer)
+void Accumulator::evaluatePolicyLarge(const Weight &w, PolicyBuffer &policyBuffer)
 {
     updateSharedLargeHead(w);
 
@@ -931,14 +931,14 @@ void Mix10Accumulator::evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &p
     }
 }
 
-Mix10Evaluator::Mix10Evaluator(int                   boardSize,
-                               Rule                  rule,
-                               std::filesystem::path blackWeightPath,
-                               std::filesystem::path whiteWeightPath)
-    : Evaluator(boardSize, rule)
+Evaluator::Evaluator(int                   boardSize,
+                     Rule                  rule,
+                     std::filesystem::path blackWeightPath,
+                     std::filesystem::path whiteWeightPath)
+    : Evaluation::Evaluator(boardSize, rule)
     , weight {nullptr, nullptr}
 {
-    CompressedWrapper<StandardHeaderParserWarpper<Mix10BinaryWeightLoader>> loader(
+    CompressedWrapper<StandardHeaderParserWarpper<Mix10WeightLoader>> loader(
         Compressor::Type::LZ4_DEFAULT);
 
     if (boardSize > 22)
@@ -967,29 +967,29 @@ Mix10Evaluator::Mix10Evaluator(int                   boardSize,
              std::make_pair(WHITE, whiteWeightPath),
          }) {
         currentWeightPath  = weightPath;
-        weight[weightSide] = Mix10WeightRegistry.loadWeightFromFile(loader, weightPath);
+        weight[weightSide] = WeightReg.loadWeightFromFile(loader, weightPath);
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));
     }
 
-    accumulator[BLACK] = std::make_unique<Mix10Accumulator>(boardSize);
-    accumulator[WHITE] = std::make_unique<Mix10Accumulator>(boardSize);
+    accumulator[BLACK] = std::make_unique<Accumulator>(boardSize);
+    accumulator[WHITE] = std::make_unique<Accumulator>(boardSize);
 
     int numCells = boardSize * boardSize;
     moveCache[BLACK].reserve(numCells);
     moveCache[WHITE].reserve(numCells);
 }
 
-Mix10Evaluator::~Mix10Evaluator()
+Evaluator::~Evaluator()
 {
     if (weight[BLACK])
-        Mix10WeightRegistry.unloadWeight(weight[BLACK]);
+        WeightReg.unloadWeight(weight[BLACK]);
     if (weight[WHITE])
-        Mix10WeightRegistry.unloadWeight(weight[WHITE]);
+        WeightReg.unloadWeight(weight[WHITE]);
 }
 
-void Mix10Evaluator::initEmptyBoard()
+void Evaluator::initEmptyBoard()
 {
     moveCache[BLACK].clear();
     moveCache[WHITE].clear();
@@ -997,17 +997,17 @@ void Mix10Evaluator::initEmptyBoard()
     accumulator[WHITE]->clear(*weight[WHITE]);
 }
 
-void Mix10Evaluator::beforeMove(const Board &board, Pos pos)
+void Evaluator::beforeMove(const Board &board, Pos pos)
 {
     addCache(board.sideToMove(), pos.x(), pos.y(), false);
 }
 
-void Mix10Evaluator::afterUndo(const Board &board, Pos pos)
+void Evaluator::afterUndo(const Board &board, Pos pos)
 {
     addCache(board.sideToMove(), pos.x(), pos.y(), true);
 }
 
-ValueType Mix10Evaluator::evaluateValue(const Board &board, AccLevel level)
+ValueType Evaluator::evaluateValue(const Board &board, AccLevel level)
 {
     Color self = board.sideToMove(), oppo = ~self;
 
@@ -1018,7 +1018,7 @@ ValueType Mix10Evaluator::evaluateValue(const Board &board, AccLevel level)
     return ValueType(win, loss, draw, true);
 }
 
-void Mix10Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, AccLevel level)
+void Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, AccLevel level)
 {
     Color self = board.sideToMove();
 
@@ -1027,7 +1027,7 @@ void Mix10Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuff
     accumulator[self]->evaluatePolicySmall(*weight[self], policyBuffer);
 }
 
-void Mix10Evaluator::clearCache(Color side)
+void Evaluator::clearCache(Color side)
 {
     constexpr Color opponentMap[4] = {WHITE, BLACK, WALL, EMPTY};
 
@@ -1045,7 +1045,7 @@ void Mix10Evaluator::clearCache(Color side)
     moveCache[side].clear();
 }
 
-void Mix10Evaluator::addCache(Color side, int x, int y, bool isUndo)
+void Evaluator::addCache(Color side, int x, int y, bool isUndo)
 {
     Color oldColor = EMPTY;
     Color newColor = side;

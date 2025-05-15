@@ -664,7 +664,7 @@ void Config::readEvaluator(const cpptoml::table &t)
                 auto [blackWeightPath, whiteWeightPath] =
                     getBlackAndWhiteWeightPath(weightPath, weightCfg);
 
-                return std::make_unique<Evaluation::mix10::Mix10Evaluator>(boardSize,
+                return std::make_unique<Evaluation::mix10::Evaluator>(boardSize,
                                                                            rule,
                                                                            blackWeightPath,
                                                                            whiteWeightPath);

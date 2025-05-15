@@ -44,13 +44,13 @@ constexpr int PolicyLMidDim = std::max(FeatDWConvDim / 2, 16);
 constexpr int PolicyLOutDim = std::max(FeatDWConvDim / 4, 16);
 
 template <int OutSize, int InSize>
-struct LinearWeight
+struct FCWeight
 {
     int8_t  weight[OutSize * InSize];
     int32_t bias[OutSize];
 };
 
-struct alignas(simd::NativeAlignment) Mix10Weight
+struct alignas(simd::NativeAlignment) Weight
 {
     // 1  mapping layer
     int16_t mapping[2][ShapeNum][FeatureDim];
@@ -62,35 +62,33 @@ struct alignas(simd::NativeAlignment) Mix10Weight
     struct HeadBucket
     {
         // 3  Small Policy dynamic pointwise conv
-        LinearWeight<FeatureDim, FeatureDim>                        policy_small_pwconv_weight_l1;
-        LinearWeight<PolicySOutDim *(PolicySInDim + 1), FeatureDim> policy_small_pwconv_weight_l2;
+        FCWeight<FeatureDim, FeatureDim>                        policy_small_pwconv_weight_l1;
+        FCWeight<PolicySOutDim *(PolicySInDim + 1), FeatureDim> policy_small_pwconv_weight_l2;
 
         // 4  Large Policy dynamic pointwise conv
-        LinearWeight<FeatureDim * 2, FeatureDim> policy_large_pwconv_weight_shared;
-        LinearWeight<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>
-            policy_large_pwconv_weight_1;
-        LinearWeight<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2>
-            policy_large_pwconv_weight_2;
+        FCWeight<FeatureDim * 2, FeatureDim> policy_large_pwconv_weight_shared;
+        FCWeight<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>  policy_large_pwconv_weight_1;
+        FCWeight<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2> policy_large_pwconv_weight_2;
 
         // 5  Small Value Head MLP (layer 1,2,3)
-        LinearWeight<FeatureDim, FeatureDim> value_small_l1;
-        LinearWeight<FeatureDim, FeatureDim> value_small_l2;
-        LinearWeight<32, FeatureDim>         value_small_l3;
-        LinearWeight<4, 32>                  value_small_l4;
+        FCWeight<FeatureDim, FeatureDim> value_small_l1;
+        FCWeight<FeatureDim, FeatureDim> value_small_l2;
+        FCWeight<32, FeatureDim>         value_small_l3;
+        FCWeight<4, 32>                  value_small_l4;
 
         char __padding_to_64bytes_0[48];
 
         // 6  Large Value Gate & Group MLP
-        LinearWeight<FeatureDim * 2, FeatureDim> value_gate;
-        LinearWeight<FeatureDim, FeatureDim>     value_corner;
-        LinearWeight<FeatureDim, FeatureDim>     value_edge;
-        LinearWeight<FeatureDim, FeatureDim>     value_center;
-        LinearWeight<FeatureDim, FeatureDim>     value_quad;
+        FCWeight<FeatureDim * 2, FeatureDim> value_gate;
+        FCWeight<FeatureDim, FeatureDim>     value_corner;
+        FCWeight<FeatureDim, FeatureDim>     value_edge;
+        FCWeight<FeatureDim, FeatureDim>     value_center;
+        FCWeight<FeatureDim, FeatureDim>     value_quad;
 
         // 7  Large Value Head MLP (layer 1,2,3)
-        LinearWeight<FeatureDim, FeatureDim * 5> value_l1;
-        LinearWeight<32, FeatureDim>             value_l2;
-        LinearWeight<4, 32>                      value_l3;
+        FCWeight<FeatureDim, FeatureDim * 5> value_l1;
+        FCWeight<32, FeatureDim>             value_l2;
+        FCWeight<4, 32>                      value_l3;
 
         // 8  Policy output linear
         float policy_small_output_weight[PolicySOutDim];
@@ -102,7 +100,7 @@ struct alignas(simd::NativeAlignment) Mix10Weight
     } buckets[NumHeadBucket];
 };
 
-class Mix10Accumulator
+class Accumulator
 {
 public:
     struct alignas(simd::NativeAlignment) ValueSumType
@@ -118,26 +116,26 @@ public:
         bool                           large_value_feature_valid;
     };
 
-    Mix10Accumulator(int boardSize);
-    ~Mix10Accumulator();
+    Accumulator(int boardSize);
+    ~Accumulator();
 
     /// Init accumulator state to empty board.
-    void clear(const Mix10Weight &w);
+    void clear(const Weight &w);
     /// Incremental update mix6 network state.
-    void move(const Mix10Weight &w, Color pieceColor, int x, int y);
+    void move(const Weight &w, Color pieceColor, int x, int y);
     void undo() { currentVersion--; }
 
-    void updateSharedSmallHead(const Mix10Weight &w);
-    void updateSharedLargeHead(const Mix10Weight &w);
+    void updateSharedSmallHead(const Weight &w);
+    void updateSharedLargeHead(const Weight &w);
 
     /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
-    std::tuple<float, float, float, float> evaluateValueSmall(const Mix10Weight &w);
+    std::tuple<float, float, float, float> evaluateValueSmall(const Weight &w);
     /// Calculate value (win/loss/draw) and (relative) uncertainty of current network state.
-    std::tuple<float, float, float, float> evaluateValueLarge(const Mix10Weight &w);
+    std::tuple<float, float, float, float> evaluateValueLarge(const Weight &w);
     /// Calculate policy value of current network state.
-    void evaluatePolicySmall(const Mix10Weight &w, PolicyBuffer &policyBuffer);
+    void evaluatePolicySmall(const Weight &w, PolicyBuffer &policyBuffer);
     /// Calculate policy value of current network state.
-    void evaluatePolicyLarge(const Mix10Weight &w, PolicyBuffer &policyBuffer);
+    void evaluatePolicyLarge(const Weight &w, PolicyBuffer &policyBuffer);
 
 private:
     friend class Mix8Evaluator;
@@ -170,14 +168,14 @@ private:
     int  getBucketIndex() { return 0; }
 };
 
-class Mix10Evaluator : public Evaluator
+class Evaluator : public Evaluation::Evaluator
 {
 public:
-    Mix10Evaluator(int                   boardSize,
-                   Rule                  rule,
-                   std::filesystem::path blackWeightPath,
-                   std::filesystem::path whiteWeightPath);
-    ~Mix10Evaluator();
+    Evaluator(int                   boardSize,
+              Rule                  rule,
+              std::filesystem::path blackWeightPath,
+              std::filesystem::path whiteWeightPath);
+    ~Evaluator();
 
     void initEmptyBoard();
     void beforeMove(const Board &board, Pos pos);
@@ -205,9 +203,9 @@ private:
     /// Record new board action, but not update accumulator instantly.
     void addCache(Color side, int x, int y, bool isUndo);
 
-    Mix10Weight /* non-owning ptr */ *weight[2];
-    std::unique_ptr<Mix10Accumulator> accumulator[2];
-    std::vector<MoveCache>            moveCache[2];
+    Weight /* non-owning ptr */ *weight[2];
+    std::unique_ptr<Accumulator> accumulator[2];
+    std::vector<MoveCache>       moveCache[2];
 };
 
 }  // namespace Evaluation::mix10
