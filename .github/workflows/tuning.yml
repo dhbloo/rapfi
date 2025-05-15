@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: |
           rm -rf build && mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_BMI2=OFF -DUSE_AVX2=ON -DUSE_AVX=ON -DUSE_SSE=ON -DNO_COMMAND_MODULES=ON
+          cmake .. -DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=OFF -DNO_COMMAND_MODULES=ON
           cmake --build . -j2 && strip pbrain-rapfi*
           mv -v pbrain-rapfi rapfi-linux-avx2
 

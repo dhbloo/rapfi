@@ -1352,14 +1352,14 @@ bool runProtocol()
 
     #ifdef MULTI_THREADING
         #include <emscripten/atomic.h>
-static uint32_t loop_ready = 0;  // a dummy variable for atomic wait
+static uint32_t loop_ready = 0;  // count variable for atomic wait
     #endif
 
 /// Entry point of one gomocup protocol iter for WASM build
 extern "C" void gomocupLoopOnce()
 {
     #ifdef MULTI_THREADING
-    emscripten_atomic_store_u32(&loop_ready, 1);
+    emscripten_atomic_add_u32(&loop_ready, 1);
     emscripten_atomic_notify(&loop_ready, 1);
     #else
     if (Command::GomocupProtocol::runProtocol())
@@ -1378,11 +1378,12 @@ void Command::gomocupLoop()
     for (;;) {
 #ifdef __EMSCRIPTEN__
     #ifdef MULTI_THREADING
-        emscripten_atomic_wait_u32(&loop_ready, 0, -1);
-        emscripten_atomic_store_u32(&loop_ready, 0);
+        while (emscripten_atomic_load_u32(&loop_ready) == 0)
+            emscripten_atomic_wait_u32(&loop_ready, 0, -1);
+        emscripten_atomic_sub_u32(&loop_ready, 1);
     #else
-        // We do not run infinite loop in wasm build, instead we manually call
-        // gomocupLoopOnce() for each command to avoid hanging the main thread.
+        // We do not run infinite loop in single thread build, instead we manually
+        // call gomocupLoopOnce() for each command to avoid hanging the main thread.
         return;
     #endif
 #endif

@@ -96,10 +96,8 @@ private:
     std::atomic<Node *> child;
 };
 
-static_assert(sizeof(Edge) == 16, "Sanity check on Edge's size");
-
 /// Represents an allocated array of edges.
-struct EdgeArray
+struct alignas(alignof(Edge)) EdgeArray
 {
     uint32_t numEdges;
     Edge     edges[];

@@ -115,6 +115,58 @@ Command::parsePositionString(std::string_view positionString, int boardWidth, in
 
 #ifndef NO_COMMAND_MODULES
 
+void Command::addPlayOptions(cxxopts::Options &options)
+{
+    options.add_options("play-general")                                                      //
+        ("s,boardsize", "Board size in [5,22]", cxxopts::value<int>()->default_value("15"))  //
+        ("r,rule",
+         "One of [freestyle, standard, renju] rule",
+         cxxopts::value<std::string>()->default_value("freestyle"))  //
+        ("t,thread",
+         "Number of search threads to use for searching balanced moves",
+         cxxopts::value<size_t>()->default_value(std::to_string(Config::DefaultThreadNum)))  //
+        ("hashsize",
+         "Hash size of the transposition table (in MB)",
+         cxxopts::value<size_t>()->default_value("128"))  //
+        ("q,no-search-message",
+         "Disable message output during search")  //
+        ;
+}
+
+void Command::addOpengenOptions(cxxopts::Options &options, const Opening::OpeningGenConfig &cfg)
+{
+    options.add_options("opengen-configs")  //
+        ("min-move",
+         "Minimal number of moves per opening",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.minMoves)))  //
+        ("max-move",
+         "Maximal number of moves per opening",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.maxMoves)))  //
+        ("min-area-size",
+         "Minimal size of local area",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.localSizeMin)))  //
+        ("max-area-size",
+         "Maximal size of local area",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.localSizeMax)))  //
+        ("balance1-node",
+         "Maximal nodes for balance1 search",
+         cxxopts::value<uint64_t>()->default_value(std::to_string(cfg.balance1Nodes)))  //
+        ("balance1-fast-check-ratio",
+         "Spend how much amount of nodes to fast check if this position is balanceable",
+         cxxopts::value<double>()->default_value(
+             std::to_string((double)cfg.balance1FastCheckNodes / (double)cfg.balance1Nodes)))  //
+        ("balance1-fast-check-window",
+         "Consider this position as unbalanceable if its initial value falls outside the window",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.balance1FastCheckWindow)))  //
+        ("balance2-node",
+         "Maximal nodes for balance2 search",
+         cxxopts::value<uint64_t>()->default_value(std::to_string(cfg.balance2Nodes)))  //
+        ("balance-window",
+         "Eval in [-window, window] is considered as balanced",
+         cxxopts::value<int>()->default_value(std::to_string(cfg.balanceWindow)))  //
+        ;
+}
+
 Opening::OpeningGenConfig Command::parseOpengenConfig(const cxxopts::ParseResult &result)
 {
     Opening::OpeningGenConfig cfg;

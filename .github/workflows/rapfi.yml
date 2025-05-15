@@ -9,7 +9,7 @@ on:
       - master
 
 jobs:
-  Rapfi:
+  Rapfi-x86-64:
     name: ${{ matrix.target.name }}-${{ matrix.arch.name }}
     runs-on: ${{ matrix.target.os }}
     env:
@@ -28,9 +28,9 @@ jobs:
             }
           - {
               name: linux-clang,
-              os: ubuntu-20.04,
-              c_compiler: clang-18,
-              cxx_compiler: clang++-18,
+              os: ubuntu-22.04,
+              c_compiler: clang-19,
+              cxx_compiler: clang++-19,
               cmake_command: "",
               shell: "bash {0}"
             }
@@ -55,12 +55,11 @@ jobs:
               shell: "msys2 {0}"
             }
         arch:
-          - { name: sse, cmake_command: "-DUSE_AVX2=OFF" }
-          - { name: avx2, cmake_command: "-DUSE_AVX2=ON" }
-          - { name: avxvnni, cmake_command: "-DUSE_AVX2=ON -DUSE_VNNI=ON" }
-          - { name: avx512, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON" }
-          - { name: avx512vnni, cmake_command: "-DUSE_AVX2=ON -DUSE_AVX512=ON -DUSE_VNNI=ON" }
-
+          - { name: sse, cmake_command: "-DUSE_SSE=ON -DUSE_AVX2=OFF -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=OFF" }
+          - { name: avx2, cmake_command: "-DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=OFF" }
+          - { name: avxvnni, cmake_command: "-DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=ON" }
+          - { name: avx512, cmake_command: "-DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=ON -DUSE_BMI2=OFF -DUSE_VNNI=OFF" }
+          - { name: avx512vnni, cmake_command: "-DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=ON -DUSE_BMI2=OFF -DUSE_VNNI=ON" }
     defaults:
       run:
         working-directory: Rapfi
@@ -71,14 +70,14 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: true
+          submodules: ${{ matrix.arch.name == 'avx2' }}
 
       - name: Download latest clang compiler on linux
         if: matrix.target.name == 'linux-clang'
         run: |
           wget https://apt.llvm.org/llvm.sh
           chmod u+x llvm.sh
-          echo | sudo ./llvm.sh 18
+          echo | sudo ./llvm.sh 19
           rm llvm.sh
 
       - name: Setup msys and install required packages
@@ -90,14 +89,14 @@ jobs:
 
       - name: Extract the bench hash from the commit history
         run: |
-          git log HEAD | grep "\b[Bb]ench\s*[a-f0-9]\{8\}" | head -n 1 | sed "s/\s*[Bb]ench\s*\([a-f0-9]\{8\}\).*/\1/g" > git_sig
+          git log HEAD | grep "\b[Bb]ench\s*[a-f0-9]\{8\}" | head -n 1 | sed "s/.*[Bb]ench\s*\([a-f0-9]\{8\}\).*/\1/g" > git_sig
           [ -s git_sig ] && echo "commit_bench=$(cat git_sig)" >> $GITHUB_ENV && echo "Reference bench:" $(cat git_sig) || echo "No bench found"
 
       - name: Build
         run: |
           rm -rf build && mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release ${{ matrix.target.cmake_command }} ${{ matrix.arch.cmake_command }}
-          cmake --build . -j2 && strip pbrain-rapfi*
+          cmake --build . -j && strip pbrain-rapfi*
           mv -v pbrain-rapfi pbrain-rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
 
       - name: Check bench signature
@@ -112,12 +111,56 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Rapfi
+          name: Rapfi-${{ matrix.target.name }}-${{ matrix.arch.name }}
           path: Rapfi/build/pbrain-rapfi*
+
+  Rapfi-MacOS:
+    name: MacOS-apple-silicon
+    runs-on: macos-latest
+    env:
+      CC: clang
+      CXX: clang++
+    defaults:
+      run:
+        working-directory: Rapfi
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Extract the bench hash from the commit history
+        run: |
+          git log HEAD | grep "\b[Bb]ench\s*([Mm]ac[Oo][Ss])\s*[a-f0-9]\{8\}" | head -n 1 | sed "s/.*[Bb]ench[[:space:]]*(\([Mm]ac[Oo][Ss]\))[[:space:]]*\([a-f0-9]\{8\}\).*/\2/" > git_sig
+          [ -s git_sig ] && echo "commit_bench=$(cat git_sig)" >> $GITHUB_ENV && echo "Reference bench:" $(cat git_sig) || echo "No bench found"
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake .. -DUSE_NEON=ON -DUSE_NEON_DOTPROD=ON
+          cmake --build . -j && strip pbrain-rapfi
+          mv -v pbrain-rapfi pbrain-rapfi-macos-apple-silicon
+
+      - name: Check bench signature
+        run: |
+          cd build && find ../../Networks -mindepth 2 -type f -exec cp {} . \;
+          ./pbrain-rapfi-macos-apple-silicon bench > bench.txt
+          cat bench.txt
+          actual_bench=$(grep "Hash" bench.txt | sed "s/.*Hash: *\([a-f0-9]\{8\}\).*/\1/")
+          if [[ "$actual_bench" != "$commit_bench" ]]; then echo "Incorrect bench, got '$actual_bench' expected '$commit_bench'" && exit 1; fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rapfi-MacOS-apple-silicon
+          path: Rapfi/build/pbrain-rapfi-macos-apple-silicon
 
   Fishtest:
     name: linux-avx2
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     env:
       CC: clang
       CXX: clang++
@@ -128,11 +171,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Build
         run: |
           rm -rf build && mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_BMI2=OFF -DUSE_AVX2=ON -DUSE_AVX=ON -DUSE_SSE=ON -DNO_COMMAND_MODULES=ON
+          cmake .. -DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=OFF -DNO_COMMAND_MODULES=ON
           cmake --build . -j2 && strip pbrain-rapfi*
           mv -v pbrain-rapfi rapfi-linux-avx2
 
@@ -143,7 +188,7 @@ jobs:
           curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_freestyle20 -F "task_name=[f20] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05"
           sleep 15
           curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_standard15 -F "task_name=[s15] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05"
-          sleep 5
+          sleep 15
           curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_renju15 -F "task_name=[r15] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05"
 
       - name: Upload

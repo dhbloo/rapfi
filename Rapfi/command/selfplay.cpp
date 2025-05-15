@@ -116,25 +116,13 @@ void Command::selfplay(int argc, char *argv[])
          cxxopts::value<std::string>())  //
         ("output-type",
          "Output dataset type, one of [txt, bin, bin_lz4, binpack, binpack_lz4]",
-         cxxopts::value<std::string>()->default_value("binpack_lz4"))      //
-        ("n,number", "Number of games to play", cxxopts::value<size_t>())  //
-        ("s,boardsize",
-         "Board size in [5,22]. Can be overriden by boardsize-min/boardsize-max",
-         cxxopts::value<int>()->default_value("15"))                              //
+         cxxopts::value<std::string>()->default_value("binpack_lz4"))             //
+        ("n,number", "Number of games to play", cxxopts::value<size_t>())         //
         ("boardsize-min", "Minimal board size in [5,22]", cxxopts::value<int>())  //
         ("boardsize-max", "Maximal board size in [5,22]", cxxopts::value<int>())  //
-        ("r,rule",
-         "One of [freestyle, standard, renju] rule",
-         cxxopts::value<std::string>()->default_value("freestyle"))  //
-        ("t,thread",
-         "Number of search threads to use",
-         cxxopts::value<size_t>()->default_value(std::to_string(Config::DefaultThreadNum)))  //
         ("opening",
          "Path to the opening book file. If not specified, auto generated openings are used",
          cxxopts::value<std::string>())  //
-        ("hashsize",
-         "Hash size of the transposition table (in MB)",
-         cxxopts::value<size_t>()->default_value("128"))  //
         ("multipv",
          "The maximum number of multipv to record (must be at least 1)",
          cxxopts::value<int>()->default_value("1"))  //
@@ -179,33 +167,12 @@ void Command::selfplay(int argc, char *argv[])
         ("force-draw-plyleft",
          "Force draw when left ply is less than this",
          cxxopts::value<int>()->default_value("0"))  //
-        ("min-move",
-         "Minimal number of moves per opening",
-         cxxopts::value<int>()->default_value(std::to_string(opengenCfg.minMoves)))  //
-        ("max-move",
-         "Maximal number of moves per opening",
-         cxxopts::value<int>()->default_value(std::to_string(opengenCfg.maxMoves)))  //
-        ("min-area-size",
-         "Minimal size of local area",
-         cxxopts::value<int>()->default_value(std::to_string(opengenCfg.localSizeMin)))  //
-        ("max-area-size",
-         "Maximal size of local area",
-         cxxopts::value<int>()->default_value(std::to_string(opengenCfg.localSizeMax)))  //
-        ("balance1-node",
-         "Maximal nodes for balance1 search",
-         cxxopts::value<uint64_t>()->default_value(std::to_string(opengenCfg.balance1Nodes)))  //
-        ("balance2-node",
-         "Maximal nodes for balance2 search",
-         cxxopts::value<uint64_t>()->default_value(std::to_string(opengenCfg.balance2Nodes)))  //
-        ("balance-window",
-         "Eval in [-window, window] is considered as balanced",
-         cxxopts::value<int>()->default_value(std::to_string(opengenCfg.balanceWindow)))  //
-        ("q,no-search-message",
-         "Disable message output during balance move search")  //
         ("report-interval",
          "Time (ms) between two progress report message",
          cxxopts::value<Time>()->default_value("60000"))  //
         ("h,help", "Print selfplay usage");
+    addPlayOptions(options);
+    addOpengenOptions(options, opengenCfg);
 
     try {
         auto args = options.parse(argc, argv);
