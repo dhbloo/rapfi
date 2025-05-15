@@ -26,6 +26,7 @@
 #include "eval/mix10nnue.h"
 #include "eval/mix9litennue.h"
 #include "eval/mix9nnue.h"
+#include "eval/mix9svqnnue.h"
 #include "game/pattern.h"
 #include "search/ab/searcher.h"
 #include "search/hashtable.h"
@@ -655,6 +656,22 @@ void Config::readEvaluator(const cpptoml::table &t)
             },
             true));
     }
+    else if (*evaluatorType == "mix9svqnnue") {
+        Search::Threads.setupEvaluator(warpEvaluatorMaker(
+            [=](int                   boardSize,
+                Rule                  rule,
+                std::filesystem::path weightPath,
+                const cpptoml::table &weightCfg) {
+                auto [blackWeightPath, whiteWeightPath] =
+                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
+
+                return std::make_unique<Evaluation::mix9svq::Evaluator>(boardSize,
+                                                                        rule,
+                                                                        blackWeightPath,
+                                                                        whiteWeightPath);
+            },
+            true));
+    }
     else if (*evaluatorType == "mix10nnue") {
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
@@ -665,9 +682,9 @@ void Config::readEvaluator(const cpptoml::table &t)
                     getBlackAndWhiteWeightPath(weightPath, weightCfg);
 
                 return std::make_unique<Evaluation::mix10::Evaluator>(boardSize,
-                                                                           rule,
-                                                                           blackWeightPath,
-                                                                           whiteWeightPath);
+                                                                      rule,
+                                                                      blackWeightPath,
+                                                                      whiteWeightPath);
             },
             true));
     }
