@@ -86,6 +86,11 @@ std::string getBuildInfo()
 #elif defined(USE_NEON)
     ss << " NEON";
 #endif
+#if defined(USE_WASM_SIMD_RELAXED)
+    ss << " WASM_SIMD_RELAXED";
+#elif defined(USE_WASM_SIMD)
+    ss << " WASM_SIMD";
+#endif
 
 #if !defined(MULTI_THREADING)
     ss << " SINGLE_THREAD";

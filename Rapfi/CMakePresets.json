@@ -1,0 +1,502 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/build/install/${presetName}"
+      }
+    },
+    {
+      "name": "base-onnx",
+      "hidden": true,
+      "cacheVariables": {
+        "ORT_ROOTDIR": "",
+        "USE_ORT_EVALUATOR": "True",
+        "USE_ORT_GPU_EP": "False"
+      }
+    },
+    {
+      "name": "base-x64-msvc",
+      "hidden": true,
+      "inherits": [
+        "base"
+      ],
+      "generator": "Visual Studio 17 2022",
+      "toolset": "ClangCL",
+      "architecture": {
+        "strategy": "set",
+        "value": "x64"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "intelliSenseMode": "windows-clang-x64"
+        }
+      }
+    },
+    {
+      "name": "base-x64-clang",
+      "hidden": true,
+      "inherits": [
+        "base"
+      ],
+      "generator": "Ninja",
+      "architecture": {
+        "strategy": "external",
+        "value": "x64"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "base-arm64-msvc",
+      "hidden": true,
+      "inherits": [
+        "base"
+      ],
+      "generator": "Visual Studio 17 2022",
+      "toolset": "ClangCL",
+      "architecture": {
+        "strategy": "set",
+        "value": "arm64"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "intelliSenseMode": "windows-msvc-arm64"
+        }
+      }
+    },
+    {
+      "name": "base-arm64-clang",
+      "hidden": true,
+      "inherits": [
+        "base"
+      ],
+      "generator": "Ninja",
+      "architecture": {
+        "strategy": "external",
+        "value": "arm64"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "x64-msvc-Native-Debug",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-msvc-Native-RelWithDebInfo",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FORCE_ASSERTION": "True"
+      }
+    },
+    {
+      "name": "x64-msvc-Native",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True"
+      }
+    },
+    {
+      "name": "x64-msvc-SSE",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "False",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-msvc-AVX2",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-msvc-AVXVNNI",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "True"
+      }
+    },
+    {
+      "name": "x64-msvc-AVX512",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "True",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-msvc-AVX512VNNI",
+      "inherits": [
+        "base-x64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "True",
+        "USE_BMI2": "False",
+        "USE_VNNI": "True"
+      }
+    },
+    {
+      "name": "x64-msvc-onnx-Native-Debug",
+      "inherits": [
+        "base-x64-msvc",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-msvc-onnx-Native-RelWithDebInfo",
+      "inherits": [
+        "base-x64-msvc",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FORCE_ASSERTION": "True"
+      }
+    },
+    {
+      "name": "x64-msvc-onnx-Native",
+      "inherits": [
+        "base-x64-msvc",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True"
+      }
+    },
+    {
+      "name": "x64-clang-Native",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "x64-clang-SSE",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_SSE": "True",
+        "USE_AVX2": "False",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-clang-AVX2",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-clang-AVXVNNI",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "True"
+      }
+    },
+    {
+      "name": "x64-clang-AVX512",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "True",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-clang-AVX512VNNI",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "True",
+        "USE_BMI2": "False",
+        "USE_VNNI": "True"
+      }
+    },
+    {
+      "name": "x64-clang-AVX2-ST",
+      "displayName": "x64 SingleThreaded AVX2 (Gomocup ver)",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NO_MULTI_THREADING": "True",
+        "NO_COMMAND_MODULES": "True",
+        "USE_SSE": "True",
+        "USE_AVX2": "True",
+        "USE_AVX512": "False",
+        "USE_BMI2": "False",
+        "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-clang-onnx-Native",
+      "inherits": [
+        "base-x64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "arm64-msvc-Native",
+      "inherits": [
+        "base-arm64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "arm64-msvc-NEON",
+      "inherits": [
+        "base-arm64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_NEON": "True",
+        "USE_NEON_DOTPROD": "False"
+      }
+    },
+    {
+      "name": "arm64-msvc-NEON-DOTPROD",
+      "inherits": [
+        "base-arm64-msvc"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_NEON": "True",
+        "USE_NEON_DOTPROD": "True"
+      }
+    },
+    {
+      "name": "arm64-clang-Native",
+      "inherits": [
+        "base-arm64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "arm64-clang-NEON",
+      "inherits": [
+        "base-arm64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_NEON": "True",
+        "USE_NEON_DOTPROD": "False"
+      }
+    },
+    {
+      "name": "arm64-clang-NEON-DOTPROD",
+      "inherits": [
+        "base-arm64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_NEON": "True",
+        "USE_NEON_DOTPROD": "True"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-msvc-Native-Debug",
+      "configurePreset": "x64-msvc-Native-Debug"
+    },
+    {
+      "name": "x64-msvc-Native-RelWithDebInfo",
+      "configurePreset": "x64-msvc-Native-RelWithDebInfo"
+    },
+    {
+      "name": "x64-msvc-Native",
+      "configurePreset": "x64-msvc-Native"
+    },
+    {
+      "name": "x64-msvc-SSE",
+      "configurePreset": "x64-msvc-SSE"
+    },
+    {
+      "name": "x64-msvc-AVX2",
+      "configurePreset": "x64-msvc-AVX2"
+    },
+    {
+      "name": "x64-msvc-AVXVNNI",
+      "configurePreset": "x64-msvc-AVXVNNI"
+    },
+    {
+      "name": "x64-msvc-AVX512",
+      "configurePreset": "x64-msvc-AVX512"
+    },
+    {
+      "name": "x64-msvc-AVX512VNNI",
+      "configurePreset": "x64-msvc-AVX512VNNI"
+    },
+    {
+      "name": "x64-msvc-onnx-Native-Debug",
+      "configurePreset": "x64-msvc-onnx-Native-Debug"
+    },
+    {
+      "name": "x64-msvc-onnx-Native-RelWithDebInfo",
+      "configurePreset": "x64-msvc-onnx-Native-RelWithDebInfo"
+    },
+    {
+      "name": "x64-msvc-onnx-Native",
+      "configurePreset": "x64-msvc-onnx-Native"
+    },
+    {
+      "name": "x64-clang-Native",
+      "configurePreset": "x64-clang-Native"
+    },
+    {
+      "name": "x64-clang-SSE",
+      "configurePreset": "x64-clang-SSE"
+    },
+    {
+      "name": "x64-clang-AVX2",
+      "configurePreset": "x64-clang-AVX2"
+    },
+    {
+      "name": "x64-clang-AVXVNNI",
+      "configurePreset": "x64-clang-AVXVNNI"
+    },
+    {
+      "name": "x64-clang-AVX512",
+      "configurePreset": "x64-clang-AVX512"
+    },
+    {
+      "name": "x64-clang-AVX512VNNI",
+      "configurePreset": "x64-clang-AVX512VNNI"
+    },
+    {
+      "name": "x64-clang-AVX2-ST",
+      "configurePreset": "x64-clang-AVX2-ST"
+    },
+    {
+      "name": "x64-clang-onnx-Native",
+      "configurePreset": "x64-clang-onnx-Native"
+    },
+    {
+      "name": "arm64-msvc-Native",
+      "configurePreset": "arm64-msvc-Native"
+    },
+    {
+      "name": "arm64-msvc-NEON",
+      "configurePreset": "arm64-msvc-NEON"
+    },
+    {
+      "name": "arm64-msvc-NEON-DOTPROD",
+      "configurePreset": "arm64-msvc-NEON-DOTPROD"
+    },
+    {
+      "name": "arm64-clang-Native",
+      "configurePreset": "arm64-clang-Native"
+    },
+    {
+      "name": "arm64-clang-NEON",
+      "configurePreset": "arm64-clang-NEON"
+    },
+    {
+      "name": "arm64-clang-NEON-DOTPROD",
+      "configurePreset": "arm64-clang-NEON-DOTPROD"
+    }
+  ]
+}
