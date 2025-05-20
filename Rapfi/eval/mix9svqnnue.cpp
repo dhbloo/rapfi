@@ -80,13 +80,13 @@ struct Mix9svqWeightLoader : WeightLoader<mix9svq::Weight>
         constexpr uint16_t ExtensionMask = 1 << (MappingBits - 1);
         constexpr uint16_t ExtensionBits = ~static_cast<uint16_t>(MappingMask);
 
+        // Read the feature codebook
         for (int mappingIdx = 0; mappingIdx < arraySize(w.codebook); mappingIdx++) {
             auto &codebook = w.codebook[mappingIdx];
 
             uint64_t u64val    = 0;
             int      bits_left = 0;
 
-            // Read the feature codebook
             for (int i = 0; i < arraySize(codebook); i++) {
                 for (int j = 0; j < FeatureDim; j++) {
                     int16_t feature = 0;
@@ -188,23 +188,8 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
                                       w.value_corner_up2.bias);
     simd::crelu<OutSize * 2, 128, true>(up2, upi32);
 
-    alignas(Alignment) int8_t                          dotsum[OutSize];
-    typedef Batch<OutSize, int8_t>                     B;
-    typedef simd::detail::VecPack<int16_t, int8_t, IT> I16Pack;
-    for (int i = 0; i < B::NumBatch; i++) {
-        auto in10 = I8LS::load(up1 + (2 * i + 0) * B::RegWidth);  // unsigned
-        auto in11 = I8LS::load(up1 + (2 * i + 1) * B::RegWidth);  // unsigned
-        auto in20 = I8LS::load(up2 + (2 * i + 0) * B::RegWidth);  // signed
-        auto in21 = I8LS::load(up2 + (2 * i + 1) * B::RegWidth);  // signed
-
-        auto dotsum0i16 = I8Op::dot2_u7i8(in10, in20);
-        auto dotsum1i16 = I8Op::dot2_u7i8(in11, in21);
-        dotsum0i16      = I16Op::srai<floorLog2(128)>(dotsum0i16);
-        dotsum1i16      = I16Op::srai<floorLog2(128)>(dotsum1i16);
-        auto dotsumi8   = I16Pack::packs_permuted(dotsum0i16, dotsum1i16);
-
-        I8LS::store(dotsum + i * B::RegWidth, dotsumi8);
-    }
+    alignas(Alignment) int8_t dotsum[OutSize];
+    simd::dot2<OutSize, 128>(dotsum, up1, up2);
 
     alignas(Alignment) int32_t outputi32[OutSize];
     simd::linear<OutSize, OutSize, true>(outputi32,

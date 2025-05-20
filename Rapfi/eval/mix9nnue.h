@@ -31,24 +31,29 @@ namespace Evaluation::mix9 {
 
 using namespace Evaluation;
 
-constexpr uint32_t ArchHashBase    = 0x247e6c70;
-constexpr int      ShapeNum        = 442503;
-constexpr int      FeatureDim      = 64;
-constexpr int      PolicyDim       = 32;
-constexpr int      ValueDim        = 64;
-constexpr int      FeatDWConvDim   = 32;
-constexpr int      PolicyPWConvDim = 16;
-constexpr int      NumHeadBucket   = 1;
+constexpr uint32_t ArchHashBaseMix9    = 0x247e6c70;
+constexpr uint32_t ArchHashBaseMix9svq = 0x84a071fe;
+constexpr int      ShapeNum            = 442503;
+constexpr int      FeatureDim          = 64;
+constexpr int      PolicyDim           = 32;
+constexpr int      ValueDim            = 64;
+constexpr int      FeatDWConvDim       = 32;
+constexpr int      PolicyPWConvDim     = 16;
+constexpr int      NumHeadBucket       = 1;
+
+template <int OutSize, int InSize>
+struct FCWeight
+{
+    int8_t  weight[OutSize * InSize];
+    int32_t bias[OutSize];
+};
 
 template <int OutSize, int InSize>
 struct StarBlockWeight
 {
-    int8_t  value_corner_up1_weight[(OutSize * 2) * InSize];
-    int32_t value_corner_up1_bias[(OutSize * 2)];
-    int8_t  value_corner_up2_weight[(OutSize * 2) * InSize];
-    int32_t value_corner_up2_bias[(OutSize * 2)];
-    int8_t  value_corner_down_weight[OutSize * OutSize];
-    int32_t value_corner_down_bias[OutSize];
+    FCWeight<OutSize * 2, InSize> value_corner_up1;
+    FCWeight<OutSize * 2, InSize> value_corner_up2;
+    FCWeight<OutSize, OutSize>    value_corner_down;
 };
 
 struct alignas(simd::NativeAlignment) Mix9Weight
@@ -63,11 +68,9 @@ struct alignas(simd::NativeAlignment) Mix9Weight
     struct HeadBucket
     {
         // 3  Policy dynamic pointwise conv
-        int8_t  policy_pwconv_layer_l1_weight[(PolicyDim * 2) * FeatureDim];
-        int32_t policy_pwconv_layer_l1_bias[PolicyDim * 2];
-        int8_t  policy_pwconv_layer_l2_weight[(PolicyPWConvDim * PolicyDim + PolicyPWConvDim)
-                                             * (PolicyDim * 2)];
-        int32_t policy_pwconv_layer_l2_bias[(PolicyPWConvDim * PolicyDim + PolicyPWConvDim)];
+        FCWeight<PolicyDim * 2, FeatureDim> policy_pwconv_layer_l1;
+        FCWeight<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>
+            policy_pwconv_layer_l2;
 
         // 4  Value Group MLP (layer 1,2)
         StarBlockWeight<ValueDim, FeatureDim> value_corner;
@@ -76,12 +79,9 @@ struct alignas(simd::NativeAlignment) Mix9Weight
         StarBlockWeight<ValueDim, ValueDim>   value_quad;
 
         // 5  Value MLP (layer 1,2,3)
-        int8_t  value_l1_weight[ValueDim * (FeatureDim + ValueDim * 4)];
-        int32_t value_l1_bias[ValueDim];
-        int8_t  value_l2_weight[ValueDim * ValueDim];
-        int32_t value_l2_bias[ValueDim];
-        int8_t  value_l3_weight[4 * ValueDim];
-        int32_t value_l3_bias[4];
+        FCWeight<ValueDim, FeatureDim + ValueDim * 4> value_l1;
+        FCWeight<ValueDim, ValueDim>                  value_l2;
+        FCWeight<4, ValueDim>                         value_l3;
 
         // 6  Policy output linear
         float policy_output_weight[16];

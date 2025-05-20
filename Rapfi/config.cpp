@@ -706,7 +706,7 @@ void Config::readEvaluator(const cpptoml::table &t)
     }
 #endif
     else {
-        throw std::runtime_error("unsupported evaluator type");
+        throw std::runtime_error("unsupported evaluator type " + *evaluatorType);
     }
 
     // Read classical/evaluator switching margin

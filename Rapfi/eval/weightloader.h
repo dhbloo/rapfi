@@ -96,6 +96,11 @@ struct StandardHeaderParserWarpper : BaseLoader
         headerValidator = std::move(validator);
     }
 
+    void setHeaderReader(std::function<void(StandardHeader, LoadArgs &)> reader)
+    {
+        headerReader = std::move(reader);
+    }
+
     std::unique_ptr<WeightType> load(std::istream &is, LoadArgs args) override
     {
         struct RawHeaderData
@@ -118,11 +123,14 @@ struct StandardHeaderParserWarpper : BaseLoader
             std::string description;
             description.resize(headerData.desc_len + 1);
             is.read(description.data(), headerData.desc_len);
-            if (!headerValidator(StandardHeader {headerData.arch_hash,
-                                                 parseRuleMask(headerData.rule_mask),
-                                                 parseBoardSizeMask(headerData.boardsize_mask),
-                                                 std::move(description)}))
+            auto header = StandardHeader {headerData.arch_hash,
+                                          parseRuleMask(headerData.rule_mask),
+                                          parseBoardSizeMask(headerData.boardsize_mask),
+                                          std::move(description)};
+            if (!headerValidator(header))
                 return nullptr;
+            if (headerReader)
+                headerReader(header, args);
         }
         else {
             is.ignore(headerData.desc_len);
@@ -132,7 +140,8 @@ struct StandardHeaderParserWarpper : BaseLoader
     }
 
 private:
-    std::function<bool(StandardHeader)> headerValidator;
+    std::function<bool(StandardHeader)>             headerValidator;
+    std::function<void(StandardHeader, LoadArgs &)> headerReader;
 
     static std::vector<Rule> parseRuleMask(uint32_t ruleMask)
     {

@@ -51,13 +51,25 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
                                      3945,  5747,  7889,  10371, 13193, 16355, 19857, 23699,
                                      27881, 32403, 37265, 42467, 48009, 53891, 60113};
 
-struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
+struct Mix9WeightLoadArgs
 {
-    std::unique_ptr<Mix9Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
+    bool isVQWeight = false;
+    bool operator==(const Mix9WeightLoadArgs &other) const
+    {
+        return isVQWeight == other.isVQWeight;
+    }
+};
+
+struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight, Mix9WeightLoadArgs>
+{
+    std::unique_ptr<Mix9Weight> load(std::istream &in, Mix9WeightLoadArgs args)
     {
         auto w = std::make_unique<Mix9Weight>();
 
-        read_compressed_mapping(in, *w);
+        if (args.isVQWeight)
+            read_compressed_mapping_vq(in, *w);
+        else
+            read_compressed_mapping(in, *w);
         in.read(reinterpret_cast<char *>(&w->feature_dwconv_weight[0][0]),
                 sizeof(w->feature_dwconv_weight));
         in.read(reinterpret_cast<char *>(&w->feature_dwconv_bias[0]),
@@ -80,11 +92,11 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         constexpr uint16_t ExtensionMask = 1 << (MappingBits - 1);
         constexpr uint16_t ExtensionBits = ~static_cast<uint16_t>(MappingMask);
 
-        uint64_t u64val    = 0;
-        int      bits_left = 0;
-
         for (int mappingIdx = 0; mappingIdx < arraySize(w.mapping); mappingIdx++) {
             auto &mapping = w.mapping[mappingIdx];
+
+            uint64_t u64val    = 0;
+            int      bits_left = 0;
 
             for (int i = 0; i < ShapeNum; i++)
                 for (int j = 0; j < FeatureDim; j++) {
@@ -116,35 +128,105 @@ struct Mix9BinaryWeightLoader : WeightLoader<Mix9Weight>
         }
     }
 
+    void read_compressed_mapping_vq(std::istream &in, Mix9Weight &w)
+    {
+        constexpr int      MappingBits   = 10;
+        constexpr uint64_t MappingMask   = (1 << MappingBits) - 1;
+        constexpr uint16_t ExtensionMask = 1 << (MappingBits - 1);
+        constexpr uint16_t ExtensionBits = ~static_cast<uint16_t>(MappingMask);
+
+        constexpr int NumMappings = 2;
+
+        // Allocate a temporary buffer for the codebook and index table
+        std::unique_ptr<int16_t[][65536][FeatureDim]> codebookBuffer =
+            std::make_unique<int16_t[][65536][FeatureDim]>(arraySize(w.mapping));
+        std::unique_ptr<uint16_t[][ShapeNum]> mappingIndexBuffer =
+            std::make_unique<uint16_t[][ShapeNum]>(arraySize(w.mapping));
+
+        // Read the feature codebook
+        for (int mappingIdx = 0; mappingIdx < arraySize(w.mapping); mappingIdx++) {
+            auto &codebook = codebookBuffer[mappingIdx];
+
+            uint64_t u64val    = 0;
+            int      bits_left = 0;
+
+            // Read the feature codebook
+            for (int i = 0; i < arraySize(codebook); i++) {
+                for (int j = 0; j < FeatureDim; j++) {
+                    int16_t feature = 0;
+
+                    if (bits_left >= MappingBits) {
+                        uint16_t masked    = static_cast<uint16_t>(u64val & MappingMask);
+                        uint16_t extension = (masked & ExtensionMask) ? 0xfc00 : 0;
+                        feature            = static_cast<int16_t>(extension | masked);
+
+                        u64val >>= MappingBits;
+                        bits_left -= MappingBits;
+                    }
+                    else {
+                        uint64_t u64val2;
+                        in.read(reinterpret_cast<char *>(&u64val2), sizeof(u64val2));
+
+                        u64val |= u64val2 << bits_left;
+                        uint16_t masked    = static_cast<uint16_t>(u64val & MappingMask);
+                        uint16_t extension = (masked & ExtensionMask) ? 0xfc00 : 0;
+                        feature            = static_cast<int16_t>(extension | masked);
+
+                        u64val    = u64val2 >> (MappingBits - bits_left);
+                        bits_left = 64 - (MappingBits - bits_left);
+                    }
+
+                    codebook[i][j] = feature;
+                }
+            }
+        }
+
+        // Read the codebook index
+        in.read(reinterpret_cast<char *>(&mappingIndexBuffer[0][0]),
+                sizeof(uint16_t) * NumMappings * ShapeNum);
+
+        // Expand the codebook and index table
+        for (int mappingIdx = 0; mappingIdx < NumMappings; mappingIdx++) {
+            auto &mapping      = w.mapping[mappingIdx];
+            auto &codebook     = codebookBuffer[mappingIdx];
+            auto &mappingIndex = mappingIndexBuffer[mappingIdx];
+
+            for (int i = 0; i < ShapeNum; i++) {
+                int codebookIdx = mappingIndexBuffer[mappingIdx][i];
+                simd::copy<FeatureDim>(mapping[i], codebook[codebookIdx]);
+            }
+        }
+    }
+
     void preprocess(Mix9Weight &w)
     {
         for (int bucketIdx = 0; bucketIdx < NumHeadBucket; bucketIdx++) {
             auto &b = w.buckets[bucketIdx];
-            simd::preprocessLinear<PolicyDim * 2, FeatureDim>(b.policy_pwconv_layer_l1_weight);
+            simd::preprocessLinear<PolicyDim * 2, FeatureDim>(b.policy_pwconv_layer_l1.weight);
             simd::preprocessDynamicWeightLinear<PolicyPWConvDim,
                                                 PolicyDim,
                                                 int16_t,
                                                 PolicyDim * 2,
-                                                0>(b.policy_pwconv_layer_l2_weight,
-                                                   b.policy_pwconv_layer_l2_bias);
+                                                0>(b.policy_pwconv_layer_l2.weight,
+                                                   b.policy_pwconv_layer_l2.bias);
             simd::preprocessLinear<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>(
-                b.policy_pwconv_layer_l2_weight);
+                b.policy_pwconv_layer_l2.weight);
             preprocess(b.value_corner);
             preprocess(b.value_edge);
             preprocess(b.value_center);
             preprocess(b.value_quad);
-            simd::preprocessLinear<ValueDim, FeatureDim + ValueDim * 4>(b.value_l1_weight);
-            simd::preprocessLinear<ValueDim, ValueDim>(b.value_l2_weight);
-            simd::preprocessLinear<4, ValueDim>(b.value_l3_weight);
+            simd::preprocessLinear<ValueDim, FeatureDim + ValueDim * 4>(b.value_l1.weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.value_l2.weight);
+            simd::preprocessLinear<4, ValueDim>(b.value_l3.weight);
         }
     }
 
     template <int OutSize, int InSize>
     void preprocess(StarBlockWeight<OutSize, InSize> &b)
     {
-        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up1_weight);
-        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up2_weight);
-        simd::preprocessLinear<OutSize, OutSize>(b.value_corner_down_weight);
+        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up1.weight);
+        simd::preprocessLinear<OutSize * 2, InSize>(b.value_corner_up2.weight);
+        simd::preprocessLinear<OutSize, OutSize>(b.value_corner_down.weight);
     }
 };
 
@@ -173,14 +255,14 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
     alignas(Alignment) int8_t  up1[OutSize * 2], up2[OutSize * 2];
     simd::linear<OutSize * 2, InSize>(upi32,
                                       input,
-                                      w.value_corner_up1_weight,
-                                      w.value_corner_up1_bias);
+                                      w.value_corner_up1.weight,
+                                      w.value_corner_up1.bias);
     simd::crelu<OutSize * 2, 128>(up1, upi32);
 
     simd::linear<OutSize * 2, InSize>(upi32,
                                       input,
-                                      w.value_corner_up2_weight,
-                                      w.value_corner_up2_bias);
+                                      w.value_corner_up2.weight,
+                                      w.value_corner_up2.bias);
     simd::crelu<OutSize * 2, 128, true>(up2, upi32);
 
     alignas(Alignment) int8_t dotsum[OutSize];
@@ -189,8 +271,8 @@ starBlock(int8_t output[OutSize], int8_t input[InSize], const StarBlockWeight<Ou
     alignas(Alignment) int32_t outputi32[OutSize];
     simd::linear<OutSize, OutSize, true>(outputi32,
                                          dotsum,
-                                         w.value_corner_down_weight,
-                                         w.value_corner_down_bias);
+                                         w.value_corner_down.weight,
+                                         w.value_corner_down.bias);
     simd::crelu<OutSize, 128>(output, outputi32);
 }
 
@@ -702,8 +784,8 @@ std::tuple<float, float, float> Mix9Accumulator::evaluateValue(const Mix9Weight 
     alignas(Alignment) int8_t  layer1[ValueDim];
     simd::linear<ValueDim, FeatureDim + ValueDim * 4>(layer1i32,
                                                       layer0,
-                                                      bucket.value_l1_weight,
-                                                      bucket.value_l1_bias);
+                                                      bucket.value_l1.weight,
+                                                      bucket.value_l1.bias);
     simd::crelu<ValueDim, 128>(layer1, layer1i32);
 
     // linear 2
@@ -711,13 +793,13 @@ std::tuple<float, float, float> Mix9Accumulator::evaluateValue(const Mix9Weight 
     alignas(Alignment) int8_t  layer2[ValueDim];
     simd::linear<ValueDim, ValueDim>(layer2i32,
                                      layer1,
-                                     bucket.value_l2_weight,
-                                     bucket.value_l2_bias);
+                                     bucket.value_l2.weight,
+                                     bucket.value_l2.bias);
     simd::crelu<ValueDim, 128>(layer2, layer2i32);
 
     // linear 3 final
     alignas(Alignment) int32_t layer3i32[4];
-    simd::linear<4, ValueDim>(layer3i32, layer2, bucket.value_l3_weight, bucket.value_l3_bias);
+    simd::linear<4, ValueDim>(layer3i32, layer2, bucket.value_l3.weight, bucket.value_l3.bias);
 
     const float scale = 1.0f / (128 * 128);
     return {layer3i32[0] * scale, layer3i32[1] * scale, layer3i32[2] * scale};
@@ -736,8 +818,8 @@ void Mix9Accumulator::evaluatePolicy(const Mix9Weight &w, PolicyBuffer &policyBu
     alignas(Alignment) int8_t  layer1[PolicyDim * 2];
     simd::linear<PolicyDim * 2, FeatureDim>(layer1i32,
                                             layer0,
-                                            bucket.policy_pwconv_layer_l1_weight,
-                                            bucket.policy_pwconv_layer_l1_bias);
+                                            bucket.policy_pwconv_layer_l1.weight,
+                                            bucket.policy_pwconv_layer_l1.bias);
     simd::crelu<PolicyDim * 2, 128>(layer1, layer1i32);
 
     alignas(Alignment) int32_t layer2i32[PolicyPWConvDim * PolicyDim + PolicyPWConvDim];
@@ -746,8 +828,8 @@ void Mix9Accumulator::evaluatePolicy(const Mix9Weight &w, PolicyBuffer &policyBu
     simd::linear<PolicyPWConvDim * PolicyDim + PolicyPWConvDim, PolicyDim * 2>(
         layer2i32,
         layer1,
-        bucket.policy_pwconv_layer_l2_weight,
-        bucket.policy_pwconv_layer_l2_bias);
+        bucket.policy_pwconv_layer_l2.weight,
+        bucket.policy_pwconv_layer_l2.bias);
     simd::crelu<PolicyPWConvDim * PolicyDim, 1, true>(pwconvWeighti16, layer2i32);
     // To get pwconv bias, we need to scale the output of layer2 by 128
     {
@@ -809,11 +891,13 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
         throw UnsupportedBoardSizeError(boardSize);
 
     std::filesystem::path currentWeightPath;
+
+    constexpr uint32_t ArchHashMod     = (((FeatDWConvDim / 8) << 20) | ((ValueDim / 8) << 14)
+                                      | ((PolicyDim / 8) << 8) | (FeatureDim / 8));
+    constexpr uint32_t ArchHashMix9    = ArchHashBaseMix9 ^ ArchHashMod;
+    constexpr uint32_t ArchHashMix9svq = ArchHashBaseMix9svq ^ ArchHashMod;
     loader.setHeaderValidator([&](StandardHeader header) -> bool {
-        constexpr uint32_t ArchHash = ArchHashBase
-                                      ^ (((FeatDWConvDim / 8) << 20) | ((ValueDim / 8) << 14)
-                                         | ((PolicyDim / 8) << 8) | (FeatureDim / 8));
-        if (header.archHash != ArchHash)
+        if (header.archHash != ArchHashMix9 && header.archHash != ArchHashMix9svq)
             throw IncompatibleWeightFileError("incompatible architecture in weight file.");
 
         if (!contains(header.supportedRules, rule))
@@ -825,6 +909,10 @@ Mix9Evaluator::Mix9Evaluator(int                   boardSize,
         if (Config::MessageMode != MsgMode::NONE)
             MESSAGEL("mix9nnue: load weight from " << pathToConsoleString(currentWeightPath));
         return true;
+    });
+    loader.setHeaderReader([](StandardHeader header, Mix9WeightLoadArgs &loadArgs) {
+        if (header.archHash == ArchHashMix9svq)
+            loadArgs.isVQWeight = true;
     });
 
     for (const auto &[weightSide, weightPath] : {
