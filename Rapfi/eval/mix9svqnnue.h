@@ -31,7 +31,7 @@ namespace Evaluation::mix9svq {
 
 using namespace Evaluation;
 
-constexpr uint32_t ArchHashBase    = 0x247e6c70;
+constexpr uint32_t ArchHashBase    = 0x84a071fe;
 constexpr int      ShapeNum        = 442503;
 constexpr int      FeatureDim      = 64;
 constexpr int      PolicyDim       = 32;
@@ -58,8 +58,9 @@ struct StarBlockWeight
 struct alignas(simd::NativeAlignment) Weight
 {
     // 1  mapping layer
-    int16_t codebook[2][65536][FeatureDim];
-    int16_t mapping_index[2][ShapeNum];
+    int16_t  codebook[2][65536][FeatureDim];
+    uint16_t mapping_index[2][ShapeNum];
+    char     __padding_to_64bytes_0[36];
 
     // 2  Depthwise conv
     int16_t feature_dwconv_weight[9][FeatDWConvDim];
@@ -124,8 +125,8 @@ private:
     // Network states
 
     /// Value feature sum of the full board
-    ValueSumType *valueSumTable;          // [H*W+1, FeatureDim] (aligned)
-    ChangeNum    *versionChangeNumTable;  // [H*W+1] (unaligned) num inner changes and outer changes
+    ValueSumType *valueSumTable;           // [H*W+1, FeatureDim] (aligned)
+    ChangeNum    *versionChangeNumTable;   // [H*W+1] (unaligned) num inner changes and outer changes
     uint16_t     *versionInnerIndexTable;  // [H*W+1, H*W] (unaligned)
     uint16_t     *versionOuterIndexTable;  // [H*W+1, (H+2)*(W+2)] (unaligned)
     /// Index table to convert line shape to map feature

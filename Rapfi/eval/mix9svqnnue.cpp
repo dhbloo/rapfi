@@ -80,12 +80,11 @@ struct Mix9svqWeightLoader : WeightLoader<mix9svq::Weight>
         constexpr uint16_t ExtensionMask = 1 << (MappingBits - 1);
         constexpr uint16_t ExtensionBits = ~static_cast<uint16_t>(MappingMask);
 
-        uint64_t u64val    = 0;
-        int      bits_left = 0;
-
         for (int mappingIdx = 0; mappingIdx < arraySize(w.codebook); mappingIdx++) {
-            auto &codebook      = w.codebook[mappingIdx];
-            auto &mapping_index = w.mapping_index[mappingIdx];
+            auto &codebook = w.codebook[mappingIdx];
+
+            uint64_t u64val    = 0;
+            int      bits_left = 0;
 
             // Read the feature codebook
             for (int i = 0; i < arraySize(codebook); i++) {
@@ -116,10 +115,10 @@ struct Mix9svqWeightLoader : WeightLoader<mix9svq::Weight>
                     codebook[i][j] = feature;
                 }
             }
-
-            // Read the feature index
-            in.read(reinterpret_cast<char *>(&mapping_index[0]), sizeof(mapping_index));
         }
+
+        // Read the codebook index
+        in.read(reinterpret_cast<char *>(&w.mapping_index[0][0]), sizeof(w.mapping_index));
     }
 
     void preprocess(Weight &w)
@@ -489,8 +488,8 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
         int16_t  mappingIdx;
         int16_t  oldMapIdx;
         int16_t  newMapIdx;
-        uint32_t oldShape;
-        uint32_t newShape;
+        uint16_t oldCodebookIdx;
+        uint16_t newCodebookIdx;
     } changeTable[4 * 11];
     int changeCount = 0;
     int dPower3     = pieceColor + 1;
@@ -507,18 +506,21 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
             if ((xi | (boardSizeSub1 - xi) | yi | (boardSizeSub1 - yi)) < 0)
                 continue;
 
-            int             innerIdx   = boardSize * yi + xi;
-            OnePointChange &c          = changeTable[changeCount++];
-            c.x                        = xi;
-            c.y                        = yi;
-            c.mappingIdx               = dir / 2;  // 0,1 -> 0; 2,3 -> 1
-            c.oldMapIdx                = versionInnerIndexTable[innerVersionIdxBase + innerIdx];
-            c.newMapIdx                = newMapIdx;
-            c.oldShape                 = indexTable[c.oldMapIdx][dir];
-            c.newShape                 = c.oldShape + dPower3 * Power3[dist + 5];
-            indexTable[newMapIdx]      = indexTable[c.oldMapIdx];
-            indexTable[newMapIdx][dir] = c.newShape;
-            assert(c.newShape < ShapeNum);
+            int             innerIdx = boardSize * yi + xi;
+            OnePointChange &c        = changeTable[changeCount++];
+            c.x                      = xi;
+            c.y                      = yi;
+            c.mappingIdx             = dir / 2;  // 0,1 -> 0; 2,3 -> 1
+            c.oldMapIdx              = versionInnerIndexTable[innerVersionIdxBase + innerIdx];
+            c.newMapIdx              = newMapIdx;
+
+            uint32_t oldShape     = indexTable[c.oldMapIdx][dir];
+            indexTable[newMapIdx] = indexTable[c.oldMapIdx];
+            uint32_t newShape = indexTable[newMapIdx][dir] = oldShape + dPower3 * Power3[dist + 5];
+            assert(newShape < ShapeNum);
+
+            c.oldCodebookIdx = w.mapping_index[c.mappingIdx][oldShape];
+            c.newCodebookIdx = w.mapping_index[c.mappingIdx][newShape];
 
             versionInnerIndexTable[innerVersionIdxBase + innerIdx] = newMapIdx++;
         }
@@ -539,24 +541,20 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
         const OnePointChange &c = changeTable[i];
         if (i + 1 < changeCount) {
             const OnePointChange &cnext = changeTable[i + 1];
-            int oldCodebookIdx          = w.mapping_index[cnext.mappingIdx][cnext.oldShape];
-            int newCodebookIdx          = w.mapping_index[cnext.mappingIdx][cnext.newShape];
             multiPrefetch<sizeof(int16_t) * FeatureDim>(
-                w.codebook[cnext.mappingIdx][oldCodebookIdx]);
+                w.codebook[cnext.mappingIdx][cnext.oldCodebookIdx]);
             multiPrefetch<sizeof(int16_t) * FeatureDim>(
-                w.codebook[cnext.mappingIdx][newCodebookIdx]);
+                w.codebook[cnext.mappingIdx][cnext.newCodebookIdx]);
         }
 
         // Update mapSum
         I16Op::R oldFeats[FeatB::NumBatch];
         I16Op::R newFeats[FeatB::NumBatch];
         for (int b = 0; b < FeatB::NumBatch; b++) {
-            int  oldCodebookIdx = w.mapping_index[c.mappingIdx][c.oldShape];
-            int  newCodebookIdx = w.mapping_index[c.mappingIdx][c.newShape];
-            auto newMapFeat =
-                I16LS::load(w.codebook[c.mappingIdx][oldCodebookIdx] + b * FeatB::RegWidth);
             auto oldMapFeat =
-                I16LS::load(w.codebook[c.mappingIdx][newCodebookIdx] + b * FeatB::RegWidth);
+                I16LS::load(w.codebook[c.mappingIdx][c.oldCodebookIdx] + b * FeatB::RegWidth);
+            auto newMapFeat =
+                I16LS::load(w.codebook[c.mappingIdx][c.newCodebookIdx] + b * FeatB::RegWidth);
             oldFeats[b] = I16LS::load(mapSum[c.oldMapIdx].data() + b * FeatB::RegWidth);
             newFeats[b] = I16Op::sub(oldFeats[b], oldMapFeat);
             newFeats[b] = I16Op::add(newFeats[b], newMapFeat);
