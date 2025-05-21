@@ -48,6 +48,8 @@ constexpr Depth IIR_REDUCTION_TT           = 0.31f;
 constexpr Depth IIR_REDUCTION_TT_MAX       = 3.6f;
 constexpr Depth TRIVIAL_PRUN_DEPTH         = 4.5f;
 constexpr Depth LMR_EXTRA_MAX_DEPTH        = 5.0f;
+constexpr Depth TTPV_NEG_REDUCTION         = 1.0f;
+constexpr Depth NON_IMPROVING_REDUCTION    = 1.0f;
 constexpr Depth NOKILLER_CUTNODE_REDUCTION = 1.73f;
 
 // Extensions
@@ -210,11 +212,11 @@ inline void initReductionLUT(std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB], i
 /// Basic depth reduction in LMR search
 template <Rule R, bool PvNode>
 constexpr Depth reduction(const std::array<Depth, MAX_MOVES + 1> (&lut)[RULE_NB],
-                          Depth                                  d,
-                          int                                    moveCount,
-                          int                                    improvement,
-                          Value                                  delta,
-                          Value                                  rootDelta)
+                          Depth d,
+                          int   moveCount,
+                          int   improvement,
+                          Value delta,
+                          Value rootDelta)
 {
     assert(d > 0.0f);
     assert(moveCount > 0 && moveCount < lut[R].size());

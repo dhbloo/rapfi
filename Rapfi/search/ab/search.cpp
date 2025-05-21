@@ -487,7 +487,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         searchData->rootAlpha = alpha;
 
         // Decrease search depth if multiple fail high occurs
-        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 4);
+        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 2);
 
         // Search at root node with rule
         Value value = ::search<Root>(rule, board, ss, alpha, beta, adjustedDepth, false);
@@ -526,11 +526,8 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         // In case of failing low/high increase aspiration window and re-search,
         // otherwise exit the loop.
         if (value <= alpha) {
-            // Increase beta by 1% for each increase in depth
-            int   completedDepth  = searchData->completedDepth.load(std::memory_order_relaxed);
-            float alphaPercentage = std::min(0.5f + 0.01f * completedDepth, 0.99f);
-            beta  = Value((double)alpha * alphaPercentage + (double)beta * (1 - alphaPercentage));
-            alpha = std::max(value - delta, -VALUE_INFINITE);
+            beta        = (alpha + beta) / 2;
+            alpha       = std::max(value - delta, -VALUE_INFINITE);
             failHighCnt = 0;
         }
         else if (value >= beta) {
@@ -1123,11 +1120,11 @@ moves_loop:
 
             // Decrease reduction if position is or has been on the PV (~10 elo)
             if (ss->ttPv)
-                r -= 1.0f;
+                r -= TTPV_NEG_REDUCTION;
 
             // Increase reduction for nodes that does not improve root alpha (~0 elo)
             if (!RootNode && (ss->ply & 1) && bestValue >= -searchData->rootAlpha)
-                r += 1.0f;
+                r += NON_IMPROVING_REDUCTION;
 
             // Increase reduction for cut nodes if is not killer moves (~5 elo)
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
