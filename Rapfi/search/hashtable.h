@@ -18,7 +18,6 @@
 
 #pragma once
 
-#include "../core/platform.h"
 #include "../core/pos.h"
 #include "../core/types.h"
 
@@ -29,66 +28,17 @@
 
 namespace Search {
 
+struct TTEntry;   // forward declaration of TTEntry
+struct TTBucket;  // forward declaration of TTBucket
+
 /// HashTable class is the shared transposition table implementation
 /// with a five-tier bucket system replacement strategies.
 class HashTable
 {
-private:
-    static constexpr int CACHE_LINE_SIZE    = 64;
-    static constexpr int ENTRIES_PER_BUCKET = 5;
-
-    /// TTEntry struct is a single entry in the transposition table.
-    /// To achieve the maximum space efficiency, each TTEntry struct
-    /// is compactly stored, using 12 bytes:
-    ///     key32        32 bit     (lower 32bit of zobrist key xor data)
-    ///     value        16 bit     (value of search)
-    ///     eval         16 bit     (value of static evaluation)
-    ///     pvNode        1 bit     (is this node pv)
-    ///     bound         2 bit     (the bound of search value)
-    ///     best         13 bit     (best move only uses the lower 10 bits)
-    ///     depth         8 bit     (depth in the search)
-    ///     generation    8 bit     (used to find a best replacement entry)
-    struct TTEntry
-    {
-        uint32_t key32;
-        union {
-            struct
-            {
-                int16_t  value16;
-                int16_t  eval16;
-                uint16_t pvBoundBest16;
-                uint8_t  depth8;
-                uint8_t  generation8;
-            };
-            uint32_t data[2];
-        };
-
-        uint32_t key() const { return key32 ^ data[0] ^ data[1]; }
-    };
-
-    /// Bucket Struct contains 5 TTEntry (64 bytes).
-    /// Bucket should have a size that can be fitted into one cache line.
-    alignas(CACHE_LINE_SIZE) struct Bucket
-    {
-        TTEntry entry[ENTRIES_PER_BUCKET];
-        char    _padding[4];
-    } * table;
-    size_t  numBuckets;
-    uint8_t generation;
-
-    static_assert(sizeof(TTEntry) == 12);
-    static_assert(CACHE_LINE_SIZE % sizeof(Bucket) == 0, "Bucket not fitted into cache line");
-
 public:
     HashTable(size_t hashSizeKB);
     ~HashTable();
 
-    /// Get address of the first entry for a hash key.
-    TTEntry *firstEntry(HashKey key) const { return table[mulhi64(key, numBuckets)].entry; }
-    /// Prefetch the cacheline at the address of a hash key.
-    void prefetch(HashKey key) const { ::prefetch(firstEntry(key)); }
-    /// Increase the current generation (aging all entries in the table).
-    void incGeneration() { generation += 1; }
     /// Resize the tt table to the given hash size in KiB.
     /// If size changed, all hash entries will be cleared after resizing the table.
     /// When memory allocation failed, it will try to find the max available hash
@@ -116,6 +66,10 @@ public:
                Pos     move,
                int     depth,
                int     ply);
+    /// Prefetch the cacheline at the address of a hash key.
+    void prefetch(HashKey key) const;
+    /// Increase the current generation (aging all entries in the table).
+    void incGeneration() { generation += 1; }
     /// Dump the transposition table to an ostream.
     void dump(std::ostream &out) const;
     /// Load the transposition table from the stream, previous TT will be
@@ -126,7 +80,15 @@ public:
     /// @return A percentage representing the hash is x permill full.
     int hashUsage() const;
     /// Return the memory usage of the transposition table in KiB.
-    size_t hashSizeKB() const { return numBuckets * sizeof(Bucket) / 1024; }
+    size_t hashSizeKB() const;
+
+private:
+    TTBucket *table;
+    size_t    numBuckets;
+    uint8_t   generation;
+
+    /// Get address of the first entry for a hash key.
+    TTEntry *firstEntry(HashKey key) const;
 };
 
 extern HashTable TT;

@@ -19,6 +19,7 @@
 #include "hashtable.h"
 
 #include "../core/iohelper.h"
+#include "../core/platform.h"
 #include "../core/utils.h"
 #include "searchthread.h"
 
@@ -32,6 +33,51 @@
 static const char HashDumpMagicString[32] = "RAPFI HASH DUMP VER 001";
 
 namespace Search {
+
+static constexpr int CACHE_LINE_SIZE    = 64;
+static constexpr int ENTRIES_PER_BUCKET = 5;
+
+/// TTEntry struct is a single entry in the transposition table.
+/// To achieve the maximum space efficiency, each TTEntry struct
+/// is compactly stored, using 12 bytes:
+///     key32        32 bit     (lower 32bit of zobrist key xor data)
+///     value        16 bit     (value of search)
+///     eval         16 bit     (value of static evaluation)
+///     pvNode        1 bit     (is this node pv)
+///     bound         2 bit     (the bound of search value)
+///     best         13 bit     (best move only uses the lower 10 bits)
+///     depth         8 bit     (depth in the search)
+///     generation    8 bit     (used to find a best replacement entry)
+struct TTEntry
+{
+    uint32_t key32;
+    union {
+        struct
+        {
+            int16_t  value16;
+            int16_t  eval16;
+            uint16_t pvBoundBest16;
+            uint8_t  depth8;
+            uint8_t  generation8;
+        };
+        uint32_t data[2];
+    };
+
+    uint32_t key() const { return key32 ^ data[0] ^ data[1]; }
+};
+
+// Sanity check on TTEntry size
+static_assert(sizeof(TTEntry) == 12);
+
+/// TTBucket Struct contains 5 TTEntry (64 bytes), which should be fitted into one cache line.
+struct TTBucket
+{
+    TTEntry entry[ENTRIES_PER_BUCKET];
+    char    _padding[4];
+};
+
+// Make sure the size of TTBucket can be fitted into one cache line
+static_assert(CACHE_LINE_SIZE % sizeof(TTBucket) == 0, "TTBucket not fitted into cache line");
 
 /// Global shared transposition table
 HashTable TT {16 * 1024};  // default size is 16 MB
@@ -48,7 +94,7 @@ HashTable::~HashTable()
 
 void HashTable::resize(size_t hashSizeKB)
 {
-    size_t newNumBuckets = hashSizeKB * (1024 / sizeof(Bucket));
+    size_t newNumBuckets = hashSizeKB * (1024 / sizeof(TTBucket));
     newNumBuckets        = std::max<size_t>(newNumBuckets, 1);
 
     if (newNumBuckets == numBuckets)
@@ -64,8 +110,8 @@ void HashTable::resize(size_t hashSizeKB)
 
     size_t tryNumBuckets = numBuckets;
     while (tryNumBuckets) {
-        size_t allocSize = sizeof(Bucket) * tryNumBuckets;
-        table            = static_cast<Bucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
+        size_t allocSize = sizeof(TTBucket) * tryNumBuckets;
+        table            = static_cast<TTBucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
 
         if (!table)
             tryNumBuckets /= 2;
@@ -81,7 +127,7 @@ void HashTable::resize(size_t hashSizeKB)
         if (!numBuckets)
             std::exit(EXIT_FAILURE);
 
-        MESSAGEL("Allocated " << (numBuckets * sizeof(Bucket) >> 10)
+        MESSAGEL("Allocated " << (numBuckets * sizeof(TTBucket) >> 10)
                               << " KB for transposition table.");
     }
 
@@ -106,17 +152,27 @@ void HashTable::clear()
             size_t start = stride * idx;
             size_t len   = idx != numThreads - 1 ? stride : numBuckets - start;
 
-            std::memset(&table[start], 0, len * sizeof(Bucket));
+            std::memset(&table[start], 0, len * sizeof(TTBucket));
         });
     }
 
     for (std::thread &th : threads)
         th.join();
 #else
-    std::memset(table, 0, numBuckets * sizeof(Bucket));
+    std::memset(table, 0, numBuckets * sizeof(TTBucket));
 #endif
 
     generation = 0;
+}
+
+TTEntry *HashTable::firstEntry(HashKey key) const
+{
+    return table[mulhi64(key, numBuckets)].entry;
+}
+
+void HashTable::prefetch(HashKey key) const
+{
+    ::prefetch(firstEntry(key));
 }
 
 bool HashTable::probe(HashKey hashKey,
@@ -167,7 +223,8 @@ void HashTable::store(HashKey hashKey,
     uint32_t newKey32     = uint32_t(hashKey);
     TTEntry *replace      = &entry[0];
     auto     replaceValue = [=](const TTEntry &e) {
-        return e.depth8 - int(generation - e.generation8);
+        uint8_t relativeAge = generation - e.generation8;
+        return int(e.depth8) - int(relativeAge);
     };
 
     // Iterate the bucket to find a matched entry or a least valuable entry for replacement
@@ -220,8 +277,8 @@ void HashTable::dump(std::ostream &outStream) const
     out->write(reinterpret_cast<const char *>(&generation), sizeof(generation));
 
     for (size_t i = 0; i < numBuckets; i++) {
-        Bucket &cluster = table[i];
-        out->write(reinterpret_cast<const char *>(&cluster), sizeof(Bucket));
+        TTBucket &cluster = table[i];
+        out->write(reinterpret_cast<const char *>(&cluster), sizeof(TTBucket));
     }
 }
 
@@ -245,12 +302,12 @@ bool HashTable::load(std::istream &inStream)
 
     if (table)
         MemAlloc::alignedLargePageFree(table);
-    size_t allocSize = sizeof(Bucket) * numBuckets;
-    table            = static_cast<Bucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
+    size_t allocSize = sizeof(TTBucket) * numBuckets;
+    table            = static_cast<TTBucket *>(MemAlloc::alignedLargePageAlloc(allocSize));
 
     for (size_t i = 0; i < numBuckets; i++) {
-        Bucket &cluster = table[i];
-        in->read(reinterpret_cast<char *>(&cluster), sizeof(Bucket));
+        TTBucket &cluster = table[i];
+        in->read(reinterpret_cast<char *>(&cluster), sizeof(TTBucket));
     }
     return *in && in->peek() == std::ios::traits_type::eof();
 }
@@ -267,6 +324,11 @@ int HashTable::hashUsage() const
     }
 
     return int(cnt * 1000 / (ENTRIES_PER_BUCKET * testCnt));
+}
+
+size_t HashTable::hashSizeKB() const
+{
+    return numBuckets / (1024 / sizeof(TTBucket));
 }
 
 }  // namespace Search

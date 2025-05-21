@@ -713,7 +713,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // At non-PV nodes we check for an early TT cutoff
     if (!PvNode && ttHit && ttDepth >= depth
-        && (ttValue >= beta ? (ttBound & BOUND_LOWER) : (ttBound & BOUND_UPPER))) {
+        && (ttBound & (ttValue >= beta ? BOUND_LOWER : BOUND_UPPER))) {
         // Update move heruistics for ttMove
         histTracker.updateTTMoveStats(depth, ttMove, ttValue, beta);
         return ttValue;
