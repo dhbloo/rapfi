@@ -1132,7 +1132,8 @@ moves_loop:
 
             // Increase reduction for useless defend move (~6 elo)
             if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
-                r += (distOppo > 4) * 2 + (distSelf > 4);
+                r += (distOppo > 4 ? OPPO_USELESS_DEFEND_REDUCTION : 0)
+                     + (distSelf > 4 ? SELF_USELESS_DEFEND_REDUCTION : 0);
 
             // Decrease reduction for continuous attack (~5 elo)
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
@@ -1146,7 +1147,7 @@ moves_loop:
             }
 
             // Update statScore of this node
-            ss->statScore = statScore(searchData->mainHistory, self, move);
+            ss->statScore = statScore<Rule>(searchData->mainHistory, self, move);
 
             // Decrease/increase reduction for moves with a good/bad history (~9 elo)
             r -= extensionFromStatScore(ss->statScore, depth);
