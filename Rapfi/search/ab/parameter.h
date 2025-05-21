@@ -42,15 +42,17 @@ constexpr Depth IID_DEPTH        = 14.0f;
 
 // Reductions
 
-constexpr Depth IIR_REDUCTION              = 0.65f;
-constexpr Depth IIR_REDUCTION_PV           = 0.30f;
-constexpr Depth IIR_REDUCTION_TT           = 0.31f;
-constexpr Depth IIR_REDUCTION_TT_MAX       = 3.6f;
-constexpr Depth TRIVIAL_PRUN_DEPTH         = 4.5f;
-constexpr Depth LMR_EXTRA_MAX_DEPTH        = 5.0f;
-constexpr Depth TTPV_NEG_REDUCTION         = 1.0f;
-constexpr Depth NON_IMPROVING_REDUCTION    = 1.0f;
-constexpr Depth NOKILLER_CUTNODE_REDUCTION = 1.73f;
+constexpr Depth IIR_REDUCTION                = 0.65f;
+constexpr Depth IIR_REDUCTION_PV             = 0.30f;
+constexpr Depth IIR_REDUCTION_TT             = 0.31f;
+constexpr Depth IIR_REDUCTION_TT_MAX         = 3.6f;
+constexpr Depth TRIVIAL_PRUN_DEPTH           = 4.5f;
+constexpr Depth LMR_EXTRA_MAX_DEPTH          = 5.0f;
+constexpr Depth TTPV_NEG_REDUCTION           = 1.0f;
+constexpr Depth NO_ALPHA_IMPROVING_REDUCTION = 1.0f;
+constexpr Depth NOKILLER_CUTNODE_REDUCTION   = 1.73f;
+constexpr Depth FALSE_FORBID_LESS_REDUCTION  = 1.0f;
+constexpr Depth ALPHA_IMPROVEMENT_REDUCTION  = 1.0f;
 
 // Extensions
 
