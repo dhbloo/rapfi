@@ -487,7 +487,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         searchData->rootAlpha = alpha;
 
         // Decrease search depth if multiple fail high occurs
-        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 4);
+        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 3);
 
         // Search at root node with rule
         Value value = ::search<Root>(rule, board, ss, alpha, beta, adjustedDepth, false);
@@ -526,11 +526,8 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         // In case of failing low/high increase aspiration window and re-search,
         // otherwise exit the loop.
         if (value <= alpha) {
-            // Increase beta by 1% for each increase in depth
-            int   completedDepth  = searchData->completedDepth.load(std::memory_order_relaxed);
-            float alphaPercentage = std::min(0.5f + 0.01f * completedDepth, 0.99f);
-            beta  = Value((double)alpha * alphaPercentage + (double)beta * (1 - alphaPercentage));
-            alpha = std::max(value - delta, -VALUE_INFINITE);
+            beta        = (alpha + beta) / 2;
+            alpha       = std::max(value - delta, -VALUE_INFINITE);
             failHighCnt = 0;
         }
         else if (value >= beta) {
@@ -713,7 +710,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // At non-PV nodes we check for an early TT cutoff
     if (!PvNode && ttHit && ttDepth >= depth
-        && (ttValue >= beta ? (ttBound & BOUND_LOWER) : (ttBound & BOUND_UPPER))) {
+        && (ttBound & (ttValue >= beta ? BOUND_LOWER : BOUND_UPPER))) {
         // Update move heruistics for ttMove
         histTracker.updateTTMoveStats(depth, ttMove, ttValue, beta);
         return ttValue;
@@ -929,7 +926,7 @@ moves_loop:
 
     // Fail-High reduction (~50 elo)
     // Indicate cutNode that will probably fail high if current eval is far above beta
-    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin<Rule>(depth, oppo4);
+    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
 
     MovePicker mp(Rule,
                   board,
@@ -1059,7 +1056,7 @@ moves_loop:
             // Extend if only the ttMove fails high, while other moves fails low.
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
-                if (!PvNode && value < singularBeta - doubleSEMargin<Rule>(depth)
+                if (!PvNode && value < singularBeta - doubleSEMargin(depth)
                     && ss->extraExtension < SE_EXTRA_MAX_DEPTH)
                     extension = 2.0f;
                 else
@@ -1123,19 +1120,21 @@ moves_loop:
 
             // Decrease reduction if position is or has been on the PV (~10 elo)
             if (ss->ttPv)
-                r -= 1.0f;
+                r -= TTPV_NEG_REDUCTION;
 
             // Increase reduction for nodes that does not improve root alpha (~0 elo)
             if (!RootNode && (ss->ply & 1) && bestValue >= -searchData->rootAlpha)
-                r += 1.0f;
+                r += NO_ALPHA_IMPROVING_REDUCTION;
 
             // Increase reduction for cut nodes if is not killer moves (~5 elo)
             if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
                 r += NOKILLER_CUTNODE_REDUCTION;
 
             // Increase reduction for useless defend move (~6 elo)
-            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
-                r += (distOppo > 4) * 2 + (distSelf > 4);
+            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4) {
+                r += (distOppo > 4 ? OPPO_USELESS_DEFEND_REDUCTION : 0);
+                r += (distSelf > 4 ? SELF_USELESS_DEFEND_REDUCTION : 0);
+            }
 
             // Decrease reduction for continuous attack (~5 elo)
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
@@ -1145,7 +1144,7 @@ moves_loop:
             if constexpr (Rule == Rule::RENJU) {
                 // Decrease reduction for false forbidden move in Renju (~6 elo)
                 if (ss->moveP4[BLACK] == FORBID)
-                    r -= 1.0f;
+                    r -= FALSE_FORBID_LESS_REDUCTION;
             }
 
             // Update statScore of this node
@@ -1295,15 +1294,18 @@ moves_loop:
                 if (PvNode && !RootNode)  // Update pv even in fail-high case
                     ss->updatePv(move);
 
-                if (PvNode && value < beta) {
+                if (value >= beta) {
+                    break;  // Fail high
+                }
+                else {
                     alpha = value;  // Update alpha, make sure alpha < beta
 
                     if (RootNode)
                         searchData->rootAlpha = alpha;
 
                     // Reduce other moves if we have found at least one score improvement (~26 elo)
-                    if (depth > 2 && depth < 12 && beta < 2000 && value > -2000)
-                        depth -= 1;
+                    if (depth > 2 && depth < 12 && std::abs(value) < 2000)
+                        depth -= ALPHA_IMPROVEMENT_REDUCTION;
 
                     // If we are in balance move mode, we also shrink beta as to narrow
                     // the search window to [-abs(v-bias)+bias, abs(v-bias)+bias].
@@ -1314,10 +1316,6 @@ moves_loop:
                         if (alpha >= beta)
                             break;
                     }
-                }
-                else {                      // beta = alpha + 1 in NonPV node
-                    assert(value >= beta);  // Fail high
-                    break;
                 }
             }
         }
