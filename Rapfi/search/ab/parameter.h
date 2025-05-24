@@ -52,7 +52,7 @@ constexpr Depth TTPV_NEG_REDUCTION            = 0.97f;
 constexpr Depth NO_ALPHA_IMPROVING_REDUCTION  = 0.98f;
 constexpr Depth NOKILLER_CUTNODE_REDUCTION    = 1.8f;
 constexpr Depth FALSE_FORBID_LESS_REDUCTION   = 1.05f;
-constexpr Depth ALPHA_IMPROVEMENT_REDUCTION   = 0.95f;
+constexpr Depth ALPHA_IMPROVEMENT_REDUCTION   = 1.00f;
 constexpr Depth OPPO_USELESS_DEFEND_REDUCTION = 1.93f;
 constexpr Depth SELF_USELESS_DEFEND_REDUCTION = 0.96f;
 

@@ -487,7 +487,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         searchData->rootAlpha = alpha;
 
         // Decrease search depth if multiple fail high occurs
-        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 2);
+        Depth adjustedDepth = std::max(1.0f, depth - failHighCnt / 3);
 
         // Search at root node with rule
         Value value = ::search<Root>(rule, board, ss, alpha, beta, adjustedDepth, false);
@@ -1304,7 +1304,7 @@ moves_loop:
                         searchData->rootAlpha = alpha;
 
                     // Reduce other moves if we have found at least one score improvement (~26 elo)
-                    if (depth > 2 && depth < 16 && std::abs(value) < 2000)
+                    if (depth > 2 && depth < 12 && std::abs(value) < 2000)
                         depth -= ALPHA_IMPROVEMENT_REDUCTION;
 
                     // If we are in balance move mode, we also shrink beta as to narrow
