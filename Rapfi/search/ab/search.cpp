@@ -926,7 +926,7 @@ moves_loop:
 
     // Fail-High reduction (~50 elo)
     // Indicate cutNode that will probably fail high if current eval is far above beta
-    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin<Rule>(depth, oppo4);
+    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
 
     MovePicker mp(Rule,
                   board,
@@ -1056,7 +1056,7 @@ moves_loop:
             // Extend if only the ttMove fails high, while other moves fails low.
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
-                if (!PvNode && value < singularBeta - doubleSEMargin<Rule>(depth)
+                if (!PvNode && value < singularBeta - doubleSEMargin(depth)
                     && ss->extraExtension < SE_EXTRA_MAX_DEPTH)
                     extension = 2.0f;
                 else
@@ -1131,8 +1131,10 @@ moves_loop:
                 r += NOKILLER_CUTNODE_REDUCTION;
 
             // Increase reduction for useless defend move (~6 elo)
-            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4)
-                r += (distOppo > 4) * 2 + (distSelf > 4);
+            if (oppo4 && ss->moveP4[oppo] < E_BLOCK4) {
+                r += (distOppo > 4 ? OPPO_USELESS_DEFEND_REDUCTION : 0);
+                r += (distSelf > 4 ? SELF_USELESS_DEFEND_REDUCTION : 0);
+            }
 
             // Decrease reduction for continuous attack (~5 elo)
             if (!oppo4 && (ss - 2)->moveP4[self] >= H_FLEX3
