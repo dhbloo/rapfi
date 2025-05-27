@@ -64,7 +64,7 @@ public:
     /// Get the current memory size limit of the search.
     size_t getMemoryLimit() const override;
 
-    /// Clear the state of the searcher between two different games
+    /// Clear the state of the searcher between two different games.
     void clear(ThreadPool &pool, bool clearAllMemory) override;
 
     /// The thinking entry point. When program receives search command, main

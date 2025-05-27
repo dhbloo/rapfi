@@ -39,6 +39,11 @@
         "microsoft.com/VisualStudioSettings/CMake/1.0": {
           "intelliSenseMode": "windows-clang-x64"
         }
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     },
     {
@@ -438,47 +443,58 @@
   "buildPresets": [
     {
       "name": "x64-msvc-Native-Debug",
-      "configurePreset": "x64-msvc-Native-Debug"
+      "configurePreset": "x64-msvc-Native-Debug",
+      "configuration": "Debug"
     },
     {
       "name": "x64-msvc-Native-RelWithDebInfo",
-      "configurePreset": "x64-msvc-Native-RelWithDebInfo"
+      "configurePreset": "x64-msvc-Native-RelWithDebInfo",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "x64-msvc-Native",
-      "configurePreset": "x64-msvc-Native"
+      "configurePreset": "x64-msvc-Native",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-SSE",
-      "configurePreset": "x64-msvc-SSE"
+      "configurePreset": "x64-msvc-SSE",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-AVX2",
-      "configurePreset": "x64-msvc-AVX2"
+      "configurePreset": "x64-msvc-AVX2",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-AVXVNNI",
-      "configurePreset": "x64-msvc-AVXVNNI"
+      "configurePreset": "x64-msvc-AVXVNNI",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-AVX512",
-      "configurePreset": "x64-msvc-AVX512"
+      "configurePreset": "x64-msvc-AVX512",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-AVX512VNNI",
-      "configurePreset": "x64-msvc-AVX512VNNI"
+      "configurePreset": "x64-msvc-AVX512VNNI",
+      "configuration": "Release"
     },
     {
       "name": "x64-msvc-onnx-Native-Debug",
-      "configurePreset": "x64-msvc-onnx-Native-Debug"
+      "configurePreset": "x64-msvc-onnx-Native-Debug",
+      "configuration": "Debug"
     },
     {
       "name": "x64-msvc-onnx-Native-RelWithDebInfo",
-      "configurePreset": "x64-msvc-onnx-Native-RelWithDebInfo"
+      "configurePreset": "x64-msvc-onnx-Native-RelWithDebInfo",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "x64-msvc-onnx-Native",
-      "configurePreset": "x64-msvc-onnx-Native"
+      "configurePreset": "x64-msvc-onnx-Native",
+      "configuration": "Release"
     },
     {
       "name": "x64-clang-Native",

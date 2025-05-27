@@ -50,6 +50,7 @@ class ThreadPool;  // forward declaration
 struct SearchThread
 {
 public:
+    /// ID of this search thread, starting from 0 for main thread.
     const uint32_t id;
     /// Launch a custom task in this thread.
     void runTask(std::function<void(SearchThread &)> task);
@@ -59,7 +60,10 @@ public:
 private:
     friend struct MainSearchThread;
     friend class ThreadPool;
-    bool running, exit;
+    /// Whether this thread is running a task at this moment.
+    bool running;
+    /// Whether this thread should exit its threadLoop() function.
+    bool exit;
 
 #ifdef MULTI_THREADING
     std::function<void(SearchThread &)> taskFunc;
@@ -67,6 +71,7 @@ private:
     std::mutex                          mutex;
     std::condition_variable             cv;
 
+    /// Thread loop function that runs in a separate thread.
     void threadLoop();
 #endif
 
@@ -206,6 +211,7 @@ public:
     /// @param options Options of this search.
     /// @param inPonder If true, it is considered as pondering mode. No message will be shown.
     /// @note This is a non-blocking function. It returns immediately after starting all threads.
+    ///     However, it will still block if MULTI_THREADING macro is not defined.
     void startThinking(const Board &board, const SearchOptions &options, bool inPonder = false);
     /// Notify all threads to stop thinking immediately.
     void stopThinking() { terminate.store(true, std::memory_order_relaxed); }
