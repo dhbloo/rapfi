@@ -280,7 +280,8 @@ void getOption()
 
         // Resize TT if memory reserved is different for this rule.
         if (Config::MemoryReservedMB[prevRule] != Config::MemoryReservedMB[options.rule.rule]) {
-            size_t maxMemSizeKB  = Search::Threads.searcher()->getMemoryLimit();
+            size_t maxMemSizeKB = Search::Threads.searcher()->getMemoryLimit()
+                                  + Config::MemoryReservedMB[prevRule] * 1024;
             size_t memReservedKB = Config::MemoryReservedMB[options.rule.rule] * 1024;
             size_t memLimitKB    = maxMemSizeKB <= memReservedKB ? 1 : maxMemSizeKB - memReservedKB;
             Search::Threads.searcher()->setMemoryLimit(memLimitKB);
