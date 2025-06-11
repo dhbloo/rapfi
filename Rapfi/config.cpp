@@ -24,8 +24,6 @@
 #include "database/yxdbstorage.h"
 #include "eval/evaluator.h"
 #include "eval/mix10nnue.h"
-#include "eval/mix9litennue.h"
-#include "eval/mix9nnue.h"
 #include "eval/mix9svqnnue.h"
 #include "game/pattern.h"
 #include "search/ab/searcher.h"
@@ -624,39 +622,7 @@ void Config::readEvaluator(const cpptoml::table &t)
         return {blackWeightPath, whiteWeightPath};
     };
 
-    if (*evaluatorType == "mix9nnue") {
-        Search::Threads.setupEvaluator(warpEvaluatorMaker(
-            [=](int                   boardSize,
-                Rule                  rule,
-                std::filesystem::path weightPath,
-                const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix9::Mix9Evaluator>(boardSize,
-                                                                         rule,
-                                                                         blackWeightPath,
-                                                                         whiteWeightPath);
-            },
-            true));
-    }
-    else if (*evaluatorType == "mix9litennue") {
-        Search::Threads.setupEvaluator(warpEvaluatorMaker(
-            [=](int                   boardSize,
-                Rule                  rule,
-                std::filesystem::path weightPath,
-                const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix9lite::Mix9LiteEvaluator>(boardSize,
-                                                                                 rule,
-                                                                                 blackWeightPath,
-                                                                                 whiteWeightPath);
-            },
-            true));
-    }
-    else if (*evaluatorType == "mix9svqnnue") {
+    if (*evaluatorType == "mix9svq") {
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
@@ -672,7 +638,7 @@ void Config::readEvaluator(const cpptoml::table &t)
             },
             true));
     }
-    else if (*evaluatorType == "mix10nnue") {
+    else if (*evaluatorType == "mix10") {
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
