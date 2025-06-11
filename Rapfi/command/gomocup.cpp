@@ -128,15 +128,14 @@ void sendActionAndUpdateBoard(ActionType action, Pos bestMove)
 
         options.swapable    = false;
         options.balanceMode = Search::SearchOptions::BALANCE_TWO;
-        Search::Threads.startThinking(*board, options);
-        Search::Threads.waitForIdle();
-
-        Pos move1 = Search::Threads.main()->rootMoves[0].pv[0];
-        Pos move2 = Search::Threads.main()->rootMoves[0].pv[1];
-        std::cout << outputCoordXConvert(move1, board->size()) << ','
-                  << outputCoordYConvert(move1, board->size()) << ' '
-                  << outputCoordXConvert(move2, board->size()) << ','
-                  << outputCoordYConvert(move2, board->size()) << std::endl;
+        Search::Threads.startThinking(*board, options, false, []() {
+            Pos move1 = Search::Threads.main()->rootMoves[0].pv[0];
+            Pos move2 = Search::Threads.main()->rootMoves[0].pv[1];
+            std::cout << outputCoordXConvert(move1, board->size()) << ','
+                      << outputCoordYConvert(move1, board->size()) << ' '
+                      << outputCoordXConvert(move2, board->size()) << ','
+                      << outputCoordYConvert(move2, board->size()) << std::endl;
+        });
     }
 }
 
@@ -154,21 +153,23 @@ void think(Board                             &board,
     if (Config::ReloadConfigEachMove)
         loadConfig();
 
-#ifdef MULTI_THREADING
-    // If threads are pondering, stop them now
-    if (Search::Threads.main()->inPonder)
+    // If threads are pondering, stop them now and wait for them to finish
+    if (Search::Threads.main()->inPonder) {
         Search::Threads.stopThinking();
-
-    Time startTime = now();
-    thinking       = true;
-    Search::Threads.startThinking(board, options);
-
-    std::thread waitThread([&, startTime]() {
         Search::Threads.waitForIdle();
+    }
 
-        std::lock_guard<std::mutex> lock(protocol_mutex);
-        sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
-                                 Search::Threads.main()->bestMove);
+    thinking = true;
+    Search::Threads.startThinking(board, options, false, [&, startTime = now()]() {
+        {
+#ifdef MULTI_THREADING
+            std::lock_guard<std::mutex> lock(protocol_mutex);
+#endif
+
+            sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
+                                     Search::Threads.main()->bestMove);
+            thinking = false;
+        }
 
         // Subtract used match time
         Time usedTime = now() - startTime;
@@ -176,27 +177,9 @@ void think(Board                             &board,
             options.timeLeft = std::max(options.timeLeft - usedTime, (Time)0);
 
         // Start pondering search if needed
-        if (Search::Threads.main()->startPonderAfterThinking) {
+        if (Search::Threads.main()->startPonderAfterThinking)
             Search::Threads.startThinking(board, options, true);
-        }
-
-        thinking = false;
     });
-    waitThread.detach();
-#else
-    Time startTime = now();
-    thinking       = true;
-    Search::Threads.startThinking(board, options);
-
-    // Subtract used match time
-    Time usedTime = now() - startTime;
-    if (options.timeLimit && options.matchTime > 0)
-        options.timeLeft = std::max(options.timeLeft - usedTime, (Time)0);
-
-    sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
-                             Search::Threads.main()->bestMove);
-    thinking = false;
-#endif
 }
 
 void setGUIMode()
@@ -1262,6 +1245,7 @@ bool runProtocol()
     std::cin >> cmd;
 
     // Stop the protocol loop when reaching EOF
+    // We do not stop thinking here, but let the outer loop to wait for its finish.
     if (std::cin.eof())
         return true;
 
@@ -1276,10 +1260,9 @@ bool runProtocol()
     };
 
     // clang-format off
-    if (cmd == "END")          { Search::Threads.stopThinking(); return true; }
-    else if (cmd == "STOP")    { Search::Threads.stopThinking(); return false; }
-    else if (cmd == "YXSTOP")  { Search::Threads.stopThinking(); return false; }
-    else if (thinking)         return false;
+    if (cmd == "END")                          return Search::Threads.stopThinking(), true;
+    else if (cmd == "STOP" || cmd == "YXSTOP") return Search::Threads.stopThinking(), false;
+    else if (thinking)                         return false;
 
 #ifdef MULTI_THREADING
     std::lock_guard<std::mutex> lock(protocol_mutex);

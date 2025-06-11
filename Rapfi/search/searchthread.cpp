@@ -72,13 +72,20 @@ SearchThread::~SearchThread()
 void SearchThread::runTask(std::function<void(SearchThread &)> task)
 {
 #ifdef MULTI_THREADING
-    {
+    if (std::this_thread::get_id() == thread.get_id()) {
+        // We *are* the worker ⇒ enqueue "tail task" without waiting.
+        std::lock_guard<std::mutex> lock(mutex);
+        // at this point running is still true, we simply replace the functor
+        taskFunc = std::move(task);
+    }
+    else {
         std::unique_lock<std::mutex> lock(mutex);
         cv.wait(lock, [&] { return !running; });
         taskFunc = std::move(task);
         running  = true;
+        lock.unlock();
+        cv.notify_one();
     }
-    cv.notify_one();
 #else
     if (task)
         task(*this);
@@ -88,6 +95,9 @@ void SearchThread::runTask(std::function<void(SearchThread &)> task)
 void SearchThread::waitForIdle()
 {
 #ifdef MULTI_THREADING
+    // Check deadlock if we are already in the worker thread
+    assert(std::this_thread::get_id() != thread.get_id());
+
     if (!running)
         return;
 
@@ -104,15 +114,16 @@ void SearchThread::threadLoop()
 
         {
             std::unique_lock<std::mutex> lock(mutex);
-            running = false;
-            cv.notify_all();
-            cv.wait(lock, [&] { return running; });
+            if (!taskFunc) {
+                running = false;
+                cv.notify_all();
+                cv.wait(lock, [&] { return running || exit; });
+            }
 
             if (exit)
                 return;
 
-            task     = std::move(taskFunc);
-            taskFunc = nullptr;
+            std::swap(task, taskFunc);
         }
 
         if (task)
@@ -142,11 +153,11 @@ void SearchThread::clear()
 void MainSearchThread::clear()
 {
     SearchThread::clear();
-    resultAction = ActionType::Move;
-    bestMove = previousPlyBestMove = Pos::NONE;
-    callsCnt                       = 0;
-    startPonderAfterThinking       = false;
-    inPonder                       = false;
+    resultAction             = ActionType::Move;
+    bestMove                 = Pos::NONE;
+    callsCnt                 = 0;
+    startPonderAfterThinking = false;
+    inPonder                 = false;
 }
 
 void SearchThread::setBoardAndEvaluator(const Board &board)
@@ -206,7 +217,7 @@ void MainSearchThread::markPonderingAvailable()
         startPonderAfterThinking.store(true, std::memory_order_relaxed);
 }
 
-void MainSearchThread::startSearchingAndWait()
+void MainSearchThread::startSearchingAndWaitUntilFinish()
 {
     Searcher *searcher = threads.searcher();
 
@@ -221,7 +232,7 @@ void MainSearchThread::startSearchingAndWait()
     threads.stopThinking();
 
     // Wait for all other threads to stop searching
-    threads.waitForIdle(false);
+    threads.waitForIdle();
 }
 
 void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> task)
@@ -237,22 +248,22 @@ void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> 
     task(*this);
 
     // Wait for all other threads to finish
-    threads.waitForIdle(false);
+    threads.waitForIdle();
 }
 
-void ThreadPool::waitForIdle(bool includingMainThread)
+void ThreadPool::waitForIdle()
 {
-    for (size_t i = (includingMainThread ? 0 : 1); i < size(); i++)
-        (*this)[i]->waitForIdle();
+    // Iterate all other threads and wait for them to finish
+    for (auto &th : *this)
+        if (th->thread.get_id() != std::this_thread::get_id())
+            th->waitForIdle();
 }
 
 void ThreadPool::setNumThreads(size_t numThreads)
 {
-    // Destroy all threads first
-    while (!empty()) {
-        back()->waitForIdle();
+    // Destroy all threads first (which will also wait for them to be idle)
+    while (!empty())
         pop_back();  // std::unique_ptr will automatically destroy thread
-    }
 
     // Create requested amount of threads
     if (numThreads > 0) {
@@ -270,6 +281,8 @@ void ThreadPool::setNumThreads(size_t numThreads)
 
 void ThreadPool::setupSearcher(std::unique_ptr<Searcher> newSearcher)
 {
+    waitForIdle();
+
     size_t memLimitKB = 0;
     if (searcher())
         memLimitKB = searcher()->getMemoryLimit();
@@ -297,27 +310,33 @@ void ThreadPool::setupDatabase(std::unique_ptr<Database::DBStorage> dbStorage)
 
 void ThreadPool::setupEvaluator(std::function<EvaluatorMaker> maker)
 {
-    evaluatorMaker = maker;
-
-    if (empty())
-        return;
-
-    waitForIdle();
-    for (const auto &th : *this) {
-        th->board.reset();
-        th->evaluator.reset();
+    if (!empty()) {
+        waitForIdle();
+        for (const auto &th : *this) {
+            th->board.reset();
+            th->evaluator.reset();
+        }
     }
+
+    evaluatorMaker = maker;
 }
 
-void ThreadPool::startThinking(const Board &board, const SearchOptions &options, bool inPonder)
+void ThreadPool::startThinking(const Board          &board,
+                               const SearchOptions  &options,
+                               bool                  inPonder,
+                               std::function<void()> onStop)
 {
     assert(size() > 0);
     assert(searcher());
 
+    // If we are already thinking, wait for it first
+    waitForIdle();
+    terminate = false;
+
+    // Clean up main thread state and copy options
     main()->clear();
-    main()->inPonder      = inPonder;
     main()->searchOptions = options;
-    terminate             = false;
+    main()->inPonder      = inPonder;
 
     // Clone the input board to main thread and update evaluator
     main()->setBoardAndEvaluator(board);
@@ -408,8 +427,10 @@ void ThreadPool::startThinking(const Board &board, const SearchOptions &options,
             th.balance2Moves = main()->balance2Moves;
     }
 
-    main()->runTask([searcher = searcher()](SearchThread &th) {
+    main()->runTask([this, searcher = searcher(), onStop = std::move(onStop)](SearchThread &th) {
         searcher->searchMain(static_cast<MainSearchThread &>(th));
+        if (onStop)  // If onStop is set, queue a tail task to call it
+            main()->runTask([onStop = std::move(onStop)](SearchThread &th) { onStop(); });
     });
 }
 

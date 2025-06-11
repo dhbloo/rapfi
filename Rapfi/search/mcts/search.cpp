@@ -961,7 +961,7 @@ void MCTSSearcher::searchMain(MainSearchThread &th)
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
     setupRootNode(th);  // Setup root node and other stuffs
-    th.startSearchingAndWait();
+    th.startSearchingAndWaitUntilFinish();
 
     // Rank root moves and record best move
     updateRootMovesData(th);

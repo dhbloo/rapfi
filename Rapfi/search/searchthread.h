@@ -113,8 +113,12 @@ public:
     std::unordered_map<Balance2Move, size_t, Balance2Move::Hash> balance2Moves;
 
     // Common thread-related statistics
-    std::atomic<uint64_t> numNodes;  /// Nodes count searched by this thread
-    int                   selDepth;  /// Maximum depth reached by this thread
+    // ----------------------------------------------------
+
+    /// Nodes count searched by this thread
+    std::atomic<uint64_t> numNodes;
+    /// Maximum depth reached by this thread
+    int selDepth;
 };
 
 /// MainSearchThread class is the master thread in the Lazy SMP algorithm.
@@ -135,7 +139,7 @@ struct MainSearchThread : public SearchThread
     /// Start the searching function of all threads (including main thread itself).
     /// This function will block until the main thread finishs its search, then it
     /// will set terminating to true and wait for all other threads to finish.
-    void startSearchingAndWait();
+    void startSearchingAndWaitUntilFinish();
     /// Start a custom task with all threads and wait for them to finish.
     void runCustomTaskAndWait(std::function<void(SearchThread &)> task);
 
@@ -147,8 +151,6 @@ struct MainSearchThread : public SearchThread
     ActionType resultAction;
     /// Searched best move result
     Pos bestMove;
-    /// Previous searched best move of last ply (used in selfplay)
-    Pos previousPlyBestMove;
     /// Calls count before exit condition check
     uint32_t callsCnt;
     /// Should we start pondering after finishing this move?
@@ -185,12 +187,14 @@ private:
     }
 
 public:
-    /// Wait for all search threads to finish their current works.
-    /// @param includingMainThread Whether to wait for main thread. Must be
-    /// set to false when called inside the main thread to avoid deadlock.
-    void waitForIdle(bool includingMainThread = true);
+    /// Wait for (other) search threads to finish their current works.
+    /// @note When called inside the main thread, it will only wait for other
+    ///     threads to finish their current works, excluding the main thread itself.
+    void waitForIdle();
     /// Destroy all old threads and creates requested amount of threads.
+    /// @param numThreads The number of threads to create.
     /// @note New threads will immediately go to sleep in threadLoop().
+    ///     This must never be called in the worker threads.
     void setNumThreads(size_t numThreads);
     /// Setup current searcher to a search algorithm.
     /// @param searcher The unique ptr to a search, must not be nullptr.
@@ -205,8 +209,12 @@ public:
     /// @param board The position to start searching.
     /// @param options Options of this search.
     /// @param inPonder If true, it is considered as pondering mode. No message will be shown.
+    /// @param onStop Function to be called (in main thread) when search is finished or interrupted.
     /// @note This is a non-blocking function. It returns immediately after starting all threads.
-    void startThinking(const Board &board, const SearchOptions &options, bool inPonder = false);
+    void startThinking(const Board          &board,
+                       const SearchOptions  &options,
+                       bool                  inPonder = false,
+                       std::function<void()> onStop   = nullptr);
     /// Notify all threads to stop thinking immediately.
     void stopThinking() { terminate.store(true, std::memory_order_relaxed); }
     /// Clear all threads state, searcher state and thread pool state for a new game.

@@ -181,7 +181,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
 
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
-    th.startSearchingAndWait();
+    th.startSearchingAndWaitUntilFinish();
 
     // Select best thread according to eval and completed depth when needed
     SearchThread *bestThread = &th;
@@ -272,8 +272,6 @@ void ABSearcher::search(SearchThread &th)
             rm.previousValue = rm.value;
             rm.previousPv    = rm.pv;
         }
-        if (mainThread)
-            mainThread->previousPlyBestMove = th.rootMoves[0].pv[0];
 
         // MultiPV loop. We perform a full root search for each PV line
         for (sd.pvIdx = 0; sd.pvIdx < sd.multiPv && !th.threads.isTerminating(); ++sd.pvIdx) {
