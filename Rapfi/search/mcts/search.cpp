@@ -884,17 +884,19 @@ void MCTSSearcher::clear(ThreadPool &pool, bool clearAllMemory)
     pool.main()->runTask([this](SearchThread &th) {
         std::atomic<size_t> numShardsProcessed = 0;
         MainSearchThread   &mainThread         = static_cast<MainSearchThread &>(th);
-        mainThread.runCustomTaskAndWait([this, &numShardsProcessed](SearchThread &t) {
-            for (;;) {
-                size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
-                if (shardIdx >= this->nodeTable->getNumShards())
-                    return;
+        mainThread.runCustomTaskAndWait(
+            [this, &numShardsProcessed](SearchThread &t) {
+                for (;;) {
+                    size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
+                    if (shardIdx >= this->nodeTable->getNumShards())
+                        return;
 
-                NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
-                std::unique_lock lock(shard.mutex);
-                shard.table.clear();
-            }
-        });
+                    NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
+                    std::unique_lock lock(shard.mutex);
+                    shard.table.clear();
+                }
+            },
+            true);
     });
     pool.waitForIdle();
 
@@ -961,7 +963,7 @@ void MCTSSearcher::searchMain(MainSearchThread &th)
     // Starts worker threads, then starts main thread
     printer.printSearchStarts(th, timectl);
     setupRootNode(th);  // Setup root node and other stuffs
-    th.startSearchingAndWaitUntilFinish();
+    th.runCustomTaskAndWait([this](SearchThread &t) { search(t); }, true);
 
     // Rank root moves and record best move
     updateRootMovesData(th);
@@ -1104,33 +1106,37 @@ void MCTSSearcher::recycleOldNodes(MainSearchThread &th)
     };
 
     // Mark all reachable nodes from the root node
-    th.runCustomTaskAndWait([this, &f](SearchThread &t) {
-        PRNG prng(Hash::LCHash(t.id));
-        recursiveApply(*this->root, &f, t.id ? &prng : nullptr, this->globalNodeAge);
-    });
+    th.runCustomTaskAndWait(
+        [this, &f](SearchThread &t) {
+            PRNG prng(Hash::LCHash(t.id));
+            recursiveApply(*this->root, &f, t.id ? &prng : nullptr, this->globalNodeAge);
+        },
+        true);
 
     // Remove all unreachable nodes
     std::atomic<size_t> numShardsProcessed = 0;
 
-    th.runCustomTaskAndWait([this, &numRecycledNodes, &numShardsProcessed](SearchThread &t) {
-        for (;;) {
-            size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
-            if (shardIdx >= this->nodeTable->getNumShards())
-                return;
+    th.runCustomTaskAndWait(
+        [this, &numRecycledNodes, &numShardsProcessed](SearchThread &t) {
+            for (;;) {
+                size_t shardIdx = numShardsProcessed.fetch_add(1, std::memory_order_relaxed);
+                if (shardIdx >= this->nodeTable->getNumShards())
+                    return;
 
-            NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
-            std::unique_lock lock(shard.mutex);
-            for (auto it = shard.table.begin(); it != shard.table.end();) {
-                Node *node = std::addressof(const_cast<Node &>(*it));
-                if (node->getAgeRef().load(std::memory_order_relaxed) != this->globalNodeAge) {
-                    it = shard.table.erase(it);
-                    numRecycledNodes.fetch_add(1, std::memory_order_relaxed);
+                NodeTable::Shard shard = this->nodeTable->getShardByShardIndex(shardIdx);
+                std::unique_lock lock(shard.mutex);
+                for (auto it = shard.table.begin(); it != shard.table.end();) {
+                    Node *node = std::addressof(const_cast<Node &>(*it));
+                    if (node->getAgeRef().load(std::memory_order_relaxed) != this->globalNodeAge) {
+                        it = shard.table.erase(it);
+                        numRecycledNodes.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    else
+                        it++;
                 }
-                else
-                    it++;
             }
-        }
-    });
+        },
+        true);
 
     MESSAGEL("Reachable nodes: " << numReachableNodes.load()
                                  << ", Recycled nodes: " << numRecycledNodes.load()

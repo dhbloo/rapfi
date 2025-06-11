@@ -217,25 +217,8 @@ void MainSearchThread::markPonderingAvailable()
         startPonderAfterThinking.store(true, std::memory_order_relaxed);
 }
 
-void MainSearchThread::startSearchingAndWaitUntilFinish()
-{
-    Searcher *searcher = threads.searcher();
-
-    // Starts searching in non-main threads
-    for (size_t i = 1; i < threads.size(); i++)
-        threads[i]->runTask([searcher](SearchThread &th) { searcher->search(th); });
-
-    // Starts main thread searching
-    searcher->search(*this);
-
-    // Stop all threads if not already stopped
-    threads.stopThinking();
-
-    // Wait for all other threads to stop searching
-    threads.waitForIdle();
-}
-
-void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> task)
+void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> task,
+                                            bool                                includeSelf)
 {
     if (!task)
         return;
@@ -245,7 +228,8 @@ void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> 
         threads[i]->runTask(task);
 
     // Run task in main thread
-    task(*this);
+    if (includeSelf)
+        task(*this);
 
     // Wait for all other threads to finish
     threads.waitForIdle();
@@ -417,16 +401,17 @@ void ThreadPool::startThinking(const Board          &board,
         }
     }
 
-    // Clear threads state and copy board and root moves to other threads sequentially
-    for (size_t i = 1; i < size(); i++) {
-        SearchThread &th = *(*this)[i];
-        th.clear();
-        th.setBoardAndEvaluator(*main()->board);
-        th.rootMoves = main()->rootMoves;
-        if (main()->searchOptions.balanceMode == Search::SearchOptions::BALANCE_TWO)
-            th.balance2Moves = main()->balance2Moves;
-    }
+    // Launch a small task to clear threads state and copy state from main thread
+    main()->runCustomTaskAndWait(
+        [mainTh = main()](SearchThread &th) {
+            th.clear();
+            th.setBoardAndEvaluator(*mainTh->board);
+            th.rootMoves     = mainTh->rootMoves;
+            th.balance2Moves = mainTh->balance2Moves;
+        },
+        false);
 
+    // Start the main search thread
     main()->runTask([this, searcher = searcher(), onStop = std::move(onStop)](SearchThread &th) {
         searcher->searchMain(static_cast<MainSearchThread &>(th));
         if (onStop)  // If onStop is set, queue a tail task to call it

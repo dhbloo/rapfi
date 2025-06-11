@@ -136,12 +136,10 @@ struct MainSearchThread : public SearchThread
     void checkExit(uint32_t elapsedCalls = 1);
     /// Mark pondering available for the last finished searching.
     void markPonderingAvailable();
-    /// Start the searching function of all threads (including main thread itself).
-    /// This function will block until the main thread finishs its search, then it
-    /// will set terminating to true and wait for all other threads to finish.
-    void startSearchingAndWaitUntilFinish();
     /// Start a custom task with all threads and wait for them to finish.
-    void runCustomTaskAndWait(std::function<void(SearchThread &)> task);
+    /// @param task The custom task to run in each thread.
+    /// @param includeSelf If true, the main thread will also run the task.
+    void runCustomTaskAndWait(std::function<void(SearchThread &)> task, bool includeSelf);
 
     /// Current search options
     SearchOptions  searchOptions;
