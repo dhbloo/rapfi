@@ -272,17 +272,17 @@ void *alignedLargePageAllocWindows(size_t size)
 void *alignedLargePageAlloc(size_t size)
 {
 #ifdef _WIN32
-    static bool printedLargePageMessage = false;
-
     // Try to allocate large pages
     void *mem = alignedLargePageAllocWindows(size);
 
     // Fall back to regular, page aligned, allocation if necessary
     if (!mem)
         mem = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    else if (!printedLargePageMessage) {
-        MESSAGEL("Windows Large-Page memory is enabled.");
-        printedLargePageMessage = true;
+    else {
+        static bool _init = []() {
+            MESSAGEL("Large page memory allocation enabled.");
+            return true;
+        }();
     }
 
     return mem;

@@ -37,6 +37,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <type_traits>
 
 // Define some macros for platform specific optimization hint
 #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
@@ -272,3 +274,33 @@ void *alignedLargePageAlloc(size_t size);
 void alignedLargePageFree(void *ptr);
 
 }  // namespace MemAlloc
+
+template <typename T>
+struct LargePageDeleter
+{
+    void operator()(T *ptr) const
+    {
+        if (!ptr)
+            return;
+
+        // Explicitly needed to call the destructor
+        if constexpr (!std::is_trivially_destructible_v<T>)
+            ptr->~T();
+
+        MemAlloc::alignedLargePageFree(ptr);
+    }
+};
+
+template <typename T>
+using LargePagePtr = std::unique_ptr<T, LargePageDeleter<T>>;
+
+// make_unique_large_page for single objects
+template <typename T, typename... Args>
+LargePagePtr<T> make_unique_large_page(Args &&...args)
+{
+    static_assert(alignof(T) <= 4096,
+                  "alignedLargePageAlloc() may fail for such a big alignment requirement of T");
+    void *raw_memory = MemAlloc::alignedLargePageAlloc(sizeof(T));
+    T    *obj        = new (raw_memory) T(std::forward<Args>(args)...);
+    return LargePagePtr<T>(obj);
+}

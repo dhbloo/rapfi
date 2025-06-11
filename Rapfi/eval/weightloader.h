@@ -19,6 +19,7 @@
 #pragma once
 
 #include "../core/iohelper.h"
+#include "../core/platform.h"
 
 #include <filesystem>
 #include <fstream>
@@ -46,7 +47,7 @@ struct WeightLoader
     /// @param is Input stream to load weight from.
     /// @param args Extra loading arguments.
     /// @return Weight pointer if load succeeded, otherwise nullptr.
-    virtual std::unique_ptr<WeightType> load(std::istream &is, LoadArgs args) = 0;
+    virtual LargePagePtr<WeightType> load(std::istream &is, LoadArgs args) = 0;
 
     /// Whether this weight loader needs a binary stream.
     /// Default behaviour is true. Only used when loading from istream.
@@ -60,9 +61,9 @@ struct PlainBinaryWeightLoader : WeightLoader<WeightType_>
     using typename WeightLoader<WeightType_>::WeightType;
     using typename WeightLoader<WeightType_>::LoadArgs;
 
-    std::unique_ptr<WeightType> load(std::istream &is, LoadArgs args) override
+    LargePagePtr<WeightType> load(std::istream &is, LoadArgs args) override
     {
-        auto weight = std::make_unique<WeightType>();
+        auto weight = make_unique_large_page<WeightType>();
         is.read(reinterpret_cast<char *>(weight.get()), sizeof(WeightType));
         if (is && is.peek() == std::ios::traits_type::eof())
             return std::move(weight);
@@ -101,7 +102,7 @@ struct StandardHeaderParserWarpper : BaseLoader
         headerReader = std::move(reader);
     }
 
-    std::unique_ptr<WeightType> load(std::istream &is, LoadArgs args) override
+    LargePagePtr<WeightType> load(std::istream &is, LoadArgs args) override
     {
         struct RawHeaderData
         {
@@ -181,7 +182,7 @@ struct CompressedWrapper : BaseLoader
 
     void setEntryName(std::string name) { entryName = name; }
 
-    std::unique_ptr<WeightType> load(std::istream &rawInputStream, LoadArgs loadArgs) override
+    LargePagePtr<WeightType> load(std::istream &rawInputStream, LoadArgs loadArgs) override
     {
         Compressor    compressor(rawInputStream, compressType);
         std::istream *is = compressor.openInputStream(entryName);
@@ -220,10 +221,10 @@ public:
 private:
     struct LoadedWeight
     {
-        std::unique_ptr<WeightType> weight;
-        size_t                      refCount;
-        std::filesystem::path       filepath;
-        LoadArgs                    loadArgs;
+        LargePagePtr<WeightType> weight;
+        size_t                   refCount;
+        std::filesystem::path    filepath;
+        LoadArgs                 loadArgs;
     };
 
     std::vector<LoadedWeight> pool;

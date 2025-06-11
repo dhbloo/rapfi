@@ -53,9 +53,9 @@ constexpr int MaxOuterChanges[23] = {5,     11,    33,    107,   293,   675,   1
 
 struct Mix9svqWeightLoader : WeightLoader<mix9svq::Weight>
 {
-    std::unique_ptr<Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
+    LargePagePtr<Weight> load(std::istream &in, Evaluation::EmptyLoadArgs args)
     {
-        auto w = std::make_unique<Weight>();
+        auto w = make_unique_large_page<Weight>();
 
         read_compressed_mapping(in, *w);
         in.read(reinterpret_cast<char *>(&w->feature_dwconv_weight[0][0]),
