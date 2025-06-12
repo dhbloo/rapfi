@@ -287,6 +287,17 @@ static NumaTable build_numa_table(bool respectAffinity)
 
     for (auto &v : tbl)
         std::sort(v.begin(), v.end());
+
+    // Debug print the NUMA table
+    MESSAGEL("NUMA topology:");
+    for (std::size_t n = 0; n < tbl.size(); ++n) {
+        std::ostringstream oss;
+        oss << "Node " << n << ": ";
+        for (CpuIndex c : tbl[n])
+            oss << c << ' ';
+        MESSAGEL(oss.str());
+    }
+
     return tbl;
 }
 
