@@ -125,8 +125,8 @@ private:
     // Network states
 
     /// Value feature sum of the full board
-    ValueSumType *valueSumTable;           // [H*W+1, FeatureDim] (aligned)
-    ChangeNum    *versionChangeNumTable;   // [H*W+1] (unaligned) num inner changes and outer changes
+    ValueSumType *valueSumTable;          // [H*W+1, FeatureDim] (aligned)
+    ChangeNum    *versionChangeNumTable;  // [H*W+1] (unaligned) num inner changes and outer changes
     uint16_t     *versionInnerIndexTable;  // [H*W+1, H*W] (unaligned)
     uint16_t     *versionOuterIndexTable;  // [H*W+1, (H+2)*(W+2)] (unaligned)
     /// Index table to convert line shape to map feature
@@ -151,6 +151,7 @@ class Evaluator : public Evaluation::Evaluator
 public:
     Evaluator(int                   boardSize,
               Rule                  rule,
+              Numa::NumaNodeId      numaNodeId,
               std::filesystem::path blackWeightPath,
               std::filesystem::path whiteWeightPath);
     ~Evaluator();

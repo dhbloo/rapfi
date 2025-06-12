@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "../core/platform.h"
 #include "../database/dbclient.h"
 #include "../database/dbstorage.h"
 #include "../eval/evaluator.h"
@@ -59,7 +60,8 @@ public:
 private:
     friend struct MainSearchThread;
     friend class ThreadPool;
-    bool running, exit;
+    Numa::NumaNodeId numaId;
+    bool             running, exit;
 
 #ifdef MULTI_THREADING
     std::function<void(SearchThread &)> taskFunc;
@@ -164,7 +166,10 @@ struct MainSearchThread : public SearchThread
 class ThreadPool : public std::vector<std::unique_ptr<SearchThread>>
 {
 public:
-    using EvaluatorMaker = std::unique_ptr<Evaluation::Evaluator>(int boardSize, Rule rule);
+    /// Type of the function that creates an evaluator instance.
+    using EvaluatorMaker = std::unique_ptr<Evaluation::Evaluator>(int              boardSize,
+                                                                  Rule             rule,
+                                                                  Numa::NumaNodeId numaId);
 
 private:
     friend struct SearchThread;

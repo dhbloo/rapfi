@@ -173,6 +173,7 @@ class Evaluator : public Evaluation::Evaluator
 public:
     Evaluator(int                   boardSize,
               Rule                  rule,
+              Numa::NumaNodeId      numaNodeId,
               std::filesystem::path blackWeightPath,
               std::filesystem::path whiteWeightPath);
     ~Evaluator();
