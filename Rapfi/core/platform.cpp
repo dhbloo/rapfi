@@ -50,14 +50,20 @@ typedef bool (*fun6_t)(HANDLE, PGROUP_AFFINITY, USHORT);
 #endif
 
 #if defined(__linux__) && !defined(__ANDROID__)
-    #include <stdlib.h>
-    #include <sys/mman.h>
+    #include <algorithm>
+    #include <fstream>
+    #include <optional>
+    #include <sched.h>
+    #include <set>
+    #include <sstream>
+    #include <string>
+    #include <unistd.h>
 #endif
 
 #if defined(__APPLE__) || defined(__ANDROID__) || defined(__OpenBSD__) \
     || (defined(__GLIBCXX__) && !defined(_GLIBCXX_HAVE_ALIGNED_ALLOC) && !defined(_WIN32))
     #define POSIXALIGNEDALLOC
-    #include <stdlib.h>
+    #include <cstdlib>
 #endif
 
 // -------------------------------------------------
@@ -187,10 +193,134 @@ NumaNodeId bindThisThread(std::size_t idx)
 
 #elif defined(__linux__) && !defined(__ANDROID__)
 
-NumaNodeId bindThisThread(size_t idx)
+/// read_index_list_from_file() read a file, strip whitespace, turn "0,2-3" into {0,2,3}
+static std::optional<std::vector<int>> read_index_list_from_file(std::string path)
 {
-    // TODO: Implement Linux NUMA binding logic
-    (void)idx;  // suppress unused-parameter compiler warning
+    std::ifstream in(path);
+    if (!in)
+        return std::nullopt;
+
+    std::string s {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    s.erase(std::remove_if(s.begin(), s.end(), [](int ch) { return std::isspace(ch); }), s.end());
+    if (s.empty())
+        return std::nullopt;
+
+    std::vector<int>   out;
+    std::istringstream iss(s);
+    std::string        token;
+
+    while (std::getline(iss, token, ',')) {
+        auto dash_pos = token.find('-');
+        if (dash_pos != std::string::npos) {  // Range: "2-5"
+            int lo = std::atoi(token.substr(0, dash_pos).c_str());
+            int hi = std::atoi(token.substr(dash_pos + 1).c_str());
+            for (int v = lo; v <= hi; ++v)
+                out.push_back(v);
+        }
+        else if (!token.empty()) {  // Single number: "7"
+            out.push_back(std::atoi(token.c_str()));
+        }
+    }
+
+    return {out};
+}
+
+using CpuIndex  = int;
+using NumaTable = std::vector<std::vector<CpuIndex>>;  // node -> cpus
+
+/// build_numa_table() reads the NUMA topology from /sys/devices/system/node/online
+/// and /sys/devices/system/node/node<N>/cpulist, and returns a vector of
+/// vectors, where each vector contains the CPU indices for that NUMA node.
+static NumaTable build_numa_table(bool respectAffinity)
+{
+    const int onlineCpus = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
+
+    std::set<CpuIndex> affinity;
+    if (respectAffinity) {
+        cpu_set_t cur;
+        if (sched_getaffinity(0, sizeof(cur), &cur) == 0)
+            for (CpuIndex c = 0; c < onlineCpus; ++c)
+                if (CPU_ISSET(c, &cur))
+                    affinity.insert(c);
+    }
+
+    auto allowed = [&](CpuIndex c) { return !respectAffinity || affinity.count(c) == 1; };
+
+    NumaTable tbl;
+    bool      fallback = false;
+
+    //--------------- read /sys/devices/system/node/online -----------------
+    auto nodeIndices = read_index_list_from_file("/sys/devices/system/node/online");
+    if (!nodeIndices)
+        fallback = true;
+    else {
+        // Pre-allocate to maximum node index to handle gaps
+        int maxNode = *std::max_element(nodeIndices->begin(), nodeIndices->end());
+        tbl.resize(maxNode + 1);
+
+        for (int n : *nodeIndices) {
+            std::string path = "/sys/devices/system/node/node" + std::to_string(n) + "/cpulist";
+            auto        cpuIndices = read_index_list_from_file(path);
+            if (!cpuIndices) {
+                fallback = true;
+                break;
+            }
+
+            for (int c : *cpuIndices)
+                if (allowed(c))
+                    tbl[n].push_back(c);
+        }
+    }
+
+    // fallback
+    if (fallback || tbl.empty()) {
+        tbl.assign(1, {});  // single node 0
+        for (CpuIndex c = 0; c < onlineCpus; ++c)
+            if (allowed(c))
+                tbl[0].push_back(c);
+    }
+
+    // ensure each cpu list is sorted and remove empty nodes
+    auto newEnd =
+        std::remove_if(tbl.begin(), tbl.end(), [](const auto &cpus) { return cpus.empty(); });
+    tbl.erase(newEnd, tbl.end());
+
+    for (auto &v : tbl)
+        std::sort(v.begin(), v.end());
+    return tbl;
+}
+
+// bindThisThread(idx) pins calling thread to node in round-robin order
+NumaNodeId bindThisThread(std::size_t idx)
+{
+    static const NumaTable numaTable = build_numa_table(true);
+
+    if (numaTable.empty())
+        return DefaultNumaNodeId;
+
+    const NumaNodeId node = static_cast<NumaNodeId>(idx % numaTable.size());
+    const auto      &cpus = numaTable[node];
+    if (cpus.empty())
+        return DefaultNumaNodeId;
+
+    // build CPU mask
+    cpu_set_t *mask = CPU_ALLOC(cpus.back() + 1);
+    if (!mask)
+        return DefaultNumaNodeId;
+
+    const std::size_t masksz = CPU_ALLOC_SIZE(cpus.back() + 1);
+    CPU_ZERO_S(masksz, mask);
+    for (CpuIndex c : cpus)
+        CPU_SET_S(c, masksz, mask);
+
+    const int rc = sched_setaffinity(0, masksz, mask);
+    CPU_FREE(mask);
+
+    if (rc != 0)
+        return DefaultNumaNodeId;
+
+    sched_yield();  // let the scheduler honour the new mask
+    return node;
 }
 
 #else

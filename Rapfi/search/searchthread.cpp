@@ -56,6 +56,7 @@ SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
             // NUMA machinery is not needed. We also store this thread's numa ID for the
             // later NUMA-aware loading of evaluator weights.
             th.numaId = Numa::bindThisThread(th.id);
+            MESSAGEL("Bound thread " << th.id << " to NUMA group " << th.numaId);
         });
 
     // Wait for this thread to enter idle state
