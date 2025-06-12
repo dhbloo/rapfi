@@ -810,6 +810,7 @@ void Accumulator::evaluatePolicy(const Weight &w, PolicyBuffer &policyBuffer)
 
 Evaluator::Evaluator(int                   boardSize,
                      Rule                  rule,
+                     Numa::NumaNodeId      numaNodeId,
                      std::filesystem::path blackWeightPath,
                      std::filesystem::path whiteWeightPath)
     : Evaluation::Evaluator(boardSize, rule)
@@ -845,7 +846,7 @@ Evaluator::Evaluator(int                   boardSize,
              std::make_pair(WHITE, whiteWeightPath),
          }) {
         currentWeightPath  = weightPath;
-        weight[weightSide] = WeightReg.loadWeightFromFile(loader, weightPath);
+        weight[weightSide] = WeightReg.loadWeightFromFile(loader, weightPath, numaNodeId);
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));

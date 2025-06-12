@@ -568,7 +568,9 @@ void Config::readEvaluator(const cpptoml::table &t)
 
     auto warpEvaluatorMaker =
         [weights, evaluatorName = *evaluatorType](auto maker, bool ignoreNoWeightFile = false) {
-            return [=](int boardSize, Rule rule) -> std::unique_ptr<Evaluation::Evaluator> {
+            return [=](int              boardSize,
+                       Rule             rule,
+                       Numa::NumaNodeId numaId) -> std::unique_ptr<Evaluation::Evaluator> {
                 try {
                     for (auto weightCfg : *weights) {
                         std::filesystem::path weightPath;
@@ -580,7 +582,7 @@ void Config::readEvaluator(const cpptoml::table &t)
                             throw std::runtime_error("must specify weight_file in weight configs.");
 
                         try {
-                            return maker(boardSize, rule, weightPath, *weightCfg);
+                            return maker(boardSize, rule, numaId, weightPath, *weightCfg);
                         }
                         catch (const Evaluation::UnsupportedEvaluatorError &e) {
                         }
@@ -626,6 +628,7 @@ void Config::readEvaluator(const cpptoml::table &t)
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
+                Numa::NumaNodeId      numaId,
                 std::filesystem::path weightPath,
                 const cpptoml::table &weightCfg) {
                 auto [blackWeightPath, whiteWeightPath] =
@@ -633,6 +636,7 @@ void Config::readEvaluator(const cpptoml::table &t)
 
                 return std::make_unique<Evaluation::mix9svq::Evaluator>(boardSize,
                                                                         rule,
+                                                                        numaId,
                                                                         blackWeightPath,
                                                                         whiteWeightPath);
             },
@@ -642,6 +646,7 @@ void Config::readEvaluator(const cpptoml::table &t)
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
+                Numa::NumaNodeId      numaId,
                 std::filesystem::path weightPath,
                 const cpptoml::table &weightCfg) {
                 auto [blackWeightPath, whiteWeightPath] =
@@ -649,6 +654,7 @@ void Config::readEvaluator(const cpptoml::table &t)
 
                 return std::make_unique<Evaluation::mix10::Evaluator>(boardSize,
                                                                       rule,
+                                                                      numaId,
                                                                       blackWeightPath,
                                                                       whiteWeightPath);
             },
@@ -661,6 +667,7 @@ void Config::readEvaluator(const cpptoml::table &t)
         Search::Threads.setupEvaluator(warpEvaluatorMaker(
             [=](int                   boardSize,
                 Rule                  rule,
+                Numa::NumaNodeId      numaId,
                 std::filesystem::path weightPath,
                 const cpptoml::table &weightCfg) {
                 return std::make_unique<Evaluation::onnx::OnnxEvaluator>(boardSize,

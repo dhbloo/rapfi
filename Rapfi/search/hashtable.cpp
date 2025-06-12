@@ -146,7 +146,7 @@ void HashTable::clear()
         threads.emplace_back([=]() {
             // Thread binding gives faster search on systems with a first-touch policy
             if (Threads.size() > 8)
-                WinProcGroup::bindThisThread(idx);
+                Numa::bindThisThread(idx);
 
             // Each thread will zero its part of the hash table
             size_t start = stride * idx;

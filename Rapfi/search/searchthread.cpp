@@ -35,6 +35,7 @@ ThreadPool Threads;
 
 SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
     : id(id)
+    , numaId(Numa::DefaultNumaNodeId)
     , running(false)
     , exit(false)
 #ifdef MULTI_THREADING
@@ -52,10 +53,12 @@ SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
             // the choice, eventually we are one of many one-threaded processes running on
             // some Windows NUMA hardware, for instance in fishtest. To make it simple,
             // just check if running threads are below a threshold, in this case all this
-            // NUMA machinery is not needed.
-            WinProcGroup::bindThisThread(th.id);
+            // NUMA machinery is not needed. We also store this thread's numa ID for the
+            // later NUMA-aware loading of evaluator weights.
+            th.numaId = Numa::bindThisThread(th.id);
         });
 
+    // Wait for this thread to enter idle state
     waitForIdle();
 }
 
@@ -177,7 +180,7 @@ void SearchThread::setBoardAndEvaluator(const Board &board)
             evaluator.reset();
 
         if (!evaluator)
-            evaluator = threads.evaluatorMaker(boardSize, rule);
+            evaluator = threads.evaluatorMaker(boardSize, rule, numaId);
     }
 
     // Clone the board (this will also sync the evaluator to the board state)
@@ -251,7 +254,7 @@ void ThreadPool::setNumThreads(size_t numThreads)
 
     // Create requested amount of threads
     if (numThreads > 0) {
-        bool bindGroup = numThreads > 8;
+        bool bindGroup = numThreads > Numa::BindGroupThreshold;
 
         // Make sure the first thread created is MainSearchThread
         push_back(std::make_unique<MainSearchThread>(*this, bindGroup));

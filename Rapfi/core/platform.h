@@ -64,6 +64,30 @@
 // -------------------------------------------------
 // Platform related functions
 
+/// popcount(x) – portable population-count (Hamming weight) for 64-bit words.
+/// Tries to use the fastest compiler/CPU intrinsic that is available at
+/// compile time and falls back to a branch-free SWAR algorithm otherwise.
+/// • GCC / Clang  →  __builtin_popcountll
+/// • MSVC x64     →  __popcnt64
+/// • C++20        →  std::popcount
+/// • Fallback     →  SWAR (Parallel bit-count) algorithm
+inline int popcount(uint64_t x)
+{
+#if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
+    return std::popcount(x);
+#elif defined(__clang__) || defined(__GNUC__)
+    return __builtin_popcountll(x);
+#elif defined(_MSC_VER) && defined(_M_X64)
+    return static_cast<int>(__popcnt64(x));
+#else
+    // 64-bit variant of “Hacker’s Delight” 5-step popcount
+    x -= (x >> 1) & 0x5555'5555'5555'5555ULL;
+    x = (x & 0x3333'3333'3333'3333ULL) + ((x >> 2) & 0x3333'3333'3333'3333ULL);
+    x = (x + (x >> 4)) & 0x0F0F'0F0F'0F0F'0F0FULL;
+    return static_cast<int>((x * 0x0101'0101'0101'0101ULL) >> 56);
+#endif
+}
+
 /// A right logical shift function that supports negetive shamt.
 /// It might be implemented as rotr64 to avoid conditional branch.
 inline uint64_t rotr(uint64_t x, int shamt)
@@ -238,16 +262,29 @@ inline void multiPrefetch(const void *addr)
 // -------------------------------------------------
 // NUMA-aware helper
 
-namespace WinProcGroup {
+namespace Numa {
+
+/// NumaNodeId is a type representing a NUMA node ID.
+typedef int32_t NumaNodeId;
+
+/// Default NUMA node ID, used when NUMA is not supported or not available.
+constexpr NumaNodeId DefaultNumaNodeId = 0;
+
+/// The threshold for the number of bind groups. If the number of threads is
+/// greater than this threshold, we will bind threads to NUMA groups to
+/// improve performance. This is a heuristic value to determine when to
+/// use NUMA-aware logic.
+constexpr int BindGroupThreshold = 8;
 
 /// Under Windows it is not possible for a process to run on more than one
 /// logical processor group. This usually means to be limited to use max 64
 /// cores. To overcome this, some special platform specific API should be
 /// called to set group affinity for each thread. Original code from Texel by
-/// Peter Österlund.
-void bindThisThread(size_t idx);
+/// Peter Österlund. We also let this function return the numa node ID for
+/// the thread, to allow NUMA-aware logics in the thread.
+NumaNodeId bindThisThread(size_t idx);
 
-}  // namespace WinProcGroup
+}  // namespace Numa
 
 // -------------------------------------------------
 // Large-Page memory allocator

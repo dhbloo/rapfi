@@ -200,7 +200,7 @@ private:
 /// Usually each evaluator loads weight from file on its own, however in most case all
 /// evaluator loads the same weight and it is very memory comsuming to have multiple
 /// weight instance in memory. Weight Registry helps to reuse loaded weight when it is
-/// applicable, by holding a pool of all loaded weight.
+/// applicable, by holding a weightPool of all loaded weight.
 template <typename WeightLoader>
 class WeightRegistry
 {
@@ -211,9 +211,16 @@ public:
 
     /// Loads weight from the given file path and load arguments, using the loader.
     /// If the weight already exists in registry, it reuse the loaded weight.
+    /// @param loader Loader to use for loading the weight.
+    /// @param filepath Path to the weight file.
+    /// @param numaNodeId Numa node ID of the current thread. If the weight has not been loaded
+    ///      on this NUMA node, it will be copyed to the current NUMA node using first-touch policy.
+    /// @param loadArgs Extra loading arguments for the weight loader.
     /// @return Weight pointer, or nullptr if load failed.
-    WeightType *
-    loadWeightFromFile(Loader &loader, std::filesystem::path filepath, LoadArgs loadArgs = {});
+    WeightType *loadWeightFromFile(Loader               &loader,
+                                   std::filesystem::path filepath,
+                                   Numa::NumaNodeId      numaNodeId,
+                                   LoadArgs              loadArgs = {});
 
     /// Unloads a loaded weight.
     void unloadWeight(WeightType *weight);
@@ -221,14 +228,19 @@ public:
 private:
     struct LoadedWeight
     {
-        LargePagePtr<WeightType> weight;
-        size_t                   refCount;
-        std::filesystem::path    filepath;
-        LoadArgs                 loadArgs;
+        LargePagePtr<WeightType> weight;      // Pointer to the loaded weight
+        size_t                   refCount;    // Reference count of the loaded weight
+        std::filesystem::path    filepath;    // File path from which the weight was loaded
+        Numa::NumaNodeId         numaNodeId;  // Numa node ID where the weight was loaded
+        LoadArgs                 loadArgs;    // Extra loading arguments used for loading the weight
     };
 
-    std::vector<LoadedWeight> pool;
-    std::mutex                poolMutex;
+    /// Pool of loaded weights.
+    /// Each weight is stored with its reference count, file path, NUMA node ID and load arguments.
+    std::vector<LoadedWeight> weightPool;
+
+    /// Mutex to protect concurrent access to the weight pool.
+    std::mutex poolMutex;
 };
 
 template <typename WeightLoader>
@@ -236,13 +248,28 @@ inline typename WeightRegistry<WeightLoader>::WeightType *
 WeightRegistry<WeightLoader>::loadWeightFromFile(
     typename WeightRegistry<WeightLoader>::Loader  &loader,
     std::filesystem::path                           filepath,
+    Numa::NumaNodeId                                numaNodeId,
     typename WeightRegistry<WeightLoader>::LoadArgs loadArgs)
 {
     std::lock_guard<std::mutex> lock(poolMutex);
 
-    // Find weights in loaded weight pool
-    for (auto &w : pool) {
+    // Find weights in loaded weight weightPool
+    for (auto &w : weightPool) {
         if (w.filepath == filepath && w.loadArgs == loadArgs) {
+            if (w.numaNodeId != numaNodeId) {
+                // If weight is loaded on a different NUMA node, copy it to the current NUMA node
+                // We rely on the first-touch policy to allocate memory on the current NUMA node.
+                auto copiedWeight = make_unique_large_page<WeightType>(*w.weight);
+                // If the copy was successful, add it to the weight pool, and return the pointer.
+                // Otherwise, we can only use the original weight without local NUMA copy.
+                if (copiedWeight) {
+                    auto copiedWeightPtr = copiedWeight.get();
+                    weightPool.push_back(
+                        {std::move(copiedWeight), 1, filepath, numaNodeId, std::move(loadArgs)});
+                    return copiedWeightPtr;
+                }
+            }
+
             w.refCount++;
             return w.weight.get();
         }
@@ -259,14 +286,13 @@ WeightRegistry<WeightLoader>::loadWeightFromFile(
 
     // Load weight using weight loader
     auto weight = loader.load(fileStream, loadArgs);
-
-    // If load succeeded, add to pool
-    if (weight) {
-        pool.push_back({std::move(weight), 1, filepath, std::move(loadArgs)});
-        return pool.back().weight.get();
-    }
-    else
+    if (!weight)
         return nullptr;
+
+    // If load succeeded, add to weightPool
+    auto weightPtr = weight.get();
+    weightPool.push_back({std::move(weight), 1, filepath, numaNodeId, std::move(loadArgs)});
+    return weightPtr;
 }
 
 template <typename WeightLoader>
@@ -275,10 +301,10 @@ inline void WeightRegistry<WeightLoader>::unloadWeight(
 {
     std::lock_guard<std::mutex> lock(poolMutex);
 
-    for (size_t i = 0; i < pool.size(); i++) {
-        if (pool[i].weight.get() == weight) {
-            if (--pool[i].refCount == 0)
-                pool.erase(pool.begin() + i);
+    for (size_t i = 0; i < weightPool.size(); i++) {
+        if (weightPool[i].weight.get() == weight) {
+            if (--weightPool[i].refCount == 0)
+                weightPool.erase(weightPool.begin() + i);
             return;
         }
     }
