@@ -267,7 +267,6 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "ENABLE_LTO": "True",
         "USE_SSE": "True",
         "USE_AVX2": "True",
         "USE_AVX512": "False",
