@@ -74,7 +74,9 @@ YXDBStorage::YXDBStorage(std::filesystem::path filePath,
 
     std::ifstream file(filePath, std::ios::binary);
     if (!file.is_open() || !file)
-        throw DBStorageError("Failed to open YXDB file at " + filePath.string());
+        throw DBStorageError("Failed to open YXDB file at " + pathToConsoleString(filePath));
+
+    MESSAGEL("DATABASE LOAD START " + pathToConsoleString(filePath));
 
     // Check LZ4 file magic to choose a compress type
     int magic;
@@ -87,10 +89,13 @@ YXDBStorage::YXDBStorage(std::filesystem::path filePath,
                                                      : Compressor::Type::NO_COMPRESS);
         std::istream *istreamPtr = compressor.openInputStream();
         if (!istreamPtr || !*istreamPtr)
-            throw DBStorageError("Failed to open LZ4 compressed YXDB file " + filePath.string());
+            throw DBStorageError("Failed to open LZ4 compressed YXDB file "
+                                 + pathToConsoleString(filePath));
 
         load(*istreamPtr, ignoreCorrupted);
     }
+
+    MESSAGEL("DATABASE LOAD DONE");
 }
 
 YXDBStorage::~YXDBStorage()
@@ -171,7 +176,7 @@ bool YXDBStorage::flush() noexcept
                                                 : Compressor::Type::NO_COMPRESS);
         std::ostream *ostreamPtr = compressor.openOutputStream();
         if (ostreamPtr && *ostreamPtr) {
-            MESSAGEL("DATABASE SAVE START " + filePath.string());
+            MESSAGEL("DATABASE SAVE START " + pathToConsoleString(filePath));
             save(*ostreamPtr);
             dirty = false;
             MESSAGEL("DATABASE SAVE DONE");
@@ -179,7 +184,7 @@ bool YXDBStorage::flush() noexcept
         }
     }
 
-    ERRORL("Failed to open YXDB file at " + filePath.string());
+    ERRORL("Failed to open YXDB file at " + pathToConsoleString(filePath));
     return false;
 }
 
@@ -241,7 +246,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
         if (rule >= RULE_NB) {
             if (ignoreCorrupted)
                 continue;
-            throw DBStorageCorruptedRecordError(filePath.string(),
+            throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                 "with invalid rule at index "
                                                     + std::to_string(recordIdx));
         }
@@ -250,7 +255,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
         if ((unsigned)boardXLen > MAX_BOARD_SIZE || (unsigned)boardYLen > MAX_BOARD_SIZE) {
             if (ignoreCorrupted)
                 continue;
-            throw DBStorageCorruptedRecordError(filePath.string(),
+            throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                 "with invalid board size at index "
                                                     + std::to_string(recordIdx));
         }
@@ -259,7 +264,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
         if (numStones > boardXLen * boardYLen) {
             if (ignoreCorrupted)
                 continue;
-            throw DBStorageCorruptedRecordError(filePath.string(),
+            throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                 "with invalid number of stones at index "
                                                     + std::to_string(recordIdx));
         }
@@ -280,7 +285,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
             else if (ignoreCorrupted)
                 goto next_record;
             else
-                throw DBStorageCorruptedRecordError(filePath.string(),
+                throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                     "with invalid black pos at index "
                                                         + std::to_string(recordIdx));
         }
@@ -294,7 +299,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
             else if (ignoreCorrupted)
                 goto next_record;
             else
-                throw DBStorageCorruptedRecordError(filePath.string(),
+                throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                     "with invalid white pos at index "
                                                         + std::to_string(recordIdx));
         }
@@ -331,13 +336,13 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                 numRecordBytes > 2 ? *reinterpret_cast<DBValue *>(&byteBuffer[1]) : DBValue(0),
                 numRecordBytes > 4 ? *reinterpret_cast<DBDepthBound *>(&byteBuffer[3])
                                    : DBDepthBound(0),
-                numRecordBytes > 5 ? (
-                    isUTF8
-                        ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                       static_cast<size_t>(numRecordBytes - 5)}
-                        : LegacyFileCPToUTF8(std::string {reinterpret_cast<char *>(&byteBuffer[5]),
-                                                          static_cast<size_t>(numRecordBytes - 5)}))
-                                   : std::string {}}));
+                numRecordBytes > 5
+                    ? (isUTF8 ? std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                             static_cast<size_t>(numRecordBytes - 5)}
+                              : LegacyFileCPToUTF8(
+                                    std::string {reinterpret_cast<char *>(&byteBuffer[5]),
+                                                 static_cast<size_t>(numRecordBytes - 5)}))
+                    : std::string {}}));
 
     next_record:;
     }
