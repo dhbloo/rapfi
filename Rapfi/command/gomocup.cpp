@@ -45,7 +45,7 @@
     #include <mutex>
     #include <thread>
 
-static std::mutex protocol_mutex;
+static std::mutex protocolMutex;
 #endif
 
 using namespace Database;
@@ -163,7 +163,7 @@ void think(Board                             &board,
     Search::Threads.startThinking(board, options, false, [&, startTime = now()]() {
         {
 #ifdef MULTI_THREADING
-            std::lock_guard<std::mutex> lock(protocol_mutex);
+            std::lock_guard<std::mutex> lock(protocolMutex);
 #endif
 
             sendActionAndUpdateBoard(Search::Threads.main()->resultAction,
@@ -1265,7 +1265,7 @@ bool runProtocol()
     else if (thinking)                         return false;
 
 #ifdef MULTI_THREADING
-    std::lock_guard<std::mutex> lock(protocol_mutex);
+    std::lock_guard<std::mutex> lock(protocolMutex);
 #endif
 
     // Stop pondering first for commands that may modify the board state

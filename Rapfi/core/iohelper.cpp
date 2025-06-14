@@ -34,15 +34,25 @@
 constexpr int PASS_COORD_X = -1;
 constexpr int PASS_COORD_Y = -1;
 
-std::ostream &operator<<(std::ostream &os, SyncFlag f)
+static std::mutex &getSyncIOMutex()
 {
-    static std::mutex mtx;
-    if (f == SyncFlag::IO_LOCK)
-        mtx.lock();
-    else
-        mtx.unlock();
-    return os;
+    // We never delete this mutex to ensure that we can use it in static destructors,
+    // the OS will reclaim the memory when the program exits anyway.
+    static std::mutex *syncMutex = new std::mutex;
+    return *syncMutex;
 }
+
+SyncOutputStream::SyncOutputStream(std::ostream &os) : os(os)
+{
+    getSyncIOMutex().lock();
+}
+
+SyncOutputStream::~SyncOutputStream()
+{
+    getSyncIOMutex().unlock();
+}
+
+// -------------------------------------------------
 
 Pos inputCoordConvert(int x, int y, int boardsize)
 {

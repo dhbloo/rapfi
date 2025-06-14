@@ -29,29 +29,70 @@
 // -------------------------------------------------
 // Output Macros / sync utility
 
-enum SyncFlag { IO_LOCK, IO_UNLOCK };
-std::ostream &operator<<(std::ostream &, SyncFlag);
+/// Thread-safe output stream that locks the mutex during its lifetime.
+struct SyncOutputStream
+{
+    SyncOutputStream(std::ostream &os);
+    ~SyncOutputStream();
+    // Non-copyable, non-movable
+    SyncOutputStream(const SyncOutputStream &)            = delete;
+    SyncOutputStream &operator=(const SyncOutputStream &) = delete;
+    SyncOutputStream(SyncOutputStream &&)                 = delete;
+    SyncOutputStream &operator=(SyncOutputStream &&)      = delete;
 
-#define MESSAGEL(message) std::cout << IO_LOCK << "MESSAGE " << message << std::endl << IO_UNLOCK
-#define ERRORL(message)   std::cout << IO_LOCK << "ERROR " << message << std::endl << IO_UNLOCK
+    template <typename T>
+    SyncOutputStream &operator<<(T &&value)
+    {
+        os << std::forward<T>(value);
+        return *this;
+    }
+    SyncOutputStream &operator<<(std::ostream &(*m)(std::ostream &))
+    {
+        os << m;
+        return *this;
+    }
+
+    std::ostream &os;
+};
+
+/// Create a thread-safe output stream for std::cout.
+[[nodiscard]] inline SyncOutputStream sync_cout()
+{
+    return SyncOutputStream {std::cout};
+}
+
+/// Create a thread-safe output stream for std::cerr.
+[[nodiscard]] inline SyncOutputStream sync_cerr()
+{
+    return SyncOutputStream {std::cerr};
+}
+
+// Output macros for logging messages, errors, and debug information.
+
+#define MESSAGEL(message) sync_cout() << "MESSAGE " << message << std::endl
+#define ERRORL(message)   sync_cout() << "ERROR " << message << std::endl
 #ifdef NDEBUG
     #define DEBUGL(message) ((void)0)
 #else
-    #define DEBUGL(message) std::cout << IO_LOCK << "DEBUG " << message << std::endl << IO_UNLOCK
+    #define DEBUGL(message) sync_cout() << "DEBUG " << message << std::endl
 #endif
 
 // -------------------------------------------------
 // Coordinate conversion
 
+/// Convert input coordinates (x, y) to a Pos object based on the board size.
 Pos inputCoordConvert(int x, int y, int boardsize);
+/// Convert output coordinates from a Pos object to x based on the board size.
 int outputCoordXConvert(Pos pos, int boardsize);
+/// Convert output coordinates from a Pos object to y based on the board size.
 int outputCoordYConvert(Pos pos, int boardsize);
-
+/// Convert a coordinate string (e.g., "A1", "h8") to a Pos object.
 Pos parseCoord(std::string coordStr);
 
 // -------------------------------------------------
 // Formatters
 
+/// A struct to format a list of moves for output with custom options.
 struct MovesText
 {
     const std::vector<Pos> &moves;

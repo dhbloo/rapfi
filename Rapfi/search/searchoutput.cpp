@@ -28,8 +28,7 @@
     MESSAGEL("REALTIME " << (type) << ' ' << outputCoordXConvert(pos, size) << ',' \
                          << outputCoordYConvert(pos, size))
 
-#define INFO(type, ...) \
-    std::cout << IO_LOCK << "INFO " << type << ' ' << __VA_ARGS__ << std::endl << IO_UNLOCK
+#define INFO(type, ...) sync_cout() << "INFO " << type << ' ' << __VA_ARGS__ << std::endl
 
 namespace Search {
 
