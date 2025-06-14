@@ -130,12 +130,12 @@ void SearchPrinter::printPvCompletes(MainSearchThread  &th,
             if (numPv > 1)
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " multipv "
                                   << pvIdx + 1 << " ev " << curMove.value << " n "
-                                  << nodesText(nodes) << " nps " << speed << " tm " << tc.elapsed()
-                                  << " pv " << MovesText {curMove.pv});
+                                  << nodesText(nodes) << " n/ms " << (speed / 1000) << " tm "
+                                  << tc.elapsed() << " pv " << MovesText {curMove.pv});
             else
                 MESSAGEL("depth " << rootDepth << "-" << curMove.selDepth << " ev " << curMove.value
-                                  << " n " << nodesText(nodes) << " nps " << speed << " tm "
-                                  << tc.elapsed() << " pv " << MovesText {curMove.pv});
+                                  << " n " << nodesText(nodes) << " n/ms " << (speed / 1000)
+                                  << " tm " << tc.elapsed() << " pv " << MovesText {curMove.pv});
         }
     }
 
@@ -205,7 +205,7 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
                                 << (curMove.winRate * 100) << " d " << (curMove.drawRate * 100)
                                 << " stdev " << curMove.utilityStdev << " v "
                                 << nodesText(curMove.numNodes) << " seldepth " << curMove.selDepth
-                                << " n " << nodesText(nodes) << " nps " << speed << " tm "
+                                << " n " << nodesText(nodes) << " n/ms " << (speed / 1000) << " tm "
                                 << tc.elapsed() << " prior " << curMove.policyPrior << " pv "
                                 << MovesText {curMove.pv});
         }
