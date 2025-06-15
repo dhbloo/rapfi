@@ -65,7 +65,6 @@ void SearchThread::init(bool bindGroup)
     waitForIdle();
 }
 
-
 SearchThread::~SearchThread()
 {
     exit = true;
