@@ -38,11 +38,14 @@ SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
     , numaId(Numa::DefaultNumaNodeId)
     , running(false)
     , exit(false)
-#ifdef MULTI_THREADING
-    , thread(&SearchThread::threadLoop, this)
-#endif
     , threads(threadPool)
+{}
+
+void SearchThread::init(bool bindGroup) 
 {
+#ifdef MULTI_THREADING
+        thread = std::thread(&SearchThread::threadLoop, this);
+#endif
     // Create search data for this thread
     searchData = threads.searcher()->makeSearchData(*this);
 
@@ -258,10 +261,13 @@ void ThreadPool::setNumThreads(size_t numThreads)
 
         // Make sure the first thread created is MainSearchThread
         push_back(std::make_unique<MainSearchThread>(*this, bindGroup));
+        (*this)[0]->init(bindGroup);
 
 #ifdef MULTI_THREADING
-        while (size() < numThreads)
+        while (size() < numThreads) {
             push_back(std::make_unique<SearchThread>(*this, (uint32_t)size(), bindGroup));
+            (*this).back()->init(bindGroup);
+         }
 #endif
     }
 }
