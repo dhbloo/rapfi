@@ -33,22 +33,26 @@ namespace Search {
 /// Global search thread pool
 ThreadPool Threads;
 
-SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
+SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id)
     : id(id)
     , numaId(Numa::DefaultNumaNodeId)
     , running(false)
     , exit(false)
-#ifdef MULTI_THREADING
-    , thread(&SearchThread::threadLoop, this)
-#endif
     , threads(threadPool)
-{
-    // Create search data for this thread
-    searchData = threads.searcher()->makeSearchData(*this);
+{}
 
-    // Set thread affinity to a specific group if needed
-    if (bindGroup)
-        runTask([](SearchThread &th) {
+void SearchThread::init(bool bindGroup)
+{
+#ifdef MULTI_THREADING
+    thread = std::thread(&SearchThread::threadLoop, this);
+#endif
+
+    runTask([bindGroup](SearchThread &th) {
+        // Create search data for this thread
+        th.searchData = th.threads.searcher()->makeSearchData(th);
+
+        // Set thread affinity to a specific group if needed
+        if (bindGroup) {
             // If OS already scheduled us on a different group than 0 then don't overwrite
             // the choice, eventually we are one of many one-threaded processes running on
             // some Windows NUMA hardware, for instance in fishtest. To make it simple,
@@ -56,10 +60,8 @@ SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup)
             // NUMA machinery is not needed. We also store this thread's numa ID for the
             // later NUMA-aware loading of evaluator weights.
             th.numaId = Numa::bindThisThread(th.id);
-        });
-
-    // Wait for this thread to enter idle state
-    waitForIdle();
+        }
+    });
 }
 
 SearchThread::~SearchThread()
@@ -257,12 +259,17 @@ void ThreadPool::setNumThreads(size_t numThreads)
         bool bindGroup = numThreads > Numa::BindGroupThreshold;
 
         // Make sure the first thread created is MainSearchThread
-        push_back(std::make_unique<MainSearchThread>(*this, bindGroup));
+        push_back(std::make_unique<MainSearchThread>(*this));
 
 #ifdef MULTI_THREADING
-        while (size() < numThreads)
-            push_back(std::make_unique<SearchThread>(*this, (uint32_t)size(), bindGroup));
+        while (size() < numThreads) {
+            push_back(std::make_unique<SearchThread>(*this, (uint32_t)size()));
+        }
 #endif
+
+        // Init the threads
+        for (auto &th : *this)
+            th->init(bindGroup);
     }
 }
 

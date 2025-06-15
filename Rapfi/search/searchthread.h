@@ -76,7 +76,9 @@ public:
     /// Instantiate a new search thread.
     /// @param id ID of the new search thread, starting from 0 for main thread.
     /// @param bindGroup Whether to bind this thread to a NUMA group.
-    explicit SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup);
+    explicit SearchThread(ThreadPool &threadPool, uint32_t id);
+    /// Start the thread loop. This should be called once after the thread is created.
+    void init(bool bindGroup);
     /// Destory this search thread. Search must be stopped before entering.
     virtual ~SearchThread();
     /// Clear the thread state between two search.
@@ -127,9 +129,7 @@ public:
 /// It also controls state needed in iterative deepening and time control.
 struct MainSearchThread : public SearchThread
 {
-    MainSearchThread(ThreadPool &threadPool, bool bindGroup)
-        : SearchThread::SearchThread(threadPool, 0, bindGroup)
-    {}
+    MainSearchThread(ThreadPool &threadPool) : SearchThread::SearchThread(threadPool, 0) {}
 
     /// Clear the main thread state between two search.
     void clear() override;
