@@ -153,7 +153,7 @@ struct Mix9svqWeightLoader : WeightLoader<mix9svq::Weight>
     }
 };
 
-static Evaluation::WeightRegistry<Mix9svqWeightLoader> WeightReg;
+static Evaluation::WeightRegistry<StandardHeaderLoader<Mix9svqWeightLoader>> WeightReg;
 
 constexpr int                   Alignment = simd::NativeAlignment;
 constexpr simd::InstructionType IT        = simd::NativeInstType;
@@ -816,28 +816,27 @@ Evaluator::Evaluator(int                   boardSize,
     : Evaluation::Evaluator(boardSize, rule)
     , weight {nullptr, nullptr}
 {
-    CompressedWrapper<StandardHeaderParserWarpper<Mix9svqWeightLoader>> loader(
+    CompressedWrapper<StandardHeaderLoader<Mix9svqWeightLoader>> loader(
         Compressor::Type::LZ4_DEFAULT);
 
     if (boardSize > 22)
         throw UnsupportedBoardSizeError(boardSize);
 
-    std::filesystem::path currentWeightPath;
-    loader.setHeaderValidator([&](StandardHeader header) -> bool {
+    loader.setHeaderValidator([](StandardHeader header, auto &args) -> bool {
         constexpr uint32_t ArchHash = ArchHashBase
                                       ^ (((FeatDWConvDim / 8) << 20) | ((ValueDim / 8) << 14)
                                          | ((PolicyDim / 8) << 8) | (FeatureDim / 8));
         if (header.archHash != ArchHash)
             throw IncompatibleWeightFileError("incompatible architecture in weight file.");
 
-        if (!contains(header.supportedRules, rule))
-            throw UnsupportedRuleError(rule);
+        if (!contains(header.supportedRules, args.rule))
+            throw UnsupportedRuleError(args.rule);
 
-        if (!contains(header.supportedBoardSizes, boardSize))
-            throw UnsupportedBoardSizeError(boardSize);
+        if (!contains(header.supportedBoardSizes, args.boardSize))
+            throw UnsupportedBoardSizeError(args.boardSize);
 
         if (Config::MessageMode != MsgMode::NONE)
-            MESSAGEL("mix9svq nnue: load weight from " << pathToConsoleString(currentWeightPath));
+            MESSAGEL("mix9svq nnue: load weight from " << pathToConsoleString(args.weightPath));
         return true;
     });
 
@@ -845,8 +844,10 @@ Evaluator::Evaluator(int                   boardSize,
              std::make_pair(BLACK, blackWeightPath),
              std::make_pair(WHITE, whiteWeightPath),
          }) {
-        currentWeightPath  = weightPath;
-        weight[weightSide] = WeightReg.loadWeightFromFile(loader, weightPath, numaNodeId);
+        weight[weightSide] = WeightReg.loadWeightFromFile(loader,
+                                                          weightPath,
+                                                          numaNodeId,
+                                                          {{}, boardSize, rule, weightPath});
         if (!weight[weightSide])
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));

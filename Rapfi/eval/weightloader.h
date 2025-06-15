@@ -81,18 +81,33 @@ struct StandardHeader
     std::string       description;
 };
 
-/// Weight loader warpper for parsing standard weight format header.
+/// Load arguments for standard header weight loader.
 template <typename BaseLoader>
-struct StandardHeaderParserWarpper : BaseLoader
+struct StandardHeaderParseLoadArgs : public BaseLoader::LoadArgs
 {
-    using typename BaseLoader::LoadArgs;
-    using typename BaseLoader::WeightType;
+    int                   boardSize;
+    Rule                  rule;
+    std::filesystem::path weightPath;
 
-    template <typename... Args>
-    StandardHeaderParserWarpper(Args... args) : BaseLoader(std::forward<Args>(args)...)
-    {}
+    bool operator==(const StandardHeaderParseLoadArgs &other) const
+    {
+        return rule == other.rule && boardSize == other.boardSize && weightPath == other.weightPath
+               && BaseLoader::LoadArgs::operator==(other);
+    }
+};
 
-    void setHeaderValidator(std::function<bool(StandardHeader)> validator)
+/// Weight loader for parsing standard weight format header.
+/// This loader wraps another weight loader and adds support for parsing the standard header.
+template <typename BaseLoader>
+struct StandardHeaderLoader
+    : public WeightLoader<typename BaseLoader::WeightType, StandardHeaderParseLoadArgs<BaseLoader>>
+{
+    using WeightType = typename BaseLoader::WeightType;
+    using LoadArgs   = StandardHeaderParseLoadArgs<BaseLoader>;
+
+    StandardHeaderLoader() = default;
+
+    void setHeaderValidator(std::function<bool(StandardHeader, LoadArgs &)> validator)
     {
         headerValidator = std::move(validator);
     }
@@ -128,7 +143,7 @@ struct StandardHeaderParserWarpper : BaseLoader
                                           parseRuleMask(headerData.rule_mask),
                                           parseBoardSizeMask(headerData.boardsize_mask),
                                           std::move(description)};
-            if (!headerValidator(header))
+            if (!headerValidator(header, args))
                 return nullptr;
             if (headerReader)
                 headerReader(header, args);
@@ -137,11 +152,12 @@ struct StandardHeaderParserWarpper : BaseLoader
             is.ignore(headerData.desc_len);
         }
 
-        return BaseLoader::load(is, args);
+        return baseLoader.load(is, args);
     }
 
 private:
-    std::function<bool(StandardHeader)>             headerValidator;
+    BaseLoader                                      baseLoader;
+    std::function<bool(StandardHeader, LoadArgs &)> headerValidator;
     std::function<void(StandardHeader, LoadArgs &)> headerReader;
 
     static std::vector<Rule> parseRuleMask(uint32_t ruleMask)
