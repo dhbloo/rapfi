@@ -77,6 +77,7 @@ public:
     /// @param id ID of the new search thread, starting from 0 for main thread.
     /// @param bindGroup Whether to bind this thread to a NUMA group.
     explicit SearchThread(ThreadPool &threadPool, uint32_t id, bool bindGroup);
+    void init(bool bindGroup);
     /// Destory this search thread. Search must be stopped before entering.
     virtual ~SearchThread();
     /// Clear the thread state between two search.
