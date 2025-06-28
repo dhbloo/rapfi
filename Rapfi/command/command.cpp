@@ -89,14 +89,14 @@ namespace CommandLine {
 #endif
     }
 
-    std::filesystem::path getDefaultConfigPath()
+    std::filesystem::path getWorkPath(std::filesystem::path filepath)
     {
         // First, check if there is a config at current working dir.
-        if (std::filesystem::exists("config.toml"))
-            return "config.toml";
+        if (std::filesystem::exists(filepath))
+            return filepath;
         // If not, we choose the one at current binary dir.
         else
-            return binaryDirectory / "config.toml";
+            return binaryDirectory / filepath.filename();
     }
 
 }  // namespace CommandLine
@@ -105,30 +105,35 @@ std::filesystem::path configPath;
 
 bool allowInternalConfig = true;
 
+std::filesystem::path defaultConfig = "config.toml";
+
 bool loadConfig()
 {
-    bool          success = false;
-    std::ifstream configFile(configPath);
-    if (configFile.is_open()) {
-        MESSAGEL("Load config from " << configPath);
-        success = Config::loadConfig(configFile);
-    }
+    bool success = false;
+    std::filesystem::path config_path = CommandLine::getWorkPath(configPath);
+    std::ifstream configFile(config_path);
+    if (configFile.is_open())
+        success = true;
     else {
-        std::filesystem::path defaultConfigPath = CommandLine::getDefaultConfigPath();
-        configFile.open(defaultConfigPath);
-        if (configFile.is_open()) {
-            MESSAGEL("Load config from " << defaultConfigPath);
-            success = Config::loadConfig(configFile);
-        }
+        config_path = CommandLine::getWorkPath(defaultConfig);
+        configFile.open(config_path);
+        if (configFile.is_open())
+            success = true;
         else if (allowInternalConfig) {
             if (!Config::InternalConfig.empty()) {
-                std::istringstream internalConfig(Config::InternalConfig);
-                success = Config::loadConfig(internalConfig);
+                config_path = CommandLine::getWorkPath(Config::InternalConfig);
+                configFile.open(config_path);
+                if (configFile.is_open()) 
+                  success = true;
             }
             else
                 ERRORL("This version is not built with an internal config. "
                        "Must specify an external config!");
         }
+    }
+    if (success) {
+        MESSAGEL("Load config from " << config_path);
+        success = Config::loadConfig(configFile);
     }
 
     if (success && Config::ClearHashAfterConfigLoaded)
