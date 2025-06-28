@@ -30,9 +30,7 @@ namespace CommandLine {
     /// Initialize the command line module with the startup arguments.
     void init(int argc, char *argv[]);
 
-    /// Get the default config path, which is the "config.toml" under
-    /// the current working directory or the binary executable directory.
-    std::filesystem::path getDefaultConfigPath();
+    std::filesystem::path getWorkPath(std::filesystem::path filepath);
 }  // namespace CommandLine
 
 // -------------------------------------------------
@@ -43,6 +41,8 @@ extern std::filesystem::path configPath;
 
 /// Whether to allow fallback to internal config if the specified file is not found.
 extern bool allowInternalConfig;
+
+extern std::filesystem::path defaultConfig;
 
 /// loadConfig() trys to load config according to the following order:
 /// 1. Load from the current config path. If config file exists but fails to load,
