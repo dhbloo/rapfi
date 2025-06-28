@@ -112,6 +112,7 @@ bool loadConfig()
     bool success = false;
     std::filesystem::path config_path = CommandLine::getWorkPath(configPath);
     std::ifstream configFile(config_path);
+    
     if (configFile.is_open())
         success = true;
     else {
