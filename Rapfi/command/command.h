@@ -29,34 +29,35 @@ namespace CommandLine {
 
     /// Initialize the command line module with the startup arguments.
     void init(int argc, char *argv[]);
-
-    /// Get the default config path, which is the "config.toml" under
-    /// the current working directory or the binary executable directory.
-    std::filesystem::path getDefaultConfigPath();
 }  // namespace CommandLine
 
 // -------------------------------------------------
 // Config loading
 
-/// Global path of the config file.
+/// Global path of the current config file to load from.
 extern std::filesystem::path configPath;
 
 /// Whether to allow fallback to internal config if the specified file is not found.
 extern bool allowInternalConfig;
 
 /// loadConfig() trys to load config according to the following order:
-/// 1. Load from the current config path. If config file exists but fails to load,
-///    it will not continue to load other config.
-/// 2. Try to load from the default config path, which is the "config.toml" in the
-///    current working directory or the binary executable directory.
-/// 3. If the above two steps fail, and allowInternalConfig is true, it will
-///    try to load from the internal config string. Internal config is only available
-///    when the program is built with it.
+/// 1. Load from the current config path. Config file is determined by this order:
+///    - If config path is an absolute path, it will be used directly.
+///    - Otherwise, it will be first resolved from the current working directory.
+///    - If the path can not be found in the current working directory,
+///      it will be resolved from the binary executable directory.
+/// 2. If the external config failed to load, and allowInternalConfig is true, it will
+///    try to load from the internal config string. Internal config is stored in
+///    the executable when the program is built with it.
 bool loadConfig();
 
-/// getModelFullPath() first trys to find the right model from the modelPath.
-/// Model path can be absolute, relative from current working directory or
-/// relative from config file directory.
+/// getModelFullPath() trys to resolve the correct path for the model file.
+/// Model file is determined by this order:
+///    - If model path is an absolute path, it will be returned directly.
+///    - Otherwise, it will be first resolved from the current working directory.
+///    - If not found, it will be first resolved to the directory of the current config file.
+///    - If not found, it will be resolved from the binary executable directory.
+/// If the model file is not found in any places, it will return the original path.
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath);
 
 /// loadModelFromFile() trys to load model from modelPath.

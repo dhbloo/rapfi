@@ -20,6 +20,7 @@
 
 #include "../config.h"
 #include "../core/iohelper.h"
+#include "../core/utils.h"
 #include "../search/searchthread.h"
 
 #include <filesystem>
@@ -89,46 +90,45 @@ namespace CommandLine {
 #endif
     }
 
-    std::filesystem::path getDefaultConfigPath()
-    {
-        // First, check if there is a config at current working dir.
-        if (std::filesystem::exists("config.toml"))
-            return "config.toml";
-        // If not, we choose the one at current binary dir.
-        else
-            return binaryDirectory / "config.toml";
-    }
-
 }  // namespace CommandLine
 
-std::filesystem::path configPath;
+std::filesystem::path configPath = "config.toml";
+
+std::filesystem::path resolvedConfigPath;
 
 bool allowInternalConfig = true;
 
 bool loadConfig()
 {
-    bool          success = false;
-    std::ifstream configFile(configPath);
-    if (configFile.is_open()) {
-        MESSAGEL("Load config from " << configPath);
+    // Absolute path will be used directly
+    if (configPath.is_absolute())
+        resolvedConfigPath = configPath;
+    // Try resolve relative path from the current working directory
+    else if (std::filesystem::exists(configPath))
+        resolvedConfigPath = configPath;
+    // If can not be found in current directory, try to resolve from the binary directory
+    else if (std::filesystem::exists(CommandLine::binaryDirectory / configPath))
+        resolvedConfigPath = CommandLine::binaryDirectory / configPath;
+    // Otherwise, we will try to load from the internal config if allowed.
+    else
+        resolvedConfigPath.clear();
+
+    bool success = false;
+    // Try to load from the resolved config path.
+    if (!resolvedConfigPath.empty()) {
+        std::ifstream configFile(resolvedConfigPath);
+        MESSAGEL("Load config from " << pathToConsoleString(resolvedConfigPath));
         success = Config::loadConfig(configFile);
     }
-    else {
-        std::filesystem::path defaultConfigPath = CommandLine::getDefaultConfigPath();
-        configFile.open(defaultConfigPath);
-        if (configFile.is_open()) {
-            MESSAGEL("Load config from " << defaultConfigPath);
-            success = Config::loadConfig(configFile);
+    // Fallback to internal config if the external config failed to load.
+    else if (allowInternalConfig) {
+        if (!Config::InternalConfig.empty()) {
+            std::istringstream internalConfig(Config::InternalConfig);
+            success = Config::loadConfig(internalConfig);
         }
-        else if (allowInternalConfig) {
-            if (!Config::InternalConfig.empty()) {
-                std::istringstream internalConfig(Config::InternalConfig);
-                success = Config::loadConfig(internalConfig);
-            }
-            else
-                ERRORL("This version is not built with an internal config. "
-                       "Must specify an external config!");
-        }
+        else
+            ERRORL("This version is not built with an internal config. "
+                   "Must specify an external config!");
     }
 
     if (success && Config::ClearHashAfterConfigLoaded)
@@ -139,18 +139,28 @@ bool loadConfig()
 
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
 {
-    // First try to open from current working directory
-    if (std::filesystem::exists(modelPath)) {
+    // First check if the modelPath is absolute
+    if (modelPath.is_absolute())
         return modelPath;
+
+    // Then check if the modelPath is relative to the current working directory
+    if (std::filesystem::exists(modelPath))
+        return modelPath;
+
+    // If not found, and we did load from external config, check if the modelPath
+    // is relative to the config file directory
+    if (!resolvedConfigPath.empty()) {
+        auto modelPathinConfigDir = resolvedConfigPath.parent_path() / modelPath;
+        if (std::filesystem::exists(modelPathinConfigDir))
+            return modelPathinConfigDir;
     }
 
-    // If not succeeded, try to open from config directory if path is relative
-    if (modelPath.is_relative()) {
-        auto modelPathinBinaryDir = CommandLine::binaryDirectory / modelPath;
-        if (std::filesystem::exists(modelPathinBinaryDir))
-            return modelPathinBinaryDir;
-    }
+    // If not found, check if the modelPath is relative to the binary directory
+    auto modelPathinBinaryDir = CommandLine::binaryDirectory / modelPath;
+    if (std::filesystem::exists(modelPathinBinaryDir))
+        return modelPathinBinaryDir;
 
+    // If still not found, just return the original modelPath
     return modelPath;
 }
 
