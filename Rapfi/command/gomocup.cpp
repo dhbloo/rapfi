@@ -1386,9 +1386,9 @@ void Command::gomocupLoop()
 
     // If there is any thread still running, wait until they exited.
     Search::Threads.waitForIdle();
+    Search::Threads.setNumThreads(0);
 
 #ifdef __EMSCRIPTEN__
-    Search::Threads.setNumThreads(0);  // avoid hung
     emscripten_force_exit(EXIT_SUCCESS);
 #endif
 }

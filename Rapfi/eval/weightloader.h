@@ -26,6 +26,7 @@
 #include <functional>
 #include <istream>
 #include <mutex>
+#include <type_traits>
 
 namespace Evaluation {
 
@@ -275,9 +276,12 @@ WeightRegistry<WeightLoader>::loadWeightFromFile(
             if (w.numaNodeId != numaNodeId) {
                 // If weight is loaded on a different NUMA node, copy it to the current NUMA node
                 // We rely on the first-touch policy to allocate memory on the current NUMA node.
-                auto copiedWeight = make_unique_large_page<WeightType>(*w.weight);
+                LargePagePtr<WeightType> copiedWeight {nullptr};
+                if constexpr (std::is_copy_constructible_v<WeightType>)
+                    copiedWeight = make_unique_large_page<WeightType>(*w.weight);
+
                 // If the copy was successful, add it to the weight pool, and return the pointer.
-                // Otherwise, we can only use the original weight without local NUMA copy.
+                // Otherwise if we fail to copy, we use the original weight without local NUMA copy.
                 if (copiedWeight) {
                     auto copiedWeightPtr = copiedWeight.get();
                     weightPool.push_back(

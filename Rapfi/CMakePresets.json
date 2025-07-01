@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 4,
   "cmakeMinimumRequired": {
     "major": 3,
     "minor": 23,
@@ -238,6 +238,25 @@
       }
     },
     {
+      "name": "x64-clang-Native-Debug",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-clang-Native-RelWithDebInfo",
+      "inherits": [
+        "base-x64-clang"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FORCE_ASSERTION": "True"
+      }
+    },
+    {
       "name": "x64-clang-Native",
       "inherits": [
         "base-x64-clang"
@@ -331,6 +350,27 @@
         "USE_AVX512": "False",
         "USE_BMI2": "False",
         "USE_VNNI": "False"
+      }
+    },
+    {
+      "name": "x64-clang-onnx-Native-Debug",
+      "inherits": [
+        "base-x64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-clang-onnx-Native-RelWithDebInfo",
+      "inherits": [
+        "base-x64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FORCE_ASSERTION": "True"
       }
     },
     {
@@ -442,6 +482,37 @@
         "USE_NEON": "True",
         "USE_NEON_DOTPROD": "True"
       }
+    },
+    {
+      "name": "arm64-clang-onnx-Native-Debug",
+      "inherits": [
+        "base-arm64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "arm64-clang-onnx-Native-RelWithDebInfo",
+      "inherits": [
+        "base-arm64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FORCE_ASSERTION": "True"
+      }
+    },
+    {
+      "name": "arm64-clang-onnx-Native",
+      "inherits": [
+        "base-arm64-clang",
+        "base-onnx"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -501,6 +572,14 @@
       "configuration": "Release"
     },
     {
+      "name": "x64-clang-Native-Debug",
+      "configurePreset": "x64-clang-Native-Debug"
+    },
+    {
+      "name": "x64-clang-Native-RelWithDebInfo",
+      "configurePreset": "x64-clang-Native-RelWithDebInfo"
+    },
+    {
       "name": "x64-clang-Native",
       "configurePreset": "x64-clang-Native"
     },
@@ -529,28 +608,41 @@
       "configurePreset": "x64-clang-AVX2-ST"
     },
     {
+      "name": "x64-clang-onnx-Native-Debug",
+      "configurePreset": "x64-clang-onnx-Native-Debug"
+    },
+    {
+      "name": "x64-clang-onnx-Native-RelWithDebInfo",
+      "configurePreset": "x64-clang-onnx-Native-RelWithDebInfo"
+    },
+    {
       "name": "x64-clang-onnx-Native",
       "configurePreset": "x64-clang-onnx-Native"
     },
     {
       "name": "arm64-msvc-Native-Debug",
-      "configurePreset": "arm64-msvc-Native-Debug"
+      "configurePreset": "arm64-msvc-Native-Debug",
+      "configuration": "Debug"
     },
     {
       "name": "arm64-msvc-Native-RelWithDebInfo",
-      "configurePreset": "arm64-msvc-Native-RelWithDebInfo"
+      "configurePreset": "arm64-msvc-Native-RelWithDebInfo",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "arm64-msvc-Native",
-      "configurePreset": "arm64-msvc-Native"
+      "configurePreset": "arm64-msvc-Native",
+      "configuration": "Release"
     },
     {
       "name": "arm64-msvc-NEON",
-      "configurePreset": "arm64-msvc-NEON"
+      "configurePreset": "arm64-msvc-NEON",
+      "configuration": "Release"
     },
     {
       "name": "arm64-msvc-NEON-DOTPROD",
-      "configurePreset": "arm64-msvc-NEON-DOTPROD"
+      "configurePreset": "arm64-msvc-NEON-DOTPROD",
+      "configuration": "Release"
     },
     {
       "name": "arm64-clang-Native-Debug",
@@ -571,6 +663,18 @@
     {
       "name": "arm64-clang-NEON-DOTPROD",
       "configurePreset": "arm64-clang-NEON-DOTPROD"
+    },
+    {
+      "name": "arm64-clang-onnx-Native-Debug",
+      "configurePreset": "arm64-clang-onnx-Native-Debug"
+    },
+    {
+      "name": "arm64-clang-onnx-Native-RelWithDebInfo",
+      "configurePreset": "arm64-clang-onnx-Native-RelWithDebInfo"
+    },
+    {
+      "name": "arm64-clang-onnx-Native",
+      "configurePreset": "arm64-clang-onnx-Native"
     }
   ]
 }

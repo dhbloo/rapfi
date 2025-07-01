@@ -442,10 +442,10 @@ struct OnnxModelLoader : WeightLoader<OnnxModel, OnnxModelArguments>
         , onnxModelPath(onnxModelPath)
     {}
 
-    std::unique_ptr<OnnxModel> load(std::istream &is, OnnxModelArguments args) override
+    LargePagePtr<OnnxModel> load(std::istream &is, OnnxModelArguments args) override
     {
         try {
-            auto ptr = std::make_unique<OnnxModel>(is, args);
+            auto ptr = make_unique_large_page<OnnxModel>(is, args);
             if (!ptr->supportRule(rule))
                 return nullptr;
             if (!ptr->supportBoardSize(boardSize))
@@ -475,6 +475,9 @@ makeOnnxAccumulator(OnnxModel &model, int boardSize, Rule rule, Color side)
     std::unique_ptr<OnnxAccumulator> ptr;
     switch (model.getIOVersion()) {
     case RAPFI_MODEL_V1: ptr = std::make_unique<OnnxRapfiModelV1>(boardSize, side); break;
+    default:
+        throw std::runtime_error("unsupported onnx model IO version "
+                                 + std::to_string(model.getIOVersion()));
     }
 
     ptr->init(model);
@@ -501,7 +504,8 @@ OnnxEvaluator::OnnxEvaluator(int                   boardSize,
         args.device = getDefaultDevice();
 
     OnnxModelLoader loader {boardSize, rule, onnxModelPath};
-    model = OnnxModelRegistry.loadWeightFromFile(loader, onnxModelPath, args);
+    model =
+        OnnxModelRegistry.loadWeightFromFile(loader, onnxModelPath, Numa::DefaultNumaNodeId, args);
     if (!model)
         throw std::runtime_error("Failed to load onnx model from "
                                  + pathToConsoleString(onnxModelPath));
