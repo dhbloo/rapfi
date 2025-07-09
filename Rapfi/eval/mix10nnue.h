@@ -22,6 +22,7 @@
 #include "simdops.h"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -34,8 +35,12 @@ using namespace Evaluation;
 constexpr uint32_t ArchHashBase  = 0xb53b0258;
 constexpr int      ShapeNum      = 442503;
 constexpr int      FeatureDim    = 64;
-constexpr int      FeatDWConvDim = 64;
+constexpr int      FeatDWConvDim = 32;
+constexpr int      ValueDim      = 64;
 constexpr int      NumHeadBucket = 1;
+
+static_assert(FeatDWConvDim <= FeatureDim);
+static_assert(ValueDim <= FeatureDim);
 
 constexpr int PolicySInDim  = std::max(FeatDWConvDim / 2, 16);
 constexpr int PolicySOutDim = std::max(FeatDWConvDim / 4, 16);
@@ -50,7 +55,7 @@ struct FCWeight
     int32_t bias[OutSize];
 };
 
-struct alignas(simd::NativeAlignment) Weight
+struct alignas(64) Weight
 {
     // 1  mapping layer
     int16_t mapping[2][ShapeNum][FeatureDim];
@@ -62,59 +67,71 @@ struct alignas(simd::NativeAlignment) Weight
     struct HeadBucket
     {
         // 3  Small Policy dynamic pointwise conv
-        FCWeight<FeatureDim, FeatureDim>                        policy_small_pwconv_weight_l1;
-        FCWeight<PolicySOutDim *(PolicySInDim + 1), FeatureDim> policy_small_pwconv_weight_l2;
+        FCWeight<ValueDim, ValueDim>                          policy_small_pwconv_weight_1;
+        FCWeight<PolicySOutDim *(PolicySInDim + 1), ValueDim> policy_small_pwconv_weight_2;
 
         // 4  Large Policy dynamic pointwise conv
-        FCWeight<FeatureDim * 2, FeatureDim> policy_large_pwconv_weight_shared;
-        FCWeight<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>  policy_large_pwconv_weight_1;
-        FCWeight<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2> policy_large_pwconv_weight_2;
+        FCWeight<ValueDim, ValueDim>                           policy_large_pwconv_weight_0;
+        FCWeight<PolicyLMidDim *(PolicyLInDim + 1), ValueDim>  policy_large_pwconv_weight_1;
+        FCWeight<PolicyLOutDim *(PolicyLMidDim + 1), ValueDim> policy_large_pwconv_weight_2;
 
         // 5  Small Value Head MLP (layer 1,2,3)
-        FCWeight<FeatureDim, FeatureDim> value_small_l1;
-        FCWeight<FeatureDim, FeatureDim> value_small_l2;
-        FCWeight<32, FeatureDim>         value_small_l3;
-        FCWeight<4, 32>                  value_small_l4;
-
-        char __padding_to_64bytes_0[48];
+        FCWeight<ValueDim, FeatureDim> value_small_l1;
+        FCWeight<ValueDim, ValueDim>   value_small_l2;
+        FCWeight<4, ValueDim>          value_small_l3;
 
         // 6  Large Value Gate & Group MLP
-        FCWeight<FeatureDim * 2, FeatureDim> value_gate;
-        FCWeight<FeatureDim, FeatureDim>     value_corner;
-        FCWeight<FeatureDim, FeatureDim>     value_edge;
-        FCWeight<FeatureDim, FeatureDim>     value_center;
-        FCWeight<FeatureDim, FeatureDim>     value_quad;
+        char                               __padding_to_64bytes_0[48];
+        FCWeight<FeatureDim * 2, ValueDim> value_gate;
+        FCWeight<ValueDim, FeatureDim>     value_corner;
+        FCWeight<ValueDim, FeatureDim>     value_edge;
+        FCWeight<ValueDim, FeatureDim>     value_center;
+        FCWeight<ValueDim, ValueDim>       value_quad;
 
         // 7  Large Value Head MLP (layer 1,2,3)
-        FCWeight<FeatureDim, FeatureDim * 5> value_l1;
-        FCWeight<32, FeatureDim>             value_l2;
-        FCWeight<4, 32>                      value_l3;
+        FCWeight<ValueDim, ValueDim * 5> value_l1;
+        FCWeight<ValueDim, ValueDim>     value_l2;
+        FCWeight<4, ValueDim>            value_l3;
 
         // 8  Policy output linear
+        char  __padding_to_64bytes_1[48];
         float policy_small_output_weight[PolicySOutDim];
         float policy_large_output_weight[PolicyLOutDim];
         float policy_small_output_bias;
         float policy_large_output_bias;
 
-        char __padding_to_64bytes_1[40];
+        char __padding_to_64bytes_2[56];
     } buckets[NumHeadBucket];
 };
+
+// Make sure we have proper alignment for SIMD operations
+static_assert(offsetof(Weight, feature_dwconv_weight) % 64 == 0);
+static_assert(offsetof(Weight, buckets) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, value_gate) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, policy_small_output_weight) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, policy_large_output_weight) % 64 == 0);
+static_assert(sizeof(Weight::HeadBucket) % 64 == 0);
 
 class Accumulator
 {
 public:
-    struct alignas(simd::NativeAlignment) ValueSumType
+    struct alignas(64) ValueSumType
     {
         static constexpr int NGroup = 3;
 
         std::array<int32_t, FeatureDim> global;
         std::array<int32_t, FeatureDim> group[NGroup][NGroup];
-
-        std::array<int8_t, FeatureDim> small_value_feature;
-        std::array<int8_t, FeatureDim> large_value_feature;
-        bool                           small_value_feature_valid;
-        bool                           large_value_feature_valid;
+        std::array<int8_t, ValueDim>    small_value_feature;
+        std::array<int8_t, ValueDim>    large_value_feature;
+        bool                            small_value_feature_valid;
+        bool                            large_value_feature_valid;
     };
+
+    // Make sure we have proper alignment for SIMD operations
+    static_assert(offsetof(ValueSumType, global) % 64 == 0);
+    static_assert(offsetof(ValueSumType, group) % 64 == 0);
+    static_assert(offsetof(ValueSumType, small_value_feature) % 64 == 0);
+    static_assert(offsetof(ValueSumType, large_value_feature) % 64 == 0);
 
     Accumulator(int boardSize);
     ~Accumulator();

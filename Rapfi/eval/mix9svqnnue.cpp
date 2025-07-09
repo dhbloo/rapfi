@@ -164,11 +164,12 @@ using Convert = simd::detail::VecCvt<FT, TT, IT>;
 using I8LS    = simd::detail::VecLoadStore<int8_t, Alignment, IT>;
 using I16LS   = simd::detail::VecLoadStore<int16_t, Alignment, IT>;
 using I32LS   = simd::detail::VecLoadStore<int32_t, Alignment, IT>;
-using F32LS   = simd::detail::VecLoadStore<float, Alignment, IT>;
-using I8Op    = simd::detail::VecOp<int8_t, IT>;
-using I16Op   = simd::detail::VecOp<int16_t, IT>;
-using I32Op   = simd::detail::VecOp<int32_t, IT>;
-using F32Op   = simd::detail::VecOp<float, IT>;
+// We can only use 16 here due to a bug in the weight layout
+using F32LS = simd::detail::VecLoadStore<float, 16, IT>;
+using I8Op  = simd::detail::VecOp<int8_t, IT>;
+using I16Op = simd::detail::VecOp<int16_t, IT>;
+using I32Op = simd::detail::VecOp<int32_t, IT>;
+using F32Op = simd::detail::VecOp<float, IT>;
 
 template <int OutSize, int InSize>
 inline void

@@ -584,7 +584,14 @@ void Config::readEvaluator(const cpptoml::table &t)
                         try {
                             return maker(boardSize, rule, numaId, weightPath, *weightCfg);
                         }
-                        catch (const Evaluation::UnsupportedEvaluatorError &e) {
+                        catch (const Evaluation::UnsupportedRuleError &e) {
+                        }
+                        catch (const Evaluation::UnsupportedBoardSizeError &e) {
+                        }
+                        catch (const std::exception &e) {
+                            if (MessageMode != MsgMode::NONE)
+                                MESSAGEL("Failed to load from " << pathToConsoleString(weightPath)
+                                                                << " due to error: " << e.what());
                         }
                     }
 

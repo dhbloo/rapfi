@@ -120,47 +120,38 @@ struct Mix10WeightLoader : WeightLoader<mix10::Weight>
     {
         for (int bucketIdx = 0; bucketIdx < NumHeadBucket; bucketIdx++) {
             auto &b = w.buckets[bucketIdx];
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.policy_small_pwconv_weight_l1.weight);
-            simd::
-                preprocessDynamicWeightLinear<PolicySOutDim, PolicySInDim, int16_t, FeatureDim, 0>(
-                    b.policy_small_pwconv_weight_l2.weight,
-                    b.policy_small_pwconv_weight_l2.bias);
-            simd::preprocessLinear<PolicySOutDim *(PolicySInDim + 1), FeatureDim>(
-                b.policy_small_pwconv_weight_l2.weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.policy_small_pwconv_weight_1.weight);
+            simd::preprocessDynamicWeightLinear<PolicySOutDim, PolicySInDim, int16_t, ValueDim, 0>(
+                b.policy_small_pwconv_weight_2.weight,
+                b.policy_small_pwconv_weight_2.bias);
+            simd::preprocessLinear<PolicySOutDim *(PolicySInDim + 1), ValueDim>(
+                b.policy_small_pwconv_weight_2.weight);
 
-            simd::preprocessLinear<FeatureDim * 2, FeatureDim>(
-                b.policy_large_pwconv_weight_shared.weight);
-            simd::preprocessDynamicWeightLinear<PolicyLMidDim,
-                                                PolicyLInDim,
-                                                int16_t,
-                                                FeatureDim * 2,
-                                                0>(b.policy_large_pwconv_weight_1.weight,
-                                                   b.policy_large_pwconv_weight_1.bias);
-            simd::preprocessLinear<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>(
+            simd::preprocessLinear<ValueDim, ValueDim>(b.policy_large_pwconv_weight_0.weight);
+            simd::preprocessDynamicWeightLinear<PolicyLMidDim, PolicyLInDim, int16_t, ValueDim, 0>(
+                b.policy_large_pwconv_weight_1.weight,
+                b.policy_large_pwconv_weight_1.bias);
+            simd::preprocessLinear<PolicyLMidDim *(PolicyLInDim + 1), ValueDim>(
                 b.policy_large_pwconv_weight_1.weight);
-            simd::preprocessDynamicWeightLinear<PolicyLOutDim,
-                                                PolicyLMidDim,
-                                                int16_t,
-                                                FeatureDim * 2,
-                                                0>(b.policy_large_pwconv_weight_2.weight,
-                                                   b.policy_large_pwconv_weight_2.bias);
-            simd::preprocessLinear<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2>(
+            simd::preprocessDynamicWeightLinear<PolicyLOutDim, PolicyLMidDim, int16_t, ValueDim, 0>(
+                b.policy_large_pwconv_weight_2.weight,
+                b.policy_large_pwconv_weight_2.bias);
+            simd::preprocessLinear<PolicyLOutDim *(PolicyLMidDim + 1), ValueDim>(
                 b.policy_large_pwconv_weight_2.weight);
 
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_small_l1.weight);
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_small_l2.weight);
-            simd::preprocessLinear<32, FeatureDim>(b.value_small_l3.weight);
-            simd::preprocessLinear<4, 32>(b.value_small_l3.weight);
+            simd::preprocessLinear<ValueDim, FeatureDim>(b.value_small_l1.weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.value_small_l2.weight);
+            simd::preprocessLinear<4, ValueDim>(b.value_small_l3.weight);
 
-            simd::preprocessLinear<FeatureDim * 2, FeatureDim>(b.value_gate.weight);
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_corner.weight);
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_edge.weight);
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_center.weight);
-            simd::preprocessLinear<FeatureDim, FeatureDim>(b.value_quad.weight);
+            simd::preprocessLinear<FeatureDim * 2, ValueDim>(b.value_gate.weight);
+            simd::preprocessLinear<ValueDim, FeatureDim>(b.value_corner.weight);
+            simd::preprocessLinear<ValueDim, FeatureDim>(b.value_edge.weight);
+            simd::preprocessLinear<ValueDim, FeatureDim>(b.value_center.weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.value_quad.weight);
 
-            simd::preprocessLinear<FeatureDim, FeatureDim * 5>(b.value_l1.weight);
-            simd::preprocessLinear<32, FeatureDim>(b.value_l2.weight);
-            simd::preprocessLinear<4, 32>(b.value_l3.weight);
+            simd::preprocessLinear<ValueDim, ValueDim * 5>(b.value_l1.weight);
+            simd::preprocessLinear<ValueDim, ValueDim>(b.value_l2.weight);
+            simd::preprocessLinear<4, ValueDim>(b.value_l3.weight);
         }
     }
 };
@@ -682,7 +673,7 @@ void Accumulator::updateSharedLargeHead(const Weight &w)
         }
 
     // group linear layer
-    alignas(Alignment) int8_t group1[ValueSumType::NGroup][ValueSumType::NGroup][FeatureDim];
+    alignas(Alignment) int8_t group1[ValueSumType::NGroup][ValueSumType::NGroup][ValueDim];
 
     linearBlock<true>(group1[0][0], group0[0][0], bucket.value_corner);
     linearBlock<true>(group1[0][2], group0[0][2], bucket.value_corner);
@@ -695,8 +686,8 @@ void Accumulator::updateSharedLargeHead(const Weight &w)
     linearBlock<true>(group1[1][1], group0[1][1], bucket.value_center);
 
     // average pooling
-    alignas(Alignment) int8_t group2[2][2][FeatureDim];
-    using I8B = Batch<FeatureDim, int8_t>;
+    alignas(Alignment) int8_t group2[2][2][ValueDim];
+    using I8B = Batch<ValueDim, int8_t>;
     for (int b = 0; b < I8B::NumBatch; b++) {
         auto v00 = I8LS::load(group1[0][0] + b * I8B::RegWidth);
         auto v01 = I8LS::load(group1[0][1] + b * I8B::RegWidth);
@@ -720,15 +711,17 @@ void Accumulator::updateSharedLargeHead(const Weight &w)
     }
 
     // quadrant linear layer
-    alignas(Alignment) int8_t layer0[FeatureDim * 5];
-    simd::copy<FeatureDim>(layer0, valueSum.small_value_feature.data());
-    linearBlock(layer0 + 1 * FeatureDim, group2[0][0], bucket.value_quad);
-    linearBlock(layer0 + 2 * FeatureDim, group2[0][1], bucket.value_quad);
-    linearBlock(layer0 + 3 * FeatureDim, group2[1][0], bucket.value_quad);
-    linearBlock(layer0 + 4 * FeatureDim, group2[1][1], bucket.value_quad);
+    alignas(Alignment) int8_t layer0[ValueDim * 5];
+    simd::copy<ValueDim>(layer0, valueSum.small_value_feature.data());
+    linearBlock(layer0 + 1 * ValueDim, group2[0][0], bucket.value_quad);
+    linearBlock(layer0 + 2 * ValueDim, group2[0][1], bucket.value_quad);
+    linearBlock(layer0 + 3 * ValueDim, group2[1][0], bucket.value_quad);
+    linearBlock(layer0 + 4 * ValueDim, group2[1][1], bucket.value_quad);
 
-    // linear 1
-    linearBlock(valueSum.large_value_feature.data(), layer0, bucket.value_l1);
+    // linear 1, 2
+    alignas(Alignment) int8_t layer1[ValueDim];
+    linearBlock(layer1, layer0, bucket.value_l1);
+    linearBlock(valueSum.large_value_feature.data(), layer1, bucket.value_l2);
     valueSum.large_value_feature_valid = true;
 }
 
@@ -739,18 +732,20 @@ std::tuple<float, float, float, float> Accumulator::evaluateValueSmall(const Wei
     const auto &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
 
-    alignas(Alignment) int8_t layer3[32];
-    linearBlock(layer3, valueSum.small_value_feature.data(), bucket.value_small_l3);
-
     // small value head layer 3 final
-    alignas(Alignment) int32_t layer4i32[4];
-    simd::linear<4, 32>(layer4i32,
-                        layer3,
-                        bucket.value_small_l4.weight,
-                        bucket.value_small_l4.bias);
+    alignas(Alignment) int32_t layer3i32[4];
+    simd::linear<4, ValueDim>(layer3i32,
+                              valueSum.small_value_feature.data(),
+                              bucket.value_small_l3.weight,
+                              bucket.value_small_l3.bias);
 
-    const float scale = 1.0f / (128 * 128);
-    return {layer4i32[0] * scale, layer4i32[1] * scale, layer4i32[2] * scale, layer4i32[3] * scale};
+    constexpr float OutScale = 1.0f / (128 * 128);
+    return {
+        layer3i32[0] * OutScale,
+        layer3i32[1] * OutScale,
+        layer3i32[2] * OutScale,
+        layer3i32[3] * OutScale,
+    };
 }
 
 std::tuple<float, float, float, float> Accumulator::evaluateValueLarge(const Weight &w)
@@ -760,16 +755,20 @@ std::tuple<float, float, float, float> Accumulator::evaluateValueLarge(const Wei
     const auto &valueSum = valueSumTable[currentVersion];
     const auto &bucket   = w.buckets[getBucketIndex()];
 
-    // linear 2
-    alignas(Alignment) int8_t layer2[32];
-    linearBlock(layer2, valueSum.large_value_feature.data(), bucket.value_l2);
-
     // linear 3 final
     alignas(Alignment) int32_t layer3i32[4];
-    simd::linear<4, 32>(layer3i32, layer2, bucket.value_l3.weight, bucket.value_l3.bias);
+    simd::linear<4, ValueDim>(layer3i32,
+                              valueSum.large_value_feature.data(),
+                              bucket.value_l3.weight,
+                              bucket.value_l3.bias);
 
-    const float scale = 1.0f / (128 * 128);
-    return {layer3i32[0] * scale, layer3i32[1] * scale, layer3i32[2] * scale, layer3i32[3] * scale};
+    constexpr float OutScale = 1.0f / (128 * 128);
+    return {
+        layer3i32[0] * OutScale,
+        layer3i32[1] * OutScale,
+        layer3i32[2] * OutScale,
+        layer3i32[3] * OutScale,
+    };
 }
 
 void Accumulator::evaluatePolicySmall(const Weight &w, PolicyBuffer &policyBuffer)
@@ -780,17 +779,17 @@ void Accumulator::evaluatePolicySmall(const Weight &w, PolicyBuffer &policyBuffe
     const auto &bucket   = w.buckets[getBucketIndex()];
 
     // policy pwconv weight layer
-    alignas(Alignment) int8_t layer1[FeatureDim];
-    linearBlock(layer1, valueSum.small_value_feature.data(), bucket.policy_small_pwconv_weight_l1);
+    alignas(Alignment) int8_t layer1[ValueDim];
+    linearBlock(layer1, valueSum.small_value_feature.data(), bucket.policy_small_pwconv_weight_1);
 
     alignas(Alignment) int32_t layer2i32[PolicySOutDim * (PolicySInDim + 1)];
     alignas(Alignment) int16_t pwconvWeighti16[PolicySOutDim * PolicySInDim];
     alignas(Alignment) int32_t pwconvBiasi32[PolicySOutDim];
-    simd::linear<PolicySOutDim *(PolicySInDim + 1), FeatureDim>(
+    simd::linear<PolicySOutDim *(PolicySInDim + 1), ValueDim>(
         layer2i32,
         layer1,
-        bucket.policy_small_pwconv_weight_l2.weight,
-        bucket.policy_small_pwconv_weight_l2.bias);
+        bucket.policy_small_pwconv_weight_2.weight,
+        bucket.policy_small_pwconv_weight_2.bias);
     simd::crelu<PolicySOutDim * PolicySInDim, 1, true>(pwconvWeighti16, layer2i32);
     // To get pwconv bias, we need to scale the output of layer2 by 128
     {
@@ -845,15 +844,13 @@ void Accumulator::evaluatePolicyLarge(const Weight &w, PolicyBuffer &policyBuffe
     const auto &bucket   = w.buckets[getBucketIndex()];
 
     // policy pwconv weight layer
-    alignas(Alignment) int8_t layer1[FeatureDim * 2];
-    linearBlock(layer1,
-                valueSum.large_value_feature.data(),
-                bucket.policy_large_pwconv_weight_shared);
+    alignas(Alignment) int8_t layer1[ValueDim];
+    linearBlock(layer1, valueSum.large_value_feature.data(), bucket.policy_large_pwconv_weight_0);
 
     alignas(Alignment) int32_t layer2i32[PolicyLMidDim * (PolicyLInDim + 1)];
     alignas(Alignment) int16_t pwconv1Weighti16[PolicyLMidDim * PolicyLInDim];
     alignas(Alignment) int32_t pwconv1Biasi32[PolicyLMidDim];
-    simd::linear<PolicyLMidDim *(PolicyLInDim + 1), FeatureDim * 2>(
+    simd::linear<PolicyLMidDim *(PolicyLInDim + 1), ValueDim>(
         layer2i32,
         layer1,
         bucket.policy_large_pwconv_weight_1.weight,
@@ -872,13 +869,13 @@ void Accumulator::evaluatePolicyLarge(const Weight &w, PolicyBuffer &policyBuffe
     alignas(Alignment) int32_t layer3i32[PolicyLOutDim * (PolicyLMidDim + 1)];
     alignas(Alignment) int16_t pwconv2Weighti16[PolicyLOutDim * PolicyLMidDim];
     alignas(Alignment) int32_t pwconv2Biasi32[PolicyLOutDim];
-    simd::linear<PolicyLOutDim *(PolicyLMidDim + 1), FeatureDim * 2>(
+    simd::linear<PolicyLOutDim *(PolicyLMidDim + 1), ValueDim>(
         layer3i32,
         layer1,
         bucket.policy_large_pwconv_weight_2.weight,
         bucket.policy_large_pwconv_weight_2.bias);
     simd::crelu<PolicyLOutDim * PolicyLMidDim, 1, true>(pwconv2Weighti16, layer3i32);
-    // To get pwconv bias, we need to scale the output of layer2 by 128
+    // To get pwconv bias, we need to scale the output of layer3 by 128
     {
         typedef Batch<PolicyLOutDim, int32_t> B;
         for (int i = 0; i < B::NumBatch; i++) {
@@ -905,7 +902,12 @@ void Accumulator::evaluatePolicyLarge(const Weight &w, PolicyBuffer &policyBuffe
                                                                          mapConv[mapConvIdx].data(),
                                                                          pwconv1Weighti16,
                                                                          pwconv1Biasi32);
-            simd::crelu<PolicyLMidDim, 128 * 128>(policyLayer1i16, policyLayer1i32);
+            // Size of policyLayer1i16 may be less than 512bit width when PolicyLMidDim is only 16,
+            // so we choose the maximum available instruction here for AVX512 platforms.
+            constexpr auto ITPolicyLMid =
+                simd::getInstTypeOfWidth(IT, PolicyLMidDim * sizeof(int16_t) * 8);
+            simd::crelu<PolicyLMidDim, 128 * 128, false, Alignment, ITPolicyLMid>(policyLayer1i16,
+                                                                                  policyLayer1i32);
 
             alignas(Alignment) int32_t policyLayer2i32[PolicyLOutDim];
             simd::linear<PolicyLOutDim, PolicyLMidDim>(policyLayer2i32,
@@ -947,7 +949,7 @@ Evaluator::Evaluator(int                   boardSize,
 
     loader.setHeaderValidator([](StandardHeader header, auto &args) -> bool {
         constexpr uint32_t ArchHash =
-            ArchHashBase ^ (((FeatDWConvDim / 8) << 8) | (FeatureDim / 8));
+            ArchHashBase ^ (((ValueDim / 8) << 16) | ((FeatDWConvDim / 8) << 8) | (FeatureDim / 8));
         if (header.archHash != ArchHash)
             throw IncompatibleWeightFileError("incompatible architecture in weight file.");
 
@@ -1015,7 +1017,7 @@ ValueType Evaluator::evaluateValue(const Board &board, AccLevel level)
 
     // Apply all incremental update for both sides and calculate value
     clearCache(self);
-    auto [win, loss, draw, uncertainty] = accumulator[self]->evaluateValueLarge(*weight[self]);
+    auto [win, loss, draw, _] = accumulator[self]->evaluateValueLarge(*weight[self]);
 
     return ValueType(win, loss, draw, true);
 }
@@ -1026,7 +1028,7 @@ void Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, A
 
     // Apply all incremental update and calculate policy
     clearCache(self);
-    accumulator[self]->evaluatePolicySmall(*weight[self], policyBuffer);
+    accumulator[self]->evaluatePolicyLarge(*weight[self], policyBuffer);
 }
 
 void Evaluator::clearCache(Color side)

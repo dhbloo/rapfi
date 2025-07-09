@@ -22,6 +22,7 @@
 #include "simdops.h"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -55,7 +56,7 @@ struct StarBlockWeight
     FCWeight<OutSize, OutSize>    value_corner_down;
 };
 
-struct alignas(simd::NativeAlignment) Weight
+struct alignas(64) Weight
 {
     // 1  mapping layer
     int16_t  codebook[2][65536][FeatureDim];
@@ -91,16 +92,28 @@ struct alignas(simd::NativeAlignment) Weight
     } buckets[NumHeadBucket];
 };
 
+// Make sure we have proper alignment for SIMD operations
+static_assert(offsetof(Weight, feature_dwconv_weight) % 64 == 0);
+static_assert(offsetof(Weight, buckets) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, value_corner) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, value_l1) % 64 == 0);
+static_assert(offsetof(Weight::HeadBucket, policy_output_weight) % 16 == 0);
+static_assert(sizeof(Weight::HeadBucket) % 64 == 0);
+
 class Accumulator
 {
 public:
-    struct alignas(simd::NativeAlignment) ValueSumType
+    struct alignas(64) ValueSumType
     {
         static constexpr int NGroup = 3;
 
         std::array<int32_t, FeatureDim> global;
         std::array<int32_t, FeatureDim> group[NGroup][NGroup];
     };
+
+    // Make sure we have proper alignment for SIMD operations
+    static_assert(offsetof(ValueSumType, global) % 64 == 0);
+    static_assert(offsetof(ValueSumType, group) % 64 == 0);
 
     Accumulator(int boardSize);
     ~Accumulator();
