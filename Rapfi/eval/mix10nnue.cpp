@@ -947,7 +947,9 @@ Evaluator::Evaluator(int                   boardSize,
     if (boardSize > 22)
         throw UnsupportedBoardSizeError(boardSize);
 
-    loader.setHeaderValidator([](StandardHeader header, auto &args) -> bool {
+    Time startTime     = now();
+    bool printLoadInfo = false;
+    loader.setHeaderValidator([&](StandardHeader header, auto &args) -> bool {
         constexpr uint32_t ArchHash =
             ArchHashBase ^ (((ValueDim / 8) << 16) | ((FeatDWConvDim / 8) << 8) | (FeatureDim / 8));
         if (header.archHash != ArchHash)
@@ -959,8 +961,10 @@ Evaluator::Evaluator(int                   boardSize,
         if (!contains(header.supportedBoardSizes, args.boardSize))
             throw UnsupportedBoardSizeError(args.boardSize);
 
-        if (Config::MessageMode != MsgMode::NONE)
-            MESSAGEL("mix10nnue: load weight from " << pathToConsoleString(args.weightPath));
+        if (Config::MessageMode != MsgMode::NONE) {
+            MESSAGEL("mix10 nnue: load weight from " << pathToConsoleString(args.weightPath));
+            printLoadInfo = true;
+        }
         return true;
     });
 
@@ -976,6 +980,9 @@ Evaluator::Evaluator(int                   boardSize,
             throw std::runtime_error("failed to load nnue weight from "
                                      + pathToConsoleString(weightPath));
     }
+
+    if (printLoadInfo)
+        MESSAGEL("mix10 nnue: weight loaded in " << timeText(now() - startTime));
 
     accumulator[BLACK] = std::make_unique<Accumulator>(boardSize);
     accumulator[WHITE] = std::make_unique<Accumulator>(boardSize);

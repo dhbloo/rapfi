@@ -561,74 +561,78 @@ void Config::readModel(const cpptoml::table &t)
 /// Read evaluator table in the config.
 void Config::readEvaluator(const cpptoml::table &t)
 {
+    using namespace std::filesystem;
+
     auto evaluatorType = t.get_as<std::string>("type");
     auto weights       = t.get_table_array("weights");
     if (!evaluatorType || !weights || weights->begin() == weights->end())
         return;
 
-    auto warpEvaluatorMaker =
-        [weights, evaluatorName = *evaluatorType](auto maker, bool ignoreNoWeightFile = false) {
-            return [=](int              boardSize,
-                       Rule             rule,
-                       Numa::NumaNodeId numaId) -> std::unique_ptr<Evaluation::Evaluator> {
-                try {
-                    for (auto weightCfg : *weights) {
-                        std::filesystem::path weightPath;
-                        if (auto weightFile = weightCfg->get_as<std::string>("weight_file")) {
-                            weightPath = std::filesystem::u8path(*weightFile);
-                            weightPath = Command::getModelFullPath(weightPath);
-                        }
-                        else if (!ignoreNoWeightFile)
-                            throw std::runtime_error("must specify weight_file in weight configs.");
+    auto warpEvaluatorMaker = [weights,
+                               evaluatorName = *evaluatorType](auto maker,
+                                                               bool seperateBlackAndWhiteWeights) {
+        return [=](int              boardSize,
+                   Rule             rule,
+                   Numa::NumaNodeId numaId) -> std::unique_ptr<Evaluation::Evaluator> {
+            try {
+                for (auto weightCfg : *weights) {
+                    path weightPath;
+                    path blackWeightPath, whiteWeightPath;
 
-                        try {
-                            return maker(boardSize, rule, numaId, weightPath, *weightCfg);
-                        }
-                        catch (const Evaluation::UnsupportedRuleError &e) {
-                        }
-                        catch (const Evaluation::UnsupportedBoardSizeError &e) {
-                        }
-                        catch (const std::exception &e) {
-                            if (MessageMode != MsgMode::NONE)
-                                MESSAGEL("Failed to load from " << pathToConsoleString(weightPath)
-                                                                << " due to error: " << e.what());
-                        }
+                    if (auto weightFile = weightCfg->get_as<std::string>("weight_file"))
+                        weightPath = Command::getModelFullPath(u8path(*weightFile));
+                    else if (!seperateBlackAndWhiteWeights)
+                        throw std::runtime_error("must specify weight_file in weight configs.");
+
+                    if (seperateBlackAndWhiteWeights && weightPath.empty()) {
+                        auto weightFileBlack = weightCfg->get_as<std::string>("weight_file_black");
+                        auto weightFileWhite = weightCfg->get_as<std::string>("weight_file_white");
+
+                        blackWeightPath = Command::getModelFullPath(u8path(*weightFileBlack));
+                        whiteWeightPath = Command::getModelFullPath(u8path(*weightFileWhite));
+                        if (!weightFileBlack || !weightFileWhite)
+                            throw std::runtime_error(
+                                "must specify weight_file or weight_file_black "
+                                "and weight_file_white in weight configs.");
+                    }
+                    else {
+                        blackWeightPath = weightPath;
+                        whiteWeightPath = weightPath;
                     }
 
-                    if (MessageMode != MsgMode::NONE)
-                        MESSAGEL("Evaluator " << evaluatorName
-                                              << " disabled: no compatible weight config found.");
-                    return nullptr;
+                    try {
+                        return maker(boardSize,
+                                     rule,
+                                     numaId,
+                                     weightPath,
+                                     std::make_pair(blackWeightPath, whiteWeightPath),
+                                     *weightCfg);
+                    }
+                    catch (const Evaluation::UnsupportedRuleError &e) {
+                    }
+                    catch (const Evaluation::UnsupportedBoardSizeError &e) {
+                    }
+                    catch (const std::exception &e) {
+                        if (MessageMode != MsgMode::NONE)
+                            MESSAGEL("Failed to load from "
+                                     << (!weightPath.empty()
+                                             ? pathToConsoleString(weightPath)
+                                             : pathToConsoleString(blackWeightPath) + " and "
+                                                   + pathToConsoleString(whiteWeightPath))
+                                     << " due to error: " << e.what());
+                    }
                 }
-                catch (const std::exception &e) {
-                    ERRORL("Evaluator " << evaluatorName << " failed to initialized: " << e.what());
-                    return nullptr;
-                }
-            };
+
+                if (MessageMode != MsgMode::NONE)
+                    MESSAGEL("Evaluator " << evaluatorName
+                                          << " disabled: no compatible weight config found.");
+                return nullptr;
+            }
+            catch (const std::exception &e) {
+                ERRORL("Evaluator " << evaluatorName << " failed to initialized: " << e.what());
+                return nullptr;
+            }
         };
-
-    auto getBlackAndWhiteWeightPath = [](std::filesystem::path weightPath,
-                                         const cpptoml::table &weightCfg)
-        -> std::pair<std::filesystem::path, std::filesystem::path> {
-        std::filesystem::path blackWeightPath, whiteWeightPath;
-        if (weightPath.empty()) {
-            auto weightFileBlack = weightCfg.get_as<std::string>("weight_file_black");
-            auto weightFileWhite = weightCfg.get_as<std::string>("weight_file_white");
-            if (!weightFileBlack || !weightFileWhite)
-                throw std::runtime_error("must specify weight_file_black and "
-                                         "weight_file_white in weight configs.");
-
-            blackWeightPath = std::filesystem::u8path(*weightFileBlack);
-            whiteWeightPath = std::filesystem::u8path(*weightFileWhite);
-            blackWeightPath = Command::getModelFullPath(blackWeightPath);
-            whiteWeightPath = Command::getModelFullPath(whiteWeightPath);
-        }
-        else {
-            blackWeightPath = weightPath;
-            whiteWeightPath = weightPath;
-        }
-
-        return {blackWeightPath, whiteWeightPath};
     };
 
     if (*evaluatorType == "mix9svq") {
@@ -636,16 +640,15 @@ void Config::readEvaluator(const cpptoml::table &t)
             [=](int                   boardSize,
                 Rule                  rule,
                 Numa::NumaNodeId      numaId,
-                std::filesystem::path weightPath,
+                path                  weightPath,
+                std::pair<path, path> blackAndWhiteWeightPath,
                 const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix9svq::Evaluator>(boardSize,
-                                                                        rule,
-                                                                        numaId,
-                                                                        blackWeightPath,
-                                                                        whiteWeightPath);
+                return std::make_unique<Evaluation::mix9svq::Evaluator>(
+                    boardSize,
+                    rule,
+                    numaId,
+                    blackAndWhiteWeightPath.first,
+                    blackAndWhiteWeightPath.second);
             },
             true));
     }
@@ -654,16 +657,15 @@ void Config::readEvaluator(const cpptoml::table &t)
             [=](int                   boardSize,
                 Rule                  rule,
                 Numa::NumaNodeId      numaId,
-                std::filesystem::path weightPath,
+                path                  weightPath,
+                std::pair<path, path> blackAndWhiteWeightPath,
                 const cpptoml::table &weightCfg) {
-                auto [blackWeightPath, whiteWeightPath] =
-                    getBlackAndWhiteWeightPath(weightPath, weightCfg);
-
-                return std::make_unique<Evaluation::mix10::Evaluator>(boardSize,
-                                                                      rule,
-                                                                      numaId,
-                                                                      blackWeightPath,
-                                                                      whiteWeightPath);
+                return std::make_unique<Evaluation::mix10::Evaluator>(
+                    boardSize,
+                    rule,
+                    numaId,
+                    blackAndWhiteWeightPath.first,
+                    blackAndWhiteWeightPath.second);
             },
             true));
     }
@@ -675,14 +677,15 @@ void Config::readEvaluator(const cpptoml::table &t)
             [=](int                   boardSize,
                 Rule                  rule,
                 Numa::NumaNodeId      numaId,
-                std::filesystem::path weightPath,
+                path                  weightPath,
+                std::pair<path, path> blackAndWhiteWeightPath,
                 const cpptoml::table &weightCfg) {
                 return std::make_unique<Evaluation::onnx::OnnxEvaluator>(boardSize,
                                                                          rule,
                                                                          weightPath,
                                                                          deviceName);
             },
-            true));
+            false));
     }
 #endif
     else {
