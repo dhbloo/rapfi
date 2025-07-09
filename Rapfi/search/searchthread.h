@@ -48,17 +48,10 @@ class ThreadPool;  // forward declaration
 /// states, including a board clone, evaluator, root moves list, as well as various
 /// heruistic states. All search algorithms must have a derived class from SearchThread
 /// to implement their search routines and handle thread-related search states.
-struct SearchThread
+class SearchThread
 {
-public:
-    const uint32_t id;
-    /// Launch a custom task in this thread.
-    void runTask(std::function<void(SearchThread &)> task);
-    /// Wait until threadLoop() enters idle state.
-    void waitForIdle();
-
 private:
-    friend struct MainSearchThread;
+    friend class MainSearchThread;
     friend class ThreadPool;
     Numa::NumaNodeId numaId;
     bool             running, exit;
@@ -87,6 +80,10 @@ public:
     virtual void setBoardAndEvaluator(const Board &board);
     /// Return if this thread is the main thread.
     bool isMainThread() const { return id == 0; }
+    /// Launch a custom task in this thread.
+    void runTask(std::function<void(SearchThread &)> task);
+    /// Wait until threadLoop() enters idle state.
+    void waitForIdle();
 
     /// Get the search data as a specific type.
     template <typename SearchDataType>
@@ -94,6 +91,10 @@ public:
 
     /// Get the shared search options.
     SearchOptions &options() const;
+
+public:
+    /// The ID of this search thread.
+    const uint32_t id;
 
     /// Reference to the thread pool that this thread belongs to.
     ThreadPool &threads;
@@ -127,8 +128,9 @@ public:
 
 /// MainSearchThread class is the master thread in the Lazy SMP algorithm.
 /// It also controls state needed in iterative deepening and time control.
-struct MainSearchThread : public SearchThread
+class MainSearchThread : public SearchThread
 {
+public:
     MainSearchThread(ThreadPool &threadPool) : SearchThread::SearchThread(threadPool, 0) {}
 
     /// Clear the main thread state between two search.
@@ -172,8 +174,8 @@ public:
                                                                   Numa::NumaNodeId numaId);
 
 private:
-    friend struct SearchThread;
-    friend struct MainSearchThread;
+    friend class SearchThread;
+    friend class MainSearchThread;
 
     std::atomic_bool                     terminate;
     std::function<EvaluatorMaker>        evaluatorMaker;

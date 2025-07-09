@@ -34,10 +34,10 @@ namespace Search {
 ThreadPool Threads;
 
 SearchThread::SearchThread(ThreadPool &threadPool, uint32_t id)
-    : id(id)
-    , numaId(Numa::DefaultNumaNodeId)
+    : numaId(Numa::DefaultNumaNodeId)
     , running(false)
     , exit(false)
+    , id(id)
     , threads(threadPool)
 {}
 
@@ -242,10 +242,12 @@ void MainSearchThread::runCustomTaskAndWait(std::function<void(SearchThread &)> 
 
 void ThreadPool::waitForIdle()
 {
+#ifdef MULTI_THREADING
     // Iterate all other threads and wait for them to finish
     for (auto &th : *this)
         if (th->thread.get_id() != std::this_thread::get_id())
             th->waitForIdle();
+#endif
 }
 
 void ThreadPool::setNumThreads(size_t numThreads)

@@ -23,8 +23,8 @@
 
 namespace Search {
 
-struct SearchThread;
-struct MainSearchThread;
+class SearchThread;
+class MainSearchThread;
 class TimeControl;
 
 /// SearchPrinter controls all message outputs during searching. It should

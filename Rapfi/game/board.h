@@ -29,7 +29,7 @@
 #include <cassert>
 
 namespace Search {
-struct SearchThread;
+class SearchThread;
 }
 namespace Evaluation {
 class Evaluator;

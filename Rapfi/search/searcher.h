@@ -22,8 +22,8 @@
 
 namespace Search {
 
-struct SearchThread;      // forward declaration
-struct MainSearchThread;  // forward declaration
+class SearchThread;       // forward declaration
+class MainSearchThread;  // forward declaration
 class ThreadPool;         // forward declaration
 
 struct SearchData
