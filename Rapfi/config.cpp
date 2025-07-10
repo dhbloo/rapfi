@@ -829,8 +829,6 @@ void Config::readDatabase(const cpptoml::table &t)
         DatabaseLibIgnoreBoardText = t.get_as<bool>("ignore_board_text").value_or(false);
     }
 
-    DatabaseReadonlyMode = t.get_as<bool>("enable_by_default").value_or(false);
-
     if (DatabaseDefaultEnabled)
         Search::Threads.setupDatabase(createDefaultDBStorage());
 }

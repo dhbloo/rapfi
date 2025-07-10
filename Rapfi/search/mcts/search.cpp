@@ -931,7 +931,7 @@ void MCTSSearcher::searchMain(MainSearchThread &th)
         FOR_EVERY_EMPTY_POS(th.board, pos)
         {
             th.bestMove = pos;
-            printer.printBestmoveWithoutSearch(pos, mated_in(0), 0, nullptr);
+            printer.printBestmoveWithoutSearch(th, pos, mated_in(0), 0, nullptr);
             return;
         }
 
@@ -952,7 +952,7 @@ void MCTSSearcher::searchMain(MainSearchThread &th)
             th.bestMove     = pos;
             th.resultAction = ActionType::Move;
             ERRORL("Evaluator is not enabled, cannot use mcts search.");
-            printer.printBestmoveWithoutSearch(pos, mated_in(0), 0, nullptr);
+            printer.printBestmoveWithoutSearch(th, pos, mated_in(0), 0, nullptr);
             return;
         }
     }

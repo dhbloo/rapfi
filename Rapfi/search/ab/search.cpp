@@ -124,7 +124,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
         FOR_EVERY_EMPTY_POS(th.board, pos)
         {
             th.bestMove = pos;
-            printer.printBestmoveWithoutSearch(pos, mated_in(0), 0, nullptr);
+            printer.printBestmoveWithoutSearch(th, pos, mated_in(0), 0, nullptr);
             return;
         }
 
@@ -136,7 +136,8 @@ void ABSearcher::searchMain(MainSearchThread &th)
         th.rootMoves[0].value = mate_in(1);
         th.bestMove           = th.rootMoves[0].pv[0];
 
-        printer.printBestmoveWithoutSearch(th.rootMoves[0].pv[0],
+        printer.printBestmoveWithoutSearch(th,
+                                           th.rootMoves[0].pv[0],
                                            th.rootMoves[0].value,
                                            1,
                                            &th.rootMoves[0].pv);
@@ -167,7 +168,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
 
         if (bestMove) {
             th.bestMove = bestMove;
-            printer.printBestmoveWithoutSearch(bestMove, bestMoveValue, 0, nullptr);
+            printer.printBestmoveWithoutSearch(th, bestMove, bestMoveValue, 0, nullptr);
             return;
         }
     }
@@ -201,7 +202,7 @@ void ABSearcher::searchMain(MainSearchThread &th)
         // If database winning move is not in rootmoves, return it directly
         else {
             th.bestMove = dbWinMove;
-            printer.printBestmoveWithoutSearch(dbWinMove, dbWinValue, dbWinDepth, nullptr);
+            printer.printBestmoveWithoutSearch(th, dbWinMove, dbWinValue, dbWinDepth, nullptr);
             return;
         }
     }

@@ -82,8 +82,11 @@ struct SearchPrinter
     /// @param moveValue The theoretical value of this best move.
     /// @param rootDepth The theoretical depth of thie best move.
     /// @param pv A optional Pv to print.
-    void
-    printBestmoveWithoutSearch(Pos bestMove, Value moveValue, int rootDepth, std::vector<Pos> *pv);
+    void printBestmoveWithoutSearch(MainSearchThread &th,
+                                    Pos               bestMove,
+                                    Value             moveValue,
+                                    int               rootDepth,
+                                    std::vector<Pos> *pv);
 
 private:
     /// Checks should we output realtime messages.

@@ -246,11 +246,27 @@ void SearchPrinter::printSearchEnds(MainSearchThread  &th,
     }
 }
 
-void SearchPrinter::printBestmoveWithoutSearch(Pos               bestMove,
+void SearchPrinter::printBestmoveWithoutSearch(MainSearchThread &th,
+                                               Pos               bestMove,
                                                Value             moveValue,
                                                int               rootDepth,
                                                std::vector<Pos> *pv)
 {
+    if (showInfo(th)) {
+        INFO("PV", 0);
+        INFO("NUMPV", 1);
+        INFO("DEPTH", rootDepth);
+        INFO("SELDEPTH", 0);
+        INFO("NODES", 0);
+        INFO("TOTALNODES", 0);
+        INFO("TOTALTIME", 0);
+        INFO("SPEED", 0);
+        INFO("EVAL", moveValue);
+        INFO("WINRATE", Config::valueToWinRate(moveValue));
+        INFO("BESTLINE", MovesText {*pv, true, true, th.board->size()});
+        INFO("PV", "DONE");
+    }
+
     // A message for compatibility with UCI
     if (Config::MessageMode == MsgMode::UCILIKE) {
         if (pv)
