@@ -109,7 +109,7 @@ Value evaluate(const Board &board, Value alpha, Value beta)
         // Use evaluator eval if classical eval are in alpha-beta window margin
         int margin = classicalEvalMargin(eval);
         if (eval >= alpha - margin && eval <= beta + margin)
-            return computeEvaluatorValue(board).value();
+            return computeEvaluatorValue(board, ACC_LEVEL_BEST).value();
     }
 
     return eval;
@@ -150,10 +150,10 @@ Value evaluate(const Board &board, Rule rule)
     }
 }
 
-ValueType computeEvaluatorValue(const Board &board)
+ValueType computeEvaluatorValue(const Board &board, AccLevel level)
 {
     Color     self = board.sideToMove();
-    ValueType v    = board.evaluator()->evaluateValue(board);
+    ValueType v    = board.evaluator()->evaluateValue(board, level);
 
     // Adjust draw rate according to draw ratio and draw black win rate
     if (Config::EvaluatorDrawRatio < 1.0) {

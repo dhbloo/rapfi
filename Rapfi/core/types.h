@@ -254,3 +254,16 @@ enum class CandidateRange {
     FULL_BOARD,
     CAND_RANGE_NB,
 };
+
+// -------------------------------------------------
+
+/// AccLevel represents the accuracy level of the model's evaluation.
+/// Lower level means higher accuracy and slower evaluation speed,
+/// while higher level means lower accuracy and faster evaluation speed.
+enum AccLevel {
+    ACC_LEVEL_BEST = 0,
+    ACC_LEVEL_HIGH = 1,
+    ACC_LEVEL_MID  = 2,
+    ACC_LEVEL_LOW  = 3,
+    ACC_LEVEL_MAX_NB,
+};

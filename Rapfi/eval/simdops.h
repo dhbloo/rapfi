@@ -41,7 +41,7 @@ enum InstructionType {
 constexpr size_t simdBitsOfInstType(InstructionType instType)
 {
     switch (instType) {
-    default: return 128;
+    default: return 1;
     case SSE: return 128;
     case AVX2: return 256;
     case AVX512: return 512;
@@ -63,13 +63,33 @@ constexpr bool isMinimalInstType(InstructionType instType)
     }
 }
 
-/// Returns the next lower instruction type.
+/// Returns the next narrower instruction type.
+constexpr InstructionType getNarrowerInstType(InstructionType instType)
+{
+    switch (instType) {
+    default: return SCALAR;
+    case SSE: return SCALAR;
+    case AVX2: return SSE;
+    case AVX512: return AVX2;
+    case NEON: return SCALAR;
+    case WASM_SIMD: return SCALAR;
+    }
+}
+
+/// Returns the next lower instruction type that fits within the given width.
 constexpr InstructionType getInstTypeOfWidth(InstructionType instType, size_t width)
 {
-    return simdBitsOfInstType(instType) <= width ? instType
-           : isMinimalInstType(instType)
-               ? SCALAR
-               : getInstTypeOfWidth(static_cast<InstructionType>(instType - 1), width);
+    return simdBitsOfInstType(instType) <= width
+               ? instType
+               : getInstTypeOfWidth(getNarrowerInstType(instType), width);
+}
+
+/// Returns the next narrower alignment that fits with the given instruction type.
+constexpr int getNarrowerAlignment(int alignment, InstructionType instType)
+{
+    if (alignment * 8 <= simdBitsOfInstType(instType))
+        return alignment;
+    return getNarrowerAlignment(alignment / 2, instType);
 }
 
 #if defined(USE_AVX512)
@@ -2407,14 +2427,14 @@ int8_t *crelu(int8_t output[Size], const int32_t input[Size])
     static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
     constexpr int Log2Divisor = floorLog2(Divisor);
 
-    typedef detail::VecBatch<Size, int32_t, Inst>          InB;
-    typedef detail::VecBatch<Size, int8_t, Inst>           OutB;
-    typedef detail::VecLoadStore<int32_t, Alignment, Inst> I32LS;
-    typedef detail::VecLoadStore<int8_t, Alignment, Inst>  I8LS;
-    typedef detail::VecPack<int32_t, int16_t, Inst>        I32Pack;
-    typedef detail::VecPack<int16_t, int8_t, Inst>         I16Pack;
-    typedef detail::VecOp<int16_t, Inst>                   I16Op;
-    typedef detail::VecOp<int8_t, Inst>                    I8Op;
+    typedef detail::VecBatch<Size, int32_t, Inst>                          InB;
+    typedef detail::VecBatch<Size, int8_t, Inst, !isMinimalInstType(Inst)> OutB;
+    typedef detail::VecLoadStore<int32_t, Alignment, Inst>                 I32LS;
+    typedef detail::VecLoadStore<int8_t, Alignment, Inst>                  I8LS;
+    typedef detail::VecPack<int32_t, int16_t, Inst>                        I32Pack;
+    typedef detail::VecPack<int16_t, int8_t, Inst>                         I16Pack;
+    typedef detail::VecOp<int16_t, Inst>                                   I16Op;
+    typedef detail::VecOp<int8_t, Inst>                                    I8Op;
 
     const auto zero = I8Op::setzero();
 
@@ -2449,6 +2469,15 @@ int8_t *crelu(int8_t output[Size], const int32_t input[Size])
         I8LS::store(output + i * OutB::RegWidth, result);
     }
 
+    if constexpr (OutB::NumExtra > 0 && !isMinimalInstType(Inst)) {
+        constexpr InstructionType NarrowerInst      = getNarrowerInstType(Inst);
+        constexpr int             NarrowerAlignment = getNarrowerAlignment(Alignment, NarrowerInst);
+
+        return crelu<OutB::NumExtra, Divisor, NoReLU, NarrowerAlignment, NarrowerInst>(
+            output + OutB::BatchedSize,
+            input + OutB::BatchedSize);
+    }
+
     return output + Size;
 }
 
@@ -2467,13 +2496,13 @@ int16_t *crelu(int16_t output[Size], const int32_t input[Size])
     static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
     constexpr int Log2Divisor = floorLog2(Divisor);
 
-    typedef detail::VecBatch<Size, int32_t, Inst>          InB;
-    typedef detail::VecBatch<Size, int16_t, Inst>          OutB;
-    typedef detail::VecLoadStore<int32_t, Alignment, Inst> I32LS;
-    typedef detail::VecLoadStore<int16_t, Alignment, Inst> I16LS;
-    typedef detail::VecPack<int32_t, int16_t, Inst>        I32Pack;
-    typedef detail::VecOp<int32_t, Inst>                   I32Op;
-    typedef detail::VecOp<int16_t, Inst>                   I16Op;
+    typedef detail::VecBatch<Size, int32_t, Inst>                           InB;
+    typedef detail::VecBatch<Size, int16_t, Inst, !isMinimalInstType(Inst)> OutB;
+    typedef detail::VecLoadStore<int32_t, Alignment, Inst>                  I32LS;
+    typedef detail::VecLoadStore<int16_t, Alignment, Inst>                  I16LS;
+    typedef detail::VecPack<int32_t, int16_t, Inst>                         I32Pack;
+    typedef detail::VecOp<int32_t, Inst>                                    I32Op;
+    typedef detail::VecOp<int16_t, Inst>                                    I16Op;
 
     const auto zero = I16Op::setzero();
 
@@ -2503,6 +2532,15 @@ int16_t *crelu(int16_t output[Size], const int32_t input[Size])
         I16LS::store(output + i * OutB::RegWidth, result);
     }
 
+    if constexpr (OutB::NumExtra > 0 && !isMinimalInstType(Inst)) {
+        constexpr InstructionType NarrowerInst      = getNarrowerInstType(Inst);
+        constexpr int             NarrowerAlignment = getNarrowerAlignment(Alignment, NarrowerInst);
+
+        return crelu<OutB::NumExtra, Divisor, NoReLU, NarrowerAlignment, NarrowerInst>(
+            output + OutB::BatchedSize,
+            input + OutB::BatchedSize);
+    }
+
     return output + Size;
 }
 
@@ -2516,11 +2554,11 @@ int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_
     static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
     constexpr int Log2Divisor = floorLog2(Divisor);
 
-    typedef detail::VecBatch<OutSize, int8_t, Inst, true> OutB;
-    typedef detail::VecLoadStore<int8_t, Alignment, Inst> I8LS;
-    typedef detail::VecOp<int8_t, Inst>                   I8Op;
-    typedef detail::VecOp<int16_t, Inst>                  I16Op;
-    typedef detail::VecPack<int16_t, int8_t, Inst>        I16Pack;
+    typedef detail::VecBatch<OutSize, int8_t, Inst, !isMinimalInstType(Inst)> OutB;
+    typedef detail::VecLoadStore<int8_t, Alignment, Inst>                     I8LS;
+    typedef detail::VecOp<int8_t, Inst>                                       I8Op;
+    typedef detail::VecOp<int16_t, Inst>                                      I16Op;
+    typedef detail::VecPack<int16_t, int8_t, Inst>                            I16Pack;
 
     for (int i = 0; i < OutB::NumBatch; i++) {
         auto in10 = I8LS::load(input_u7 + (2 * i + 0) * OutB::RegWidth);  // unsigned
@@ -2537,33 +2575,13 @@ int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_
         I8LS::store(output + i * OutB::RegWidth, dotsumi8);
     }
 
-    if constexpr (OutB::NumExtra > 0) {
-        constexpr InstructionType I128 = getInstTypeOfWidth(Inst, 128);
-
-        typedef detail::VecBatch<OutB::NumExtra, int8_t, I128> OutBExtra;
-        typedef detail::VecLoadStore<int8_t, Alignment, I128>  I8LS128;
-        typedef detail::VecOp<int8_t, I128>                    I8Op128;
-        typedef detail::VecOp<int16_t, I128>                   I16Op128;
-        typedef detail::VecPack<int16_t, int8_t, I128>         I16Pack128;
-
-        for (int i = 0; i < OutBExtra::NumBatch; i++) {
-            auto in10 = I8LS128::load(input_u7 + 2 * OutB::BatchedSize
-                                      + (2 * i + 0) * OutBExtra::RegWidth);  // unsigned
-            auto in11 = I8LS128::load(input_u7 + 2 * OutB::BatchedSize
-                                      + (2 * i + 1) * OutBExtra::RegWidth);  // unsigned
-            auto in20 = I8LS128::load(input_i8 + 2 * OutB::BatchedSize
-                                      + (2 * i + 0) * OutBExtra::RegWidth);  // signed
-            auto in21 = I8LS128::load(input_i8 + 2 * OutB::BatchedSize
-                                      + (2 * i + 1) * OutBExtra::RegWidth);  // signed
-
-            auto dotsum0i16 = I8Op128::dot2_u7i8(in10, in20);
-            auto dotsum1i16 = I8Op128::dot2_u7i8(in11, in21);
-            dotsum0i16      = I16Op128::template srai<Log2Divisor>(dotsum0i16);
-            dotsum1i16      = I16Op128::template srai<Log2Divisor>(dotsum1i16);
-            auto dotsumi8   = I16Pack128::packs_permuted(dotsum0i16, dotsum1i16);
-
-            I8LS128::store(output + OutB::BatchedSize + i * OutBExtra::RegWidth, dotsumi8);
-        }
+    if constexpr (OutB::NumExtra > 0 && !isMinimalInstType(Inst)) {
+        constexpr InstructionType NarrowerInst      = getNarrowerInstType(Inst);
+        constexpr int             NarrowerAlignment = getNarrowerAlignment(Alignment, NarrowerInst);
+        return dot2<OutB::NumExtra, Divisor, NarrowerAlignment, NarrowerInst>(
+            output + OutB::BatchedSize,
+            input_u7 + OutB::BatchedSize * 2,
+            input_i8 + OutB::BatchedSize * 2);
     }
 
     return output + OutSize;

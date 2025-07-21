@@ -173,6 +173,21 @@ using I16Op   = simd::detail::VecOp<int16_t, IT>;
 using I32Op   = simd::detail::VecOp<int32_t, IT>;
 using F32Op   = simd::detail::VecOp<float, IT>;
 
+/// Returns the alignment of the pointer of given type at the offset of some dimension.
+template <typename T>
+constexpr int getAlignment(int Dim, int Alignment = ::Alignment)
+{
+    const size_t NumBytes = sizeof(T) * Dim;
+
+    while (Alignment > 0) {
+        if (NumBytes % Alignment == 0)
+            return Alignment;
+        Alignment /= 2;
+    }
+
+    return 1;
+}
+
 template <bool SignedInput = false,
           bool NoReLU      = false,
           int  Divisor     = 128,
@@ -186,11 +201,7 @@ linearBlock(int8_t output[], const int8_t input[], const FCWeight<OutSize, InSiz
                                                input,
                                                layerWeight.weight,
                                                layerWeight.bias);
-
-    constexpr auto InstType = getInstTypeOfWidth(IT, 8 * OutSize);
-    static_assert(InstType != simd::InstructionType::SCALAR,
-                  "Failed to find a supported instruction set");
-    simd::crelu<OutSize, Divisor, NoReLU, Alignment, InstType>(output, outputi32);
+    simd::crelu<OutSize, Divisor, NoReLU>(output, outputi32);
 }
 
 }  // namespace
@@ -667,9 +678,10 @@ void Accumulator::updateSharedLargeHead(const Weight &w)
     for (int i = 0; i < ValueSumType::NGroup; i++)
         for (int j = 0; j < ValueSumType::NGroup; j++) {
             simd::dot2<FeatureDim / 2, 128>(group0[i][j], group0_in[i][j], gate);
-            simd::dot2<FeatureDim / 2, 128>(group0[i][j] + FeatureDim / 2,
-                                            group0_in[i][j],
-                                            gate + FeatureDim);
+            simd::dot2<FeatureDim / 2, 128, getAlignment<int8_t>(FeatureDim / 2)>(
+                group0[i][j] + FeatureDim / 2,
+                group0_in[i][j],
+                gate + FeatureDim);
         }
 
     // group linear layer
@@ -1024,7 +1036,9 @@ ValueType Evaluator::evaluateValue(const Board &board, AccLevel level)
 
     // Apply all incremental update for both sides and calculate value
     clearCache(self);
-    auto [win, loss, draw, _] = accumulator[self]->evaluateValueLarge(*weight[self]);
+    auto [win, loss, draw, _] = level <= ACC_LEVEL_HIGH
+                                    ? accumulator[self]->evaluateValueLarge(*weight[self])
+                                    : accumulator[self]->evaluateValueSmall(*weight[self]);
 
     return ValueType(win, loss, draw, true);
 }
@@ -1035,7 +1049,10 @@ void Evaluator::evaluatePolicy(const Board &board, PolicyBuffer &policyBuffer, A
 
     // Apply all incremental update and calculate policy
     clearCache(self);
-    accumulator[self]->evaluatePolicyLarge(*weight[self], policyBuffer);
+    if (level == ACC_LEVEL_BEST)
+        accumulator[self]->evaluatePolicyLarge(*weight[self], policyBuffer);
+    else
+        accumulator[self]->evaluatePolicySmall(*weight[self], policyBuffer);
 }
 
 void Evaluator::clearCache(Color side)

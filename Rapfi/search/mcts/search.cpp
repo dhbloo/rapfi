@@ -480,7 +480,7 @@ void evaluateNode(Node &node, const SearchOptions &options, Board &board, int pl
     }
 
     // Evaluate value for new node that has not been visited
-    Evaluation::ValueType v = Evaluation::computeEvaluatorValue(board);
+    Evaluation::ValueType v = Evaluation::computeEvaluatorValue(board, ACC_LEVEL_BEST);
     node.setNonTerminal(v.winLossRate(), v.draw());
 
     // If ExpandWhenFirstEvaluate mode is enabled, we expand the node immediately

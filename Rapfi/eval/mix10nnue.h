@@ -34,7 +34,7 @@ using namespace Evaluation;
 
 constexpr uint32_t ArchHashBase  = 0xb53b0258;
 constexpr int      ShapeNum      = 442503;
-constexpr int      FeatureDim    = 64;
+constexpr int      FeatureDim    = 96;
 constexpr int      FeatDWConvDim = 32;
 constexpr int      ValueDim      = 64;
 constexpr int      NumHeadBucket = 1;
@@ -119,12 +119,12 @@ public:
     {
         static constexpr int NGroup = 3;
 
-        std::array<int32_t, FeatureDim> global;
-        std::array<int32_t, FeatureDim> group[NGroup][NGroup];
-        std::array<int8_t, ValueDim>    small_value_feature;
-        std::array<int8_t, ValueDim>    large_value_feature;
-        bool                            small_value_feature_valid;
-        bool                            large_value_feature_valid;
+        alignas(64) std::array<int32_t, FeatureDim> global;
+        alignas(64) std::array<int32_t, FeatureDim> group[NGroup][NGroup];
+        alignas(64) std::array<int8_t, ValueDim> small_value_feature;
+        alignas(64) std::array<int8_t, ValueDim> large_value_feature;
+        bool small_value_feature_valid;
+        bool large_value_feature_valid;
     };
 
     // Make sure we have proper alignment for SIMD operations
