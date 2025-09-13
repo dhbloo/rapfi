@@ -8,7 +8,7 @@
   [Report bug](https://github.com/dhbloo/rapfi/issues/new)
   ·
   [Open a discussion](https://github.com/dhbloo/rapfi/discussions/new)
-  · 
+  ·
   [Discord](https://discord.gg/7kEpFCGdb5)
   ·
   [Gomocalc](https://gomocalc.com)
@@ -63,26 +63,51 @@ For more information on the Piskvork protocol, please see the [wiki](https://git
 
 ## Build from source
 
-You can build Rapfi engine from source in an environment with [CMake](https://cmake.org/) installed. Rapfi can be compiled with common compilers with C++17 supports such as msvc, gcc and clang. With cmake and compiler installed and available from shell, Rapfi can be compiled with following commands.
+You can build Rapfi engine from source in an environment with [CMake](https://cmake.org/) installed. Rapfi can be compiled with common compilers with C++17 supports such as msvc, gcc and clang. With cmake and compiler installed and available from shell, Rapfi can be compiled with existing presets:
 
 ```bash
 cd Rapfi
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --preset x64-clang-Native
+cmake --build build/x64-clang-Native
+```
+
+The above preset builds Rapfi with multi-threading support and native instruction sets targeting x86-64(amd64) platforms. To build it for running on other CPUs with different capabilities, other presets can be chosen accordingly. You can list all available presets with the following command:
+
+```bash
+cd Rapfi
+cmake --list-presets
+```
+
+You can also specify exact combination for instruction supports and other features through CMake options. To see description for all the CMake compile options, please refer to `CMakeLists.txt`. For example, to build Rapfi with only SSE and AVX2 support, use the following command:
+
+```bash
+mkdir -p Rapfi/build/x64-clang-AVX2 && cd Rapfi/build/x64-clang-AVX2
+cmake ../.. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUSE_SSE=ON -DUSE_AVX2=ON -DUSE_AVX512=OFF -DUSE_BMI2=OFF -DUSE_VNNI=OFF
 cmake --build .
 ```
 
-The default setup builds Rapfi with multi-threading and AVX2 support. To build it for running on older CPU without AVX2 support, AVX2 and AVX usage can be disable through CMake options. To see description for other CMake compile options, please refer to `CMakeLists.txt`.
+To build Rapfi for the ARM64 platform with NEON support, use the following command:
 
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_AVX=OFF -DUSE_AVX2=OFF
+mkdir -p Rapfi/build/arm64-clang-NEON && cd Rapfi/build/arm64-clang-NEON
+cmake ../.. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUSE_NEON=ON -DUSE_NEON_DOTPROD=OFF
+cmake --build .
 ```
 
-It is recommended to use the Clang compiler, which provides the best speed across different compilers. When compiling for Windows, consider using one of **LLVM/Clang for Windows** / **Clang-CL for Visual Studio** / **MinGW-w64-Clang**, which compiles the engine binary with significantly higher speed than the builtin MSVC compiler in Visual Studio.
+It is recommended to use the Clang compiler, which is tested to provide the best speed across different compilers. When compiling for Windows, consider using one of **LLVM/Clang for Windows** / **Clang-CL for Visual Studio** / **MinGW-w64-Clang**, which compiles the engine binary with significantly higher speed than the builtin MSVC compiler in Visual Studio.
 
-For more detailed instructions for building on all platforms, please refer to the [wiki](https://github.com/dhbloo/rapfi/wiki/Compiling).
+### Build for WebAssembly
 
+To build Rapfi for WebAssembly, you need to have the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) installed. After that, activate the Emscripten environment, and use the following commands to build Rapfi:
 
+```bash
+# Make sure you have activated the Emscripten environment
+mkdir -p Rapfi/build/wasm-multi-simd128 && cd Rapfi/build/wasm-multi-simd128
+emcmake cmake ../.. -DCMAKE_BUILD_TYPE=Release -DNO_COMMAND_MODULES=ON -DUSE_WASM_SIMD=ON -DUSE_WASM_SIMD_RELAXED=OFF
+emmake cmake --build .
+```
+
+To target browsers with different WebAssembly SIMD support, you can turn on or turn off the `USE_WASM_SIMD` and `USE_WASM_SIMD_RELAXED` options. Additionally, you can turn on or turn off the `NO_MULTI_THREADING` option to disable multi-threading support in the WebAssembly build, which is required for browsers that do not support WebAssembly threads.
 
 ## Terms of use
 

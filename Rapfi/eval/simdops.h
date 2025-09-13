@@ -1241,17 +1241,6 @@ namespace detail {
         /// Compute 4-element dot product of [i8x16] and [i8x16] then accumulate into [i32x4].
         static FORCE_INLINE void dot4_i8i8_accum(R &acc, R a, R b)
         {
-    #ifdef USE_WASM_SIMD_RELAXED
-            const R highest_bit = wasm_i8x16_splat(0x80);
-            R       low7        = wasm_v128_andnot(a, highest_bit);
-            R       msb         = wasm_v128_and(a, highest_bit);
-
-            acc = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(b, low7, acc);
-            msb = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(b, msb, wasm_i32x4_splat(0));
-
-            // Place value of the MSB was negative
-            acc = simde_mm_sub_epi32(acc, msb);
-    #else
             const R prod_low  = wasm_i16x8_extmul_low_i8x16(a, b);
             const R prod_high = wasm_i16x8_extmul_high_i8x16(a, b);
             const R psum_low  = wasm_i32x4_extadd_pairwise_i16x8(prod_low);
@@ -1260,7 +1249,6 @@ namespace detail {
             const R psum_odd  = wasm_i32x4_shuffle(psum_low, psum_high, 1, 3, 5, 7);
             const R psum      = wasm_i32x4_add(psum_even, psum_odd);
             acc               = wasm_i32x4_add(acc, psum);
-    #endif
         }
     };
 #endif
