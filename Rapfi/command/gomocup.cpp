@@ -534,6 +534,27 @@ void libToDatabase()
     }
 }
 
+void databaseToLib()
+{
+    auto libPath = readPathFromInput();
+    if (Search::Threads.dbStorage()) {
+        MESSAGEL("Exporting to lib file " << pathToConsoleString(libPath)
+                                          << ", this might take a while...");
+        auto          startTime = now();
+        std::ofstream libStream(libPath, std::ios::binary);
+        if (!libStream) {
+            ERRORL("Unable to open file " << pathToConsoleString(libPath) << " for writing.");
+            return;
+        }
+
+        DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
+        size_t   nodeCount = ::Database::exportDatabaseToLib(dbClient, libStream, *board, options.rule);
+        auto     endTime   = now();
+        MESSAGEL("Exported " << nodeCount << " nodes to lib file using "
+                             << (endTime - startTime) << " ms.");
+    }
+}
+
 void restart()
 {
     board->newGame(options.rule);
@@ -1291,6 +1312,7 @@ bool runProtocol()
     else if (cmd == "YXDBTOTXTALL")        databaseToTxt(false);
     else if (cmd == "YXDBTOTXT")           databaseToTxt(true);
     else if (cmd == "YXLIBTODB")           libToDatabase();
+    else if (cmd == "YXDBTOLIB")           CheckBoardOK(databaseToLib);
     else if (cmd == "RELOADCONFIG")        reloadConfig();
     else if (cmd == "LOADMODEL")           loadModel();
     else if (cmd == "EXPORTMODEL")         exportModel();

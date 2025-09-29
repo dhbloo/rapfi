@@ -50,4 +50,9 @@ size_t splitDatabase(DBStorage &dbSrc, DBStorage &dbDst, const Board &board, Rul
 size_t
 importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule, int boardSize = 15);
 
+/// Export database records to a lib file.
+/// @return The number of nodes written.
+size_t
+exportDatabaseToLib(DBClient &dbClient, std::ostream &libStream, const Board &board, Rule rule);
+
 }  // namespace Database

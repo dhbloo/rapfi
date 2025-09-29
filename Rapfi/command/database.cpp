@@ -484,5 +484,23 @@ void Command::database(int argc, char *argv[])
             else
                 ERRORL("Failed to open lib file " << libPath);
         }
+        else if (cmd == "DBTOLIB") {
+            std::string libPath;
+            std::getline(is, libPath);
+            trimInplace(libPath);
+
+            std::ofstream libStream(libPath, std::ios::binary);
+            if (libStream.is_open() && libStream) {
+                MESSAGEL("Exporting to lib file " << libPath << ", this might take a while...");
+                auto     startTime = now();
+                DBClient dbClient(*dbStorage, RECORD_MASK_ALL);
+                size_t   nodeCount = exportDatabaseToLib(dbClient, libStream, *board, rule);
+                auto     endTime   = now();
+                MESSAGEL("Exported " << nodeCount << " nodes to lib file " << libPath << " using "
+                                     << (endTime - startTime) << " ms.");
+            }
+            else
+                ERRORL("Failed to open lib file " << libPath);
+        }
     }
 }

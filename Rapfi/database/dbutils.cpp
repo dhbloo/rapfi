@@ -23,6 +23,7 @@
 #include "dbclient.h"
 
 #include <iomanip>
+#include <map>
 #include <sstream>
 #include <vector>
 #ifdef MULTI_THREADING
@@ -170,6 +171,50 @@ private:
                             Rule                         rule,
                             const LibNode               *node,
                             std::function<CallbackFunc> &callback);
+};
+
+// Renlib Tree Writing code following the same pattern as RenlibReader.
+class RenlibWriter
+{
+public:
+    /// Open a lib file for writing.
+    RenlibWriter(std::ostream &libStream);
+
+    /// Export database records to a lib file by traversing the game tree.
+    /// @param dbClient The database client to query records from.
+    /// @param board The board instance to use for traversal.
+    /// @param rule Game rule to use.
+    /// @return The number of nodes written.
+    size_t exportDatabase(Database::DBClient &dbClient, const Board &board, Rule rule);
+
+private:
+    // about file header
+    static constexpr int HEADER_SIZE              = 20;
+    static constexpr int MAJOR_FILE_VERSION_INDEX = 8;
+    static constexpr int MINOR_FILE_VERSION_INDEX = 9;
+
+    enum NodeFlag {
+        MASK_TEXT    = 0x01,
+        MASK_NOMOVE  = 0x02,
+        MASK_START   = 0x04,
+        MASK_COMMENT = 0x08,
+        MASK_TAG     = 0x10,
+        MASK_NOCHILD = 0x40,
+        MASK_SIBLING = 0x80,
+    };
+
+    std::ostream &out;
+
+    // Current node state for writing
+    Pos currentMove;
+    NodeFlag currentFlags;
+    std::string currentText;
+    std::string currentComment;
+
+    void writeFileHeader();
+    void writeByte(uint8_t byte);
+    void writeNode(int boardSize);
+    size_t exportSubTree(Database::DBClient &dbClient, Board &board, Rule rule);
 };
 
 }  // namespace Renlib
@@ -426,6 +471,17 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
     return writeCount;
 }
 
+size_t exportDatabaseToLib(DBClient &dbClient, std::ostream &libStream, const Board &board, Rule rule)
+{
+    try {
+        Renlib::RenlibWriter libWriter(libStream);
+        return libWriter.exportDatabase(dbClient, board, rule);
+    }
+    catch (const std::exception &e) {
+        throw std::runtime_error("Failed to export database to lib: " + std::string(e.what()));
+    }
+}
+
 }  // namespace Database
 
 namespace Renlib {
@@ -624,6 +680,180 @@ size_t RenlibReader::processNode(Board                       &board,
             node = nullptr;  // stop the loop
 
     } while (node);
+
+    return nodeCount;
+}
+
+
+RenlibWriter::RenlibWriter(std::ostream &libStream) : out(libStream) {}
+
+size_t RenlibWriter::exportDatabase(Database::DBClient &dbClient, const Board &board, Rule rule)
+{
+    if (board.size() > 15)
+        throw std::runtime_error("currently only boardsize <= 15 is supported");
+
+    // 1) Write header
+    writeFileHeader();
+
+    // 2) Create a copy of the board for modifications during traversal
+    Board boardCopy(board, nullptr);
+
+    // 3) Set up root node (but don't write it, just start with children)
+    currentMove = Pos::NONE;  // No root node to write
+    currentFlags = static_cast<NodeFlag>(0);
+    currentText = "";
+    currentComment = "";
+    for (int i = 0; i < board.ply(); i++) {
+        currentMove = boardCopy.getHistoryMove(i);
+        if (i + 1 < board.ply())
+            writeNode(board.size());
+    }
+
+    DBRecord record;
+    if (dbClient.query(boardCopy, rule, record) && !record.isNull()) {
+        std::string label = record.displayLabel();
+        currentText.append(upperInplace(label));
+        currentComment = record.comment();
+    }
+
+    // Export all children from root
+    return exportSubTree(dbClient, boardCopy, rule);
+}
+
+void RenlibWriter::writeFileHeader()
+{
+    // Write standard Renlib header (20 bytes)
+    // Based on the document: 0xff + "renlib" + version info + padding
+    const uint8_t header[HEADER_SIZE] = {
+        0xff, 0x52, 0x65, 0x6E, 0x4C, 0x69, 0x62, 0xff,  // 0xff + "RenLib "
+        3,    // major version (3.0+)
+        0,    // minor version
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff  // padding
+    };
+
+    for (int i = 0; i < HEADER_SIZE; i++)
+        writeByte(header[i]);
+}
+
+void RenlibWriter::writeByte(uint8_t byte)
+{
+    out.put(static_cast<char>(byte));
+}
+
+void RenlibWriter::writeNode(int boardSize)
+{
+    // Write move byte
+    if (currentMove == Pos::PASS || currentMove == Pos::NONE) {
+        writeByte(0);
+    } else {
+        // X-coordinate starts from 0, Y-coordinate starts from 1
+        int x = outputCoordXConvert(currentMove, boardSize);
+        int y = outputCoordYConvert(currentMove, boardSize);
+        uint8_t moveByte = (x << 4) | ((y + 1) & 0x0f);
+        writeByte(moveByte);
+    }
+
+    // Set text and comment flag if text exists
+    if (!currentText.empty())
+        currentFlags = static_cast<NodeFlag>(currentFlags | MASK_TEXT);
+    if (!currentComment.empty())
+        currentFlags = static_cast<NodeFlag>(currentFlags | MASK_COMMENT);
+
+    // Write flag byte
+    writeByte(static_cast<uint8_t>(currentFlags));
+
+    // Write text placeholder if text exists
+    if (currentFlags & MASK_TEXT) {
+        writeByte(0x00);
+        writeByte(0x01);
+    }
+
+    // Write comment if exists (before text according to the document)
+    if (currentFlags & MASK_COMMENT) {
+        writeByte(0x08);                        // Comment marker
+        for (unsigned char ch : currentComment) // Write comment bytes
+            writeByte(ch);
+        // Add padding based on total length (including 0x08 byte)
+        size_t totalLength = 1 + currentComment.length(); // Include 0x08 byte
+        if (totalLength % 2 == 1) {
+            writeByte(0x00);                    // Odd total length: append one 0x00 byte
+        } else {
+            writeByte(0x00);                    // Even total length: append two 0x00 bytes
+            writeByte(0x00);
+        }
+    }
+
+    // Write text if exists (after comment according to the document)
+    if (currentFlags & MASK_TEXT) {
+        for (unsigned char ch : currentText)  // Write text bytes
+            writeByte(ch);
+        // Add padding based on text length
+        if (currentText.length() % 2 == 1) {
+            writeByte(0x00);                  // Odd length: append one 0x00 byte
+        } else {
+            writeByte(0x00);                  // Even length: append two 0x00 bytes
+            writeByte(0x00);
+        }
+    }
+}
+
+size_t RenlibWriter::exportSubTree(Database::DBClient &dbClient, Board &board, Rule rule)
+{
+    // Query all children of current position
+    auto children = dbClient.queryChildren(board, rule);
+    if (children.empty())
+        currentFlags = static_cast<NodeFlag>(currentFlags | MASK_NOCHILD);
+
+    // Write current node first (pre-order traversal)
+    // The current node info should be set by the caller
+    size_t nodeCount = 0;
+    if (currentMove != Pos::NONE || !currentText.empty() || !currentComment.empty()) {
+        writeNode(board.size());
+        nodeCount++;
+    }
+
+    // If no children, return
+    if (children.empty())
+        return nodeCount;
+
+    // Query board texts for current position
+    auto boardTexts = dbClient.queryBoardTexts(board, rule);
+    std::map<Pos, std::string> textMap;
+    for (const auto &[pos, text] : boardTexts) {
+        if (!text.empty()) {
+            textMap[pos] = text;
+        }
+    }
+
+    for (size_t i = 0; i < children.size(); i++) {
+        const auto &[pos, record] = children[i];
+
+        // Set up current node info for next recursion
+        currentMove = pos;
+        currentFlags = (i < children.size() - 1) ? MASK_SIBLING : static_cast<NodeFlag>(0);
+        currentText = "";
+        currentComment = "";
+
+        // Set text from board texts
+        if (textMap.find(pos) != textMap.end())
+            currentText = textMap[pos];
+
+        // Make the move
+        board.move(rule, pos);
+
+        // Read the display label of this record
+        if (!record.isNull()) {
+            std::string label = record.displayLabel();
+            currentText.append(upperInplace(label));
+            currentComment = record.comment();
+        }
+
+        // Recursively export this subtree (which will write the node first)
+        nodeCount += exportSubTree(dbClient, board, rule);
+
+        // Undo the move
+        board.undo(rule);
+    }
 
     return nodeCount;
 }
