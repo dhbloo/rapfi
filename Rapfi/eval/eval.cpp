@@ -131,11 +131,13 @@ Value evaluate(const Board &board, Rule rule)
         case Rule::RENJU: return evaluate<Rule::RENJU>(board);
         }
     }
-    else {
+    else if (board.evaluator()) {  // Use evaluator eval if available
+        return computeEvaluatorValue(board, ACC_LEVEL_BEST).value();
+    }
+    else {  // Fallback to classical eval on empty board
         Color            self = board.sideToMove();
         const StateInfo &st   = board.stateInfo();
 
-        Value basicEval  = evaluateBasic(st, self);
         Value threatEval = VALUE_ZERO;
         switch (rule) {
         default:
@@ -144,8 +146,7 @@ Value evaluate(const Board &board, Rule rule)
         case Rule::RENJU: threatEval = evaluateThreat<Rule::RENJU>(st, self); break;
         }
 
-        Value eval = basicEval + threatEval;
-
+        Value eval = evaluateBasic(st, self) + threatEval;
         return std::clamp(eval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
     }
 }
