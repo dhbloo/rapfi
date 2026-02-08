@@ -80,12 +80,15 @@ inline Value quickWinCheck(const Board &board, int ply, Value beta = VALUE_INFIN
                     continue;
 
                 b.move<Rule, Board::MoveType::NO_EVAL>(pos);
-                Pos      defendMove  = b.stateInfo().lastPattern4(self, A_FIVE);
-                Pattern4 defendP4    = b.cell(defendMove).pattern4[oppo];
-                bool     isFakeCMove = Rule == Rule::RENJU && b.p4Count(self, B_FLEX4) == 0;
+                Pos      defendMove = b.stateInfo().lastPattern4(self, A_FIVE);
+                Pattern4 defendP4   = b.cell(defendMove).pattern4[oppo];
+                bool     hasDefend  = defendP4 >= E_BLOCK4
+                                 || Rule == Rule::RENJU && defendP4 == FORBID
+                                        && !board.checkForbiddenPoint(defendMove);
+                bool isFakeCMove = Rule == Rule::RENJU && b.p4Count(self, B_FLEX4) == 0;
                 b.undo<Rule, Board::MoveType::NO_EVAL>();
 
-                if (!isFakeCMove && defendP4 < E_BLOCK4)
+                if (!hasDefend && !isFakeCMove)
                     return mate_in(ply + 5);
 
                 if (--c_count == 0)
