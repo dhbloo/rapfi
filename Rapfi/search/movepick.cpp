@@ -28,15 +28,18 @@
 namespace {
 
 /// Move picking stages.
-/// Usual procedure: X_TT -> X_MOVES -> ALLMOVES.
+/// Usual procedure: X_TT -> X_PASS (optional) -> X_MOVES -> ALLMOVES.
 enum Stages {
     MAIN_TT,
+    MAIN_PASS,        // pass move stage for VCN defender (before main moves)
     MAIN_MOVES,
     DEFENDFIVE_TT,
     DEFENDFIVE_MOVES,
     DEFENDFOUR_TT,
+    DEFENDFOUR_PASS,  // pass move stage for VCN defender (before defend-four moves)
     DEFENDFOUR_MOVES,
     DEFENDB4F3_TT,
+    DEFENDB4F3_PASS,  // pass move stage for VCN defender (before defend-b4f3 moves)
     DEFENDB4F3_MOVES,
     QVCF_TT,
     QVCF_MOVES,
@@ -96,6 +99,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
     , rule(rule)
     , ttMove(Pos::NONE)
     , allowPlainB4InVCF(false)
+    , generatePassMove(false)
     , hasPolicy(false)
     , useNormalizedPolicy(args.useNormalizedPolicy)
     , normalizedPolicyTemp(args.normalizedPolicyTemp)
@@ -159,6 +163,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     , counterMoveHistory(args.counterMoveHistory)
     , rule(rule)
     , allowPlainB4InVCF(false)
+    , generatePassMove(args.generatePassMove)
     , hasPolicy(false)
     , useNormalizedPolicy(args.useNormalizedPolicy)
     , normalizedPolicyTemp(args.normalizedPolicyTemp)
@@ -203,6 +208,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
     , allowPlainB4InVCF(
           args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
+    , generatePassMove(false)
     , hasPolicy(false)
     , useNormalizedPolicy(false)
     , normalizedPolicyTemp(1.0f)
@@ -353,6 +359,30 @@ top:
     case DEFENDFOUR_TT:
     case DEFENDB4F3_TT:
     case QVCF_TT: ++stage; return ttMove;
+
+    case MAIN_PASS:
+        stage = MAIN_MOVES;
+        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
+            curScore = 0;
+            return Pos::PASS;
+        }
+        goto top;
+
+    case DEFENDFOUR_PASS:
+        stage = DEFENDFOUR_MOVES;
+        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
+            curScore = 0;
+            return Pos::PASS;
+        }
+        goto top;
+
+    case DEFENDB4F3_PASS:
+        stage = DEFENDB4F3_MOVES;
+        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
+            curScore = 0;
+            return Pos::PASS;
+        }
+        goto top;
 
     case MAIN_MOVES:
         assert(!board.p4Count(~board.sideToMove(), A_FIVE));

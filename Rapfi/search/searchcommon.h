@@ -160,6 +160,10 @@ struct SearchOptions
     /// Blocked moves, which are filtered out before searching
     std::vector<Pos> blockMoves;
 
+    /// VCN (Victory by Continuous N-level Attack) mode configuration.
+    /// When enabled, only searches for attacker-wins satisfying the VCN constraint.
+    VCNMode vcnMode;
+
     /// Checks if we are in analysis mode.
     bool isAnalysisMode() const { return !timeLimit && !maxNodes; }
     /// Set time control config according to the rule:

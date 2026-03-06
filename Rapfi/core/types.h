@@ -254,3 +254,19 @@ enum class CandidateRange {
     FULL_BOARD,
     CAND_RANGE_NB,
 };
+
+// -------------------------------------------------
+
+/// VCNMode stores configuration for Victory by Continuous N-level Attack (VCN) search.
+/// In VCN search, the attacker must win while the defender can pass at most (5-N) times.
+/// N=4 corresponds to VCF (Victory by Continuous Four), where the defender can pass once.
+/// N=5 means the attacker must win immediately (defender can never pass).
+/// N<=3 allows progressively more passes for the defender.
+struct VCNMode
+{
+    Color attacker = BLACK;  ///< Side that is the attacker in VCN mode
+    int   n        = 0;      ///< Level N (2-5); 0 means VCN mode is disabled
+
+    /// Check if VCN mode is enabled (N is in the valid range [2, 5]).
+    bool enabled() const { return n >= 2 && n <= 5; }
+};
