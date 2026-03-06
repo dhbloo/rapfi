@@ -31,15 +31,15 @@ namespace {
 /// Usual procedure: X_TT -> X_PASS (optional) -> X_MOVES -> ALLMOVES.
 enum Stages {
     MAIN_TT,
-    MAIN_PASS,        // pass move stage for VCN defender (before main moves)
+    MAIN_PASS,        // Pass move stage for VCN defender (before main moves)
     MAIN_MOVES,
     DEFENDFIVE_TT,
     DEFENDFIVE_MOVES,
     DEFENDFOUR_TT,
-    DEFENDFOUR_PASS,  // pass move stage for VCN defender (before defend-four moves)
+    DEFENDFOUR_PASS,  // Pass move stage for VCN defender (before defend-four moves)
     DEFENDFOUR_MOVES,
     DEFENDB4F3_TT,
-    DEFENDB4F3_PASS,  // pass move stage for VCN defender (before defend-b4f3 moves)
+    DEFENDB4F3_PASS,  // Pass move stage for VCN defender (before defend-b4f3 moves)
     DEFENDB4F3_MOVES,
     QVCF_TT,
     QVCF_MOVES,

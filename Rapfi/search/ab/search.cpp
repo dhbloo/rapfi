@@ -1025,7 +1025,7 @@ moves_loop:
             ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
         }
         else {
-            // Pass move does not place a stone, so patterns are unchanged (treat as NONE)
+            // Pass move does not place a stone; use NONE as a sentinel for no pattern change
             ss->moveP4[BLACK] = NONE;
             ss->moveP4[WHITE] = NONE;
         }
@@ -1152,9 +1152,9 @@ moves_loop:
         ss->extraExtension = (ss - 1)->extraExtension + std::max(extension - 1.0f, 0.0f);
 
         // In VCN mode, propagate the VCN level to the child node.
-        // If the defender passes, increase the level by 1 (attacker's next turn is more restricted).
-        // We always set it here (not just for pass) so that after a pass move the level is
-        // correctly reset for the next non-pass move in the loop.
+        // Always set vcnLevel for every move (not just for pass) so that after a pass move
+        // the level is correctly reset to the current vcnLevel for the next non-pass move.
+        // The level is incremented by 1 only when the defender makes a pass move.
         if (vcnEnabled)
             (ss + 1)->vcnLevel =
                 static_cast<int8_t>(vcnLevel + (!vcnIsAttacker && move == Pos::PASS ? 1 : 0));
