@@ -721,6 +721,12 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         if (thisThread->isMainThread())
             static_cast<MainSearchThread *>(thisThread)->checkExit();
 
+        // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+        // This is checked before the draw check so that a lost attacker doesn't incorrectly
+        // get a draw score when the board is full.
+        if (vcnEnabled && vcnIsAttacker && vcnLevel == VC5 && Vcn::vc5AttackerLoses(board, self))
+            return mated_in(ss->ply);
+
         // Check if the board has been filled or we have reached the max game ply.
         if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
             return getDrawValue(board, options, ss->ply);
@@ -728,11 +734,6 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         // Check if we have reached the max ply
         if (ss->ply >= MAX_PLY)
             return Evaluation::evaluate<Rule>(board, alpha, beta);
-
-        // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
-        // The attacker must win in the very next move under VC5 rules.
-        if (vcnEnabled && vcnIsAttacker && vcnLevel == VC5 && Vcn::vc5AttackerLoses(board, self))
-            return mated_in(ss->ply);
 
         // Check for immediate winning
         if ((value = quickWinCheck<Rule>(board, ss->ply, beta)) != VALUE_ZERO) {
@@ -1569,18 +1570,9 @@ moves_loop:
         ss->ttPv = ss->ttPv && (ss + 1)->ttPv;
 
     // Don't save partial result in singular extension, multi pv at root or balance mode.
-    // Do not store a PASS move as TT best move: board.cell(PASS) is invalid and history tables
-    // cannot index PASS, so callers would crash if they tried to use it.
     if (!skipMove
         && !(RootNode && (searchData->pvIdx || options.balanceMode || options.blockMoves.size())))
-        TT.store(posKey,
-                 bestValue,
-                 ss->staticEval,
-                 ss->ttPv,
-                 bound,
-                 bestMove == Pos::PASS ? Pos::NONE : bestMove,
-                 (int)depth,
-                 ss->ply);
+        TT.store(posKey, bestValue, ss->staticEval, ss->ttPv, bound, bestMove, (int)depth, ss->ply);
 
     assert(bestValue > -VALUE_INFINITE && bestValue < VALUE_INFINITE);
     return bestValue;
@@ -1620,18 +1612,16 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     if (thisThread->isMainThread())
         static_cast<MainSearchThread *>(thisThread)->checkExit();
 
-    // Check if the board has been filled or we have reached the max game ply.
-    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
-        return getDrawValue(board, options, ss->ply);
-
-    // Check if we reached the max ply
-    if (ss->ply >= MAX_PLY)
-        return Evaluation::evaluate<Rule>(board, alpha, beta);
-
     // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+    // This is checked before the draw check so that a lost attacker doesn't incorrectly
+    // get a draw score when the board is full.
     if (options.vcnMode.enabled() && self == options.vcnMode.attacker
         && ss->vcnLevel == VC5 && Vcn::vc5AttackerLoses(board, self))
         return mated_in(ss->ply);
+
+    // Check if the board has been filled or we have reached the max game ply.
+    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
+        return getDrawValue(board, options, ss->ply);
 
     // Check for immediate winning
     if ((value = quickWinCheck<Rule>(board, ss->ply, beta)) != VALUE_ZERO) {
@@ -1674,7 +1664,15 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     }
 
     // Step 5. Static position evaluation
-    if (ttHit) {
+    // In VC4 mode (attacker must play a VCF move), stand-pat does not apply.
+    // We initialise bestValue to the worst case (mated in 2 steps) so that:
+    //   - Stand-pat / delta-pruning are bypassed (they check !vcnAllowB4 below).
+    //   - If no VCF moves are found, this worst-case score is returned.
+    //   - If VCF moves are found, bestValue is updated to a better score by the loop.
+    if (vcnAllowB4) {
+        bestValue = ss->staticEval = mated_in(ss->ply + 2);
+    }
+    else if (ttHit) {
         // Never assume anything about values stored in TT
         bestValue = ss->staticEval = ttEval;
         if (bestValue == VALUE_NONE)
@@ -1692,8 +1690,9 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
                                          : Evaluation::evaluate<Rule>(board, alpha, beta);
     }
 
-    // Stand pat. Return immediately if static value is at least beta
-    if (bestValue >= beta) {
+    // Stand pat. Return immediately if static value is at least beta.
+    // Not applicable in VC4 mode (attacker must play).
+    if (!vcnAllowB4 && bestValue >= beta) {
         // Save static evaluation into transposition table
         if (!ttHit)
             TT.store(posKey,
@@ -1708,11 +1707,11 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         return bestValue;
     }
     // Keep improving alpha since we can stop anywhere in the move limited search.
-    else if (PvNode && bestValue > alpha)
+    if (PvNode && bestValue > alpha)
         alpha = bestValue;
 
-    // Step 6. Delta pruning at non-PV node
-    if (!PvNode && bestValue + qvcfDeltaMargin<Rule>(depth) < alpha) {
+    // Step 6. Delta pruning at non-PV node (not applicable in VC4 mode).
+    if (!vcnAllowB4 && !PvNode && bestValue + qvcfDeltaMargin<Rule>(depth) < alpha) {
         // Save static evaluation into transposition table
         if (!ttHit)
             TT.store(posKey,

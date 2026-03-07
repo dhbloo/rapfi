@@ -173,14 +173,15 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
+        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
     }
     else if (board.p4Count(oppo, B_FLEX4)) {
         stage = DEFENDFOUR_TT;
 
-        const Cell &ttCell = board.cell(args.ttMove);
-        ttmValid           = ttCell.pattern4[BLACK] >= E_BLOCK4 || ttCell.pattern4[BLACK] == FORBID
-                   || ttCell.pattern4[WHITE] >= E_BLOCK4;
+        ttmValid = args.ttMove != Pos::PASS
+                   && (board.cell(args.ttMove).pattern4[BLACK] >= E_BLOCK4
+                       || board.cell(args.ttMove).pattern4[BLACK] == FORBID
+                       || board.cell(args.ttMove).pattern4[WHITE] >= E_BLOCK4);
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -219,11 +220,11 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
+        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
     }
     else {
         stage    = QVCF_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[self] >= E_BLOCK4;
+        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[self] >= E_BLOCK4;
     }
 
     // check legality for defence ttmove

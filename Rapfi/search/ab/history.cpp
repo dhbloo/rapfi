@@ -85,6 +85,9 @@ void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, V
     // Validate ttMove first
     if (!board.isLegal(ttMove))
         return;
+    // PASS is legal but has no board cell; it doesn't map to history tables.
+    if (ttMove == Pos::PASS)
+        return;
 
     Color    self = board.sideToMove(), oppo = ~self;
     bool     oppo5  = board.p4Count(oppo, A_FIVE);
