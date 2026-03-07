@@ -59,9 +59,22 @@ Value search(Rule         rule,
 template <Rule Rule, NodeType NT>
 Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool cutNode);
 template <Rule Rule, NodeType NT>
-Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
+Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f, bool vcnAllowB4 = false);
 template <Rule Rule, NodeType NT>
-Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
+Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f, bool vcnAllowB4 = false);
+
+/// Increment a VCNLevel by 1, capped at VC5.
+inline VCNLevel vcnLevelIncrement(VCNLevel level)
+{
+    return level < VC5 ? static_cast<VCNLevel>(static_cast<int>(level) + 1) : VC5;
+}
+
+/// Quick check: under VC5 rules the attacker must have A_FIVE on the board.
+/// Returns true (attacker loses immediately) if they don't have one.
+inline bool vcnVC5AttackerLoses(const Board &board, Color attacker)
+{
+    return board.p4Count(attacker, A_FIVE) == 0;
+}
 
 }  // namespace
 
@@ -247,7 +260,7 @@ void ABSearcher::search(SearchThread &th)
     if (options.vcnMode.enabled()) {
         SearchStack *root = stackArray.rootStack();
         for (int i = -StackArray::plyBeforeRoot; i < MAX_PLY + StackArray::plyAfterMax; i++)
-            (root + i)->vcnLevel = static_cast<int8_t>(options.vcnMode.n);
+            (root + i)->vcnLevel = options.vcnMode.n;
     }
 
     // Init search depth range
@@ -642,9 +655,25 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     uint16_t oppo4 = oppo5 + board.p4Count(oppo, B_FLEX4);  // opponent straight four and five
 
     // VCN mode state for this node
-    const bool vcnEnabled    = options.vcnMode.enabled();
-    const bool vcnIsAttacker = vcnEnabled && (self == options.vcnMode.attacker);
-    const int  vcnLevel      = ss->vcnLevel;
+    const bool     vcnEnabled    = options.vcnMode.enabled();
+    const bool     vcnIsAttacker = vcnEnabled && (self == options.vcnMode.attacker);
+    const VCNLevel vcnLevel      = ss->vcnLevel;
+
+    // VCN mode early exits for the attacker at VC4: must come before the depth<=0 check
+    // so the VC4 path (dropping to vcfsearch with forceAllowB4=true) is always taken.
+    if (vcnEnabled && vcnIsAttacker && vcnLevel == VC4) {
+        // At VC4, the attacker may only play moves with pattern4 >= E_BLOCK4.
+        // If no such move exists, the attacker loses in 2 steps.
+        bool hasB4 = board.p4Count(self, A_FIVE) || board.p4Count(self, B_FLEX4)
+                     || board.p4Count(self, C_BLOCK4_FLEX3)
+                     || board.p4Count(self, D_BLOCK4_PLUS)
+                     || board.p4Count(self, E_BLOCK4);
+        if (!hasB4)
+            return mated_in(ss->ply + 2);
+        // Drop to vcfsearch with forceAllowB4InVCF=true so all E_BLOCK4 moves are considered.
+        return oppo5 ? vcfdefend<Rule, NT>(board, ss, alpha, beta, 0.0f, true)
+                     : vcfsearch<Rule, NT>(board, ss, alpha, beta, 0.0f, true);
+    }
 
     // Dive into vcf search when the depth reaches zero (~17 elo)
     if (depth <= 0.0f) {
@@ -675,6 +704,11 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         if (ss->ply >= MAX_PLY)
             return Evaluation::evaluate<Rule>(board, alpha, beta);
 
+        // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+        // The attacker must win in the very next move under VC5 rules.
+        if (vcnEnabled && vcnIsAttacker && vcnLevel == VC5 && vcnVC5AttackerLoses(board, self))
+            return mated_in(ss->ply);
+
         // Check for immediate winning
         if ((value = quickWinCheck<Rule>(board, ss->ply, beta)) != VALUE_ZERO) {
             // Do not return mate that longer than maxMoves option
@@ -683,13 +717,6 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
             return value;
         }
-
-        // VCN mode: when attacker has level >= 5, they must win immediately (A_FIVE).
-        // quickWinCheck above already handles the A_FIVE win case. If we reach here
-        // without a win and vcnLevel >= 5, the attacker has no immediate win, so it
-        // is a loss (the defender has exhausted all allowed passes).
-        if (vcnEnabled && vcnIsAttacker && vcnLevel >= 5)
-            return mated_in(ss->ply);
 
         // Step 3. Mate distance pruning.
         alpha = std::max(mated_in(ss->ply), alpha);
@@ -717,7 +744,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     Pos     skipMove = ss->skipMove;
     HashKey vcnHashXor =
         vcnEnabled
-            ? Hash::LCHash(static_cast<uint64_t>(vcnLevel)
+            ? Hash::LCHash(static_cast<uint64_t>(static_cast<int>(vcnLevel))
                            ^ (static_cast<uint64_t>(options.vcnMode.attacker + 1) << 32))
             : 0;
     HashKey posKey   = board.zobristKey() ^ vcnHashXor ^ (skipMove ? Hash::LCHash(skipMove) : 0);
@@ -1063,14 +1090,6 @@ moves_loop:
                 continue;
         }
 
-        // VCN mode: when the attacker is at level 4, only VCF moves are allowed (E_BLOCK4+).
-        // If the opponent already has A_FIVE or B_FLEX4 (oppo4 > 0), the movepicker enters
-        // a defend stage and all generated moves are valid defense responses (no filtering needed).
-        if (vcnEnabled && vcnIsAttacker && vcnLevel == 4 && !oppo4) {
-            if (ss->moveP4[self] < E_BLOCK4)
-                continue;
-        }
-
         // Step 13. Extensions
         Depth extension = 0;
 
@@ -1152,12 +1171,12 @@ moves_loop:
         ss->extraExtension = (ss - 1)->extraExtension + std::max(extension - 1.0f, 0.0f);
 
         // In VCN mode, propagate the VCN level to the child node.
-        // Always set vcnLevel for every move (not just for pass) so that after a pass move
-        // the level is correctly reset to the current vcnLevel for the next non-pass move.
-        // The level is incremented by 1 only when the defender makes a pass move.
+        // Always set vcnLevel for every move so that after a pass move the level is
+        // correctly reset for the next non-pass move. The level is incremented by 1
+        // only when the defender makes a pass move (capped at VC5).
         if (vcnEnabled)
             (ss + 1)->vcnLevel =
-                static_cast<int8_t>(vcnLevel + (!vcnIsAttacker && move == Pos::PASS ? 1 : 0));
+                (!vcnIsAttacker && move == Pos::PASS) ? vcnLevelIncrement(vcnLevel) : vcnLevel;
 
         // Step 14. Make the move
         board.move<Rule>(move);
@@ -1547,7 +1566,7 @@ moves_loop:
 /// The VCF search function only searches continuous VCF moves to avoid
 /// search explosion. It returns the best evaluation in a VCF tree.
 template <Rule Rule, NodeType NT>
-Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth)
+Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool vcnAllowB4)
 {
     constexpr bool PvNode = NT == PV || NT == Root;
 
@@ -1558,8 +1577,8 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
     // Step 1. Initialize node
-    SearchThread *thisThread = board.thisThread();
-    ABSearchData *searchData = thisThread->searchDataAs<ABSearchData>();
+    SearchThread  *thisThread = board.thisThread();
+    ABSearchData  *searchData = thisThread->searchDataAs<ABSearchData>();
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
     Color self = board.sideToMove(), oppo = ~self;
@@ -1584,6 +1603,14 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     // Check if we reached the max ply
     if (ss->ply >= MAX_PLY)
         return Evaluation::evaluate<Rule>(board, alpha, beta);
+
+    // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+    {
+        const SearchOptions &vcnOptions = thisThread->options();
+        if (vcnOptions.vcnMode.enabled() && self == vcnOptions.vcnMode.attacker
+            && ss->vcnLevel == VC5 && vcnVC5AttackerLoses(board, self))
+            return mated_in(ss->ply);
+    }
 
     // Check for immediate winning
     if ((value = quickWinCheck<Rule>(board, ss->ply, beta)) != VALUE_ZERO) {
@@ -1681,7 +1708,8 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         board,
         MovePicker::ExtraArgs<MovePicker::QVCF> {ttMove,
                                                  depth,
-                                                 {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]}});
+                                                 {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]},
+                                                 vcnAllowB4});
 
     while (Pos move = mp()) {
         assert(board.isLegal(move));
@@ -1696,8 +1724,8 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         // Step 8. Make and search the move
         board.move<Rule>(move);
 
-        // Call defence-side vcf search
-        value = -vcfdefend<Rule, NT>(board, ss + 1, -beta, -alpha, depth - 1);
+        // Call defence-side vcf search, propagating vcnAllowB4
+        value = -vcfdefend<Rule, NT>(board, ss + 1, -beta, -alpha, depth - 1, vcnAllowB4);
 
         board.undo<Rule>();
 
@@ -1741,7 +1769,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
 
 /// The search function for defend node in VCF search.
 template <Rule Rule, NodeType NT>
-Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth)
+Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool vcnAllowB4)
 {
     constexpr bool PvNode = NT == PV || NT == Root;
 
@@ -1795,9 +1823,9 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         board.move<Rule>(move);
         TT.prefetch(board.zobristKey());
 
-        // Call attack-side vcf search
+        // Call attack-side vcf search, propagating vcnAllowB4
         // Note that we do not reduce depth for vcf defence move.
-        value = -vcfsearch<Rule, NT>(board, ss + 1, -beta, -alpha, depth);
+        value = -vcfsearch<Rule, NT>(board, ss + 1, -beta, -alpha, depth, vcnAllowB4);
 
         board.undo<Rule>();
 

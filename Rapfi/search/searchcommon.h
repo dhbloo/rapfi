@@ -30,6 +30,30 @@ class Board;
 
 namespace Search {
 
+/// VCNLevel is the level N in VCN (Victory by Continuous N-level Attack) search.
+/// In VCN search, the attacker must win while the defender can pass at most (5-N) times.
+/// VC4 corresponds to VCF (Victory by Continuous Four), where the defender can pass once.
+/// VC5 means the attacker must win immediately (defender can never pass).
+/// VC2/VC3 allow progressively more passes for the defender.
+enum VCNLevel {
+    VC_NONE,  ///< VCN mode disabled
+    VC2,      ///< Defender can pass at most 3 times
+    VC3,      ///< Defender can pass at most 2 times
+    VC4,      ///< Defender can pass at most 1 time (equivalent to VCF)
+    VC5,      ///< Defender can never pass (attacker must win immediately)
+};
+
+/// VCNMode stores configuration for Victory by Continuous N-level Attack (VCN) search.
+/// The attacker must win while the defender can pass at most (5-N) times.
+struct VCNMode
+{
+    Color    attacker = BLACK;   ///< Side that is the attacker in VCN mode
+    VCNLevel n        = VC_NONE; ///< VCN level; VC_NONE means VCN mode is disabled
+
+    /// Check if VCN mode is enabled.
+    bool enabled() const { return n != VC_NONE; }
+};
+
 /// Make a balanced value from original value and balance bias.
 /// @param value The original value.
 /// @param bias Value bias for balanced value.

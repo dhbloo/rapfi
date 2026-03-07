@@ -20,6 +20,7 @@
 
 #include "../../core/pos.h"
 #include "../../core/types.h"
+#include "../searchcommon.h"
 
 #include <cassert>
 #include <vector>
@@ -43,7 +44,7 @@ struct SearchStack
     Pos        killers[2];
     Pattern4   moveP4[SIDE_NB];
     int16_t    numNullMoves;
-    int8_t     vcnLevel;  /// Current VCN level at this ply (N value; 0 if VCN mode is disabled)
+    VCNLevel   vcnLevel;  /// Current VCN level at this ply (VC_NONE if VCN mode is disabled)
     bool       ttPv;
     bool       dbChildWritten;
 

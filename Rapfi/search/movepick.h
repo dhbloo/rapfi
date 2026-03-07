@@ -126,6 +126,9 @@ struct MovePicker::ExtraArgs<MovePicker::QVCF>
     Pos      ttMove;
     Depth    depth;  // negative depth in qvcf search
     Pattern4 previousSelfP4[2];
+    /// Force allowPlainB4InVCF=true regardless of depth/previous patterns.
+    /// Used when entering from VCN VC4 mode so all E_BLOCK4 moves are enumerated.
+    bool forceAllowB4InVCF = false;
 };
 
 }  // namespace Search

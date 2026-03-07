@@ -206,7 +206,8 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
     , mainHistory(nullptr)
     , rule(rule)
     , allowPlainB4InVCF(
-          args.depth >= DEPTH_QVCF_FULL
+          args.forceAllowB4InVCF
+          || args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
     , generatePassMove(false)
     , hasPolicy(false)
