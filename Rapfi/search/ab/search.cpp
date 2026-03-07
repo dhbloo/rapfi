@@ -59,9 +59,9 @@ Value search(Rule         rule,
 template <Rule Rule, NodeType NT>
 Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool cutNode);
 template <Rule Rule, NodeType NT>
-Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f, bool vcnAllowB4 = false);
+Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
 template <Rule Rule, NodeType NT>
-Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f, bool vcnAllowB4 = false);
+Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth = 0.0f);
 
 /// Increment a VCNLevel by 1, capped at VC5.
 inline VCNLevel vcnLevelIncrement(VCNLevel level)
@@ -74,6 +74,16 @@ inline VCNLevel vcnLevelIncrement(VCNLevel level)
 inline bool vcnVC5AttackerLoses(const Board &board, Color attacker)
 {
     return board.p4Count(attacker, A_FIVE) == 0;
+}
+
+/// Compute the VCN-specific hash XOR for transposition table key segregation.
+/// This ensures TT entries from different VCN levels and non-VCN search don't collide.
+inline HashKey computeVcnHashXor(const SearchOptions &opts, VCNLevel vcnLevel)
+{
+    if (!opts.vcnMode.enabled())
+        return 0;
+    return Hash::LCHash(static_cast<uint64_t>(static_cast<int>(vcnLevel))
+                        ^ (static_cast<uint64_t>(opts.vcnMode.attacker + 1) << 32));
 }
 
 }  // namespace
@@ -670,9 +680,9 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
                      || board.p4Count(self, E_BLOCK4);
         if (!hasB4)
             return mated_in(ss->ply + 2);
-        // Drop to vcfsearch with forceAllowB4InVCF=true so all E_BLOCK4 moves are considered.
-        return oppo5 ? vcfdefend<Rule, NT>(board, ss, alpha, beta, 0.0f, true)
-                     : vcfsearch<Rule, NT>(board, ss, alpha, beta, 0.0f, true);
+        // Drop to vcfsearch; it will recompute vcnAllowB4=true from the VC4 vcnLevel.
+        return oppo5 ? vcfdefend<Rule, NT>(board, ss, alpha, beta)
+                     : vcfsearch<Rule, NT>(board, ss, alpha, beta);
     }
 
     // Dive into vcf search when the depth reaches zero (~17 elo)
@@ -741,12 +751,8 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     // Use a different hash key in case of an skip move to avoid overriding full search result.
     // In VCN mode, also XOR a vcnLevel-specific value to separate VCN TT entries from regular
     // ones and from other VCN levels (since the same board position can have different vcnLevels).
-    Pos     skipMove = ss->skipMove;
-    HashKey vcnHashXor =
-        vcnEnabled
-            ? Hash::LCHash(static_cast<uint64_t>(static_cast<int>(vcnLevel))
-                           ^ (static_cast<uint64_t>(options.vcnMode.attacker + 1) << 32))
-            : 0;
+    Pos     skipMove   = ss->skipMove;
+    HashKey vcnHashXor = computeVcnHashXor(options, vcnLevel);
     HashKey posKey   = board.zobristKey() ^ vcnHashXor ^ (skipMove ? Hash::LCHash(skipMove) : 0);
     Value   ttValue  = VALUE_NONE;
     Value   ttEval   = VALUE_NONE;
@@ -1566,7 +1572,7 @@ moves_loop:
 /// The VCF search function only searches continuous VCF moves to avoid
 /// search explosion. It returns the best evaluation in a VCF tree.
 template <Rule Rule, NodeType NT>
-Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool vcnAllowB4)
+Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth)
 {
     constexpr bool PvNode = NT == PV || NT == Root;
 
@@ -1628,7 +1634,13 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         return alpha;
 
     // Step 4. Transposition table lookup
-    HashKey posKey  = board.zobristKey();
+    // Compute the same VCN hash XOR as in search() so VCN TT entries are properly segregated.
+    const SearchOptions &opts     = thisThread->options();
+    const bool vcnEnabled         = opts.vcnMode.enabled();
+    const bool vcnAllowB4         =
+        vcnEnabled && self == opts.vcnMode.attacker && ss->vcnLevel == VC4;
+    const HashKey vcnHashXor      = computeVcnHashXor(opts, ss->vcnLevel);
+    HashKey posKey  = board.zobristKey() ^ vcnHashXor;
     Value   ttValue = VALUE_NONE;
     Value   ttEval  = VALUE_NONE;
     bool    ttIsPv  = false;
@@ -1724,8 +1736,8 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         // Step 8. Make and search the move
         board.move<Rule>(move);
 
-        // Call defence-side vcf search, propagating vcnAllowB4
-        value = -vcfdefend<Rule, NT>(board, ss + 1, -beta, -alpha, depth - 1, vcnAllowB4);
+        // Call defence-side vcf search (vcfdefend recomputes vcnAllowB4 from vcn mode)
+        value = -vcfdefend<Rule, NT>(board, ss + 1, -beta, -alpha, depth - 1);
 
         board.undo<Rule>();
 
@@ -1769,7 +1781,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
 
 /// The search function for defend node in VCF search.
 template <Rule Rule, NodeType NT>
-Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth, bool vcnAllowB4)
+Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth)
 {
     constexpr bool PvNode = NT == PV || NT == Root;
 
@@ -1821,11 +1833,12 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
             (ss + 1)->pv[0] = Pos::NONE;
 
         board.move<Rule>(move);
-        TT.prefetch(board.zobristKey());
+        // Prefetch TT using the same VCN-XORed key that vcfsearch will use.
+        TT.prefetch(board.zobristKey() ^ computeVcnHashXor(thisThread->options(), ss->vcnLevel));
 
-        // Call attack-side vcf search, propagating vcnAllowB4
+        // Call attack-side vcf search (vcfsearch recomputes vcnAllowB4 from vcn mode)
         // Note that we do not reduce depth for vcf defence move.
-        value = -vcfsearch<Rule, NT>(board, ss + 1, -beta, -alpha, depth, vcnAllowB4);
+        value = -vcfsearch<Rule, NT>(board, ss + 1, -beta, -alpha, depth);
 
         board.undo<Rule>();
 

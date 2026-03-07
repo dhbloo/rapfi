@@ -362,23 +362,9 @@ top:
     case QVCF_TT: ++stage; return ttMove;
 
     case MAIN_PASS:
-        stage = MAIN_MOVES;
-        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
-            curScore = 0;
-            return Pos::PASS;
-        }
-        goto top;
-
     case DEFENDFOUR_PASS:
-        stage = DEFENDFOUR_MOVES;
-        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
-            curScore = 0;
-            return Pos::PASS;
-        }
-        goto top;
-
     case DEFENDB4F3_PASS:
-        stage = DEFENDB4F3_MOVES;
+        stage = stage + 1;  // advance to the corresponding MOVES stage
         if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
             curScore = 0;
             return Pos::PASS;
