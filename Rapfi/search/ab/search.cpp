@@ -65,6 +65,33 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
 
 }  // namespace
 
+/// VCN (Victory by Continuous N-level Attack) helper functions.
+namespace Vcn {
+
+/// Increment a VCNLevel by 1, capped at VC5.
+inline VCNLevel levelIncrement(VCNLevel level)
+{
+    return level < VC5 ? static_cast<VCNLevel>(static_cast<int>(level) + 1) : VC5;
+}
+
+/// Returns true if the VC5 attacker has no winning five on the board (they lose immediately).
+inline bool vc5AttackerLoses(const Board &board, Color attacker)
+{
+    return board.p4Count(attacker, A_FIVE) == 0;
+}
+
+/// Compute the VCN-specific hash XOR for transposition table key segregation.
+/// This ensures TT entries from different VCN levels and non-VCN search don't collide.
+inline HashKey hashXor(const SearchOptions &opts, VCNLevel vcnLevel)
+{
+    if (!opts.vcnMode.enabled())
+        return 0;
+    return Hash::LCHash(static_cast<uint64_t>(static_cast<int>(vcnLevel))
+                        ^ (static_cast<uint64_t>(opts.vcnMode.attacker + 1) << 32));
+}
+
+}  // namespace Vcn
+
 void ABSearchData::clearData(SearchThread &th)
 {
     multiPv         = 1;
@@ -242,6 +269,13 @@ void ABSearcher::search(SearchThread &th)
     float             timeReduction = 1.0f, totalBestMoveChanges = 0.0f;
     int               firstMateDepth = 0, firstSingularDepth = 0;
     MainSearchThread *mainThread = (&th == th.threads.main() ? th.threads.main() : nullptr);
+
+    // Init VCN level for root and all plies
+    if (options.vcnMode.enabled()) {
+        SearchStack *root = stackArray.rootStack();
+        for (int i = -StackArray::plyBeforeRoot; i < MAX_PLY + StackArray::plyAfterMax; i++)
+            (root + i)->vcnLevel = options.vcnMode.n;
+    }
 
     // Init search depth range
     int maxDepth   = std::min(options.maxDepth, std::clamp(Config::MaxSearchDepth, 2, MAX_DEPTH));
@@ -634,8 +668,24 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     uint16_t oppo5 = board.p4Count(oppo, A_FIVE);           // opponent five
     uint16_t oppo4 = oppo5 + board.p4Count(oppo, B_FLEX4);  // opponent straight four and five
 
+    // VCN mode state for this node
+    const bool vcnEnabled    = options.vcnMode.enabled();
+    const bool vcnIsAttacker = vcnEnabled && (self == options.vcnMode.attacker);
+    // Derive vcnLevel from the parent's state and store it back to the search stack.
+    // At root, use the pre-initialized value. For non-root nodes, vcnLevel is inherited
+    // from the parent and incremented by one when the parent (as defender) played a pass move.
+    if (!RootNode) {
+        if (vcnEnabled && vcnIsAttacker && (ss - 1)->currentMove == Pos::PASS)
+            ss->vcnLevel = Vcn::levelIncrement((ss - 1)->vcnLevel);
+        else
+            ss->vcnLevel = (ss - 1)->vcnLevel;
+    }
+
+    // Drop to vcfsearch for the attacker at VC4 mode
+    if (vcnEnabled && vcnIsAttacker && vcnLevel == VC4)
+        return vcfsearch<Rule, NT>(board, ss, alpha, beta);
     // Dive into vcf search when the depth reaches zero (~17 elo)
-    if (depth <= 0.0f) {
+    else if (depth <= 0.0f) {
         return oppo5 ? vcfdefend<Rule, NT>(board, ss, alpha, beta)
                      : vcfsearch<Rule, NT>(board, ss, alpha, beta);
     }
@@ -654,6 +704,12 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         // Check if we reach the time limit
         if (thisThread->isMainThread())
             static_cast<MainSearchThread *>(thisThread)->checkExit();
+
+        // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+        // This is checked before the draw check so that a lost attacker doesn't incorrectly
+        // get a draw score when the board is full.
+        if (vcnEnabled && vcnIsAttacker && vcnLevel == VC5 && Vcn::vc5AttackerLoses(board, self))
+            return mated_in(ss->ply);
 
         // Check if the board has been filled or we have reached the max game ply.
         if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
@@ -685,6 +741,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         (ss + 2)->statScore = 0;
 
         // Pass current number of null moves to next ply
+        // (vcnLevel is now derived by each child from its parent at the start of search)
         (ss + 1)->numNullMoves = ss->numNullMoves;
     }
     else
@@ -692,15 +749,18 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Step 4. Transposition table lookup.
     // Use a different hash key in case of an skip move to avoid overriding full search result.
-    Pos     skipMove = ss->skipMove;
-    HashKey posKey   = board.zobristKey() ^ (skipMove ? Hash::LCHash(skipMove) : 0);
-    Value   ttValue  = VALUE_NONE;
-    Value   ttEval   = VALUE_NONE;
-    bool    ttIsPv   = false;
-    Bound   ttBound  = BOUND_NONE;
-    Pos     ttMove   = Pos::NONE;
-    int     ttDepth  = 0;
-    bool    ttHit    = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
+    // In VCN mode, also XOR a vcnLevel-specific value to separate VCN TT entries from regular
+    // ones and from other VCN levels (since the same board position can have different vcnLevels).
+    Pos     skipMove   = ss->skipMove;
+    HashKey vcnHashXor = Vcn::hashXor(options, vcnLevel);
+    HashKey posKey     = board.zobristKey() ^ vcnHashXor ^ (skipMove ? Hash::LCHash(skipMove) : 0);
+    Value   ttValue    = VALUE_NONE;
+    Value   ttEval     = VALUE_NONE;
+    bool    ttIsPv     = false;
+    Bound   ttBound    = BOUND_NONE;
+    Pos     ttMove     = Pos::NONE;
+    int     ttDepth    = 0;
+    bool    ttHit = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
     if (RootNode && searchData->completedDepth.load(std::memory_order_relaxed))
         ttMove = thisThread->rootMoves[0].pv[options.balanceMode == SearchOptions::BALANCE_TWO];
     if (!skipMove)
@@ -852,8 +912,11 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
         return eval;
 
     // Step 9. Null move pruning (~3 elo)
+    // Disabled in VCN mode: VCN has its own pass-move mechanism for the defender,
+    // and the attacker should not pass (would give the defender a free move).
     if (!PvNode && !oppo4 && !skipMove && eval >= beta
         && board.getLastMove() != Pos::PASS  // No consecutive pass moves
+        && !vcnEnabled                       // Disabled in VCN mode
         && ss->staticEval >= beta + nullMoveMargin<Rule>(depth)) {
         Depth r         = nullMoveReduction<Rule>(depth);
         ss->currentMove = Pos::PASS;
@@ -927,12 +990,19 @@ moves_loop:
     // Indicate cutNode that will probably fail high if current eval is far above beta
     bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
 
+    // In VCN mode, generate pass move for the defender (but not in DEFENDFIVE mode,
+    // since the attacker poses an immediate threat the defender must respond to).
+    const bool vcnDefenderPass = vcnEnabled && !vcnIsAttacker && !oppo5;
+
     MovePicker mp(Rule,
                   board,
                   MovePicker::ExtraArgs<MovePicker::MAIN> {
                       ttMove,
                       &searchData->mainHistory,
                       &searchData->counterMoveHistory,
+                      false,
+                      1.0f,
+                      vcnDefenderPass,
                   });
 
     // Step 11. Loop through all legal moves until no moves remain
@@ -982,9 +1052,16 @@ moves_loop:
                                                 move);
 
         // Initialize heruistic information
-        ss->moveCount     = ++moveCount;
-        ss->moveP4[BLACK] = board.cell(move).pattern4[BLACK];
-        ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
+        ss->moveCount = ++moveCount;
+        if (move != Pos::PASS) {
+            ss->moveP4[BLACK] = board.cell(move).pattern4[BLACK];
+            ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
+        }
+        else {
+            // Pass move does not place a stone; use NONE as a sentinel for no pattern change
+            ss->moveP4[BLACK] = NONE;
+            ss->moveP4[WHITE] = NONE;
+        }
 
         // False forbidden move in Renju is considered as important move
         bool importantMove = ss->moveP4[self] >= J_FLEX2_2X || ss->moveP4[oppo] >= H_FLEX3
@@ -1004,11 +1081,14 @@ moves_loop:
                 continue;
 
             // Skip trivial moves at lower depth (~2 elo at LTC)
-            if (trivialMove && depth < TRIVIAL_PRUN_DEPTH)
+            // Do not prune the VCN defender's pass move, which is treated as trivial
+            if (trivialMove && depth < TRIVIAL_PRUN_DEPTH && move != Pos::PASS)
                 continue;
 
             // Policy based pruning (~10 elo)
-            if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth))
+            // Skip policy pruning for pass moves (they have no policy score)
+            if (move != Pos::PASS && mp.hasPolicyScore()
+                && mp.curMoveScore() < policyPruningScore<Rule>(depth))
                 continue;
 
             // Prun distract defence move which is likely to delay a winning (~2 elo)
@@ -1026,6 +1106,7 @@ moves_loop:
         // Singular extension: only one move fails high while other moves fails low on a search of
         // (alpha-s, beta-s), then this move is singular and should be extended. (~52 elo)
         else if (!RootNode && depth >= SE_DEPTH && move == ttMove
+                 && move != Pos::PASS                          // No singular extension for pass
                  && !skipMove                                  // No recursive singular search
                  && std::abs(ttValue) < VALUE_MATE_IN_MAX_PLY  // ttmove value is not a mate
                  && (ttBound & BOUND_LOWER)                    // ttMove failed high last time
@@ -1358,18 +1439,28 @@ moves_loop:
                           [=](RootMove &rm) { rm.value = bestValue; });
         }
     }
-    // If we have found a best move, update move heruistics
-    else if (bestMove)
+    // If we have found a best move, update move heuristics.
+    // PASS moves are not tracked in history tables (board.cell(PASS) is invalid).
+    else if (bestMove && bestMove != Pos::PASS)
         histTracker.updateBestmoveStats(depth, bestMove, bestValue);
 
     // Step 20. Update database record
     Bound bound = bestValue >= beta ? BOUND_LOWER : PvNode && bestMove ? BOUND_EXACT : BOUND_UPPER;
+    // In VCN mode, only write to the database if it is a proven win for the attacker.
+    // "isWin" means current player (self) wins; "isLoss" means current player loses.
+    // Attacker wins when: self == attacker and isWin, OR self == defender and isLoss.
+    bool vcnAttackerWins =
+        vcnEnabled
+        && ((vcnIsAttacker && bestValue > VALUE_MATE_IN_MAX_PLY && (bound & BOUND_LOWER))
+            || (!vcnIsAttacker && bestValue < VALUE_MATED_IN_MAX_PLY && (bound & BOUND_UPPER)));
     if (thisThread->dbClient
         && !Config::DatabaseReadonlyMode      // Never write in database readonly mode
         && !options.balanceMode               // Never write when we are doing balanced search
         && (!skipMove || ss->dbChildWritten)  // Never write when in singular extension
         && ss->numNullMoves == 0              // Never write when in null move search
-        && !(RootNode && (searchData->pvIdx || options.blockMoves.size()))) {
+        && !(RootNode && (searchData->pvIdx || options.blockMoves.size()))
+        && (!vcnEnabled || vcnAttackerWins)  // In VCN mode, only write proven attacker wins
+    ) {
         bool exact  = PvNode && bound == BOUND_EXACT;
         bool isWin  = bestValue > VALUE_MATE_IN_MAX_PLY && (bound & BOUND_LOWER);
         bool isLoss = bestValue < VALUE_MATED_IN_MAX_PLY && (bound & BOUND_UPPER);
@@ -1484,8 +1575,9 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
     // Step 1. Initialize node
-    SearchThread *thisThread = board.thisThread();
-    ABSearchData *searchData = thisThread->searchDataAs<ABSearchData>();
+    SearchThread        *thisThread = board.thisThread();
+    ABSearchData        *searchData = thisThread->searchDataAs<ABSearchData>();
+    const SearchOptions &options    = thisThread->options();
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
     Color self = board.sideToMove(), oppo = ~self;
@@ -1503,19 +1595,24 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     if (thisThread->isMainThread())
         static_cast<MainSearchThread *>(thisThread)->checkExit();
 
-    // Check if the board has been filled or we have reached the max game ply.
-    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= thisThread->options().maxMoves)
-        return getDrawValue(board, thisThread->options(), ss->ply);
+    // VCN VC5 quick check: if the attacker has no A_FIVE, they lose immediately.
+    // This is checked before the draw check so that a lost attacker doesn't incorrectly
+    // get a draw score when the board is full.
+    const bool vcnEnabled    = options.vcnMode.enabled();
+    const bool vcnIsAttacker = vcnEnabled && self == options.vcnMode.attacker;
+    const bool vcfOnly       = vcnIsAttacker && ss->vcnLevel == VC4;
+    if (vcnIsAttacker && ss->vcnLevel == VC5 && Vcn::vc5AttackerLoses(board, self))
+        return mated_in(ss->ply);
 
-    // Check if we reached the max ply
-    if (ss->ply >= MAX_PLY)
-        return Evaluation::evaluate<Rule>(board, alpha, beta);
+    // Check if the board has been filled or we have reached the max game ply.
+    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
+        return getDrawValue(board, options, ss->ply);
 
     // Check for immediate winning
     if ((value = quickWinCheck<Rule>(board, ss->ply, beta)) != VALUE_ZERO) {
         // Do not return mate that longer than maxMoves option
-        if (board.nonPassMoveCount() + mate_step(value, ss->ply) > thisThread->options().maxMoves)
-            value = getDrawValue(board, thisThread->options(), ss->ply);
+        if (board.nonPassMoveCount() + mate_step(value, ss->ply) > options.maxMoves)
+            value = getDrawValue(board, options, ss->ply);
 
         return value;
     }
@@ -1527,14 +1624,16 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         return alpha;
 
     // Step 4. Transposition table lookup
-    HashKey posKey  = board.zobristKey();
-    Value   ttValue = VALUE_NONE;
-    Value   ttEval  = VALUE_NONE;
-    bool    ttIsPv  = false;
-    Bound   ttBound = BOUND_NONE;
-    Pos     ttMove  = Pos::NONE;
-    int     ttDepth = (int)DEPTH_LOWER_BOUND;
-    bool    ttHit   = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
+    // Use the same VCN hash XOR as in search() so VCN TT entries are properly segregated.
+    const HashKey vcnHashXor = Vcn::hashXor(options, ss->vcnLevel);
+    HashKey       posKey     = board.zobristKey() ^ vcnHashXor;
+    Value         ttValue    = VALUE_NONE;
+    Value         ttEval     = VALUE_NONE;
+    bool          ttIsPv     = false;
+    Bound         ttBound    = BOUND_NONE;
+    Pos           ttMove     = Pos::NONE;
+    int           ttDepth    = (int)DEPTH_LOWER_BOUND;
+    bool ttHit = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
 
     // Check for an early TT cutoff (for all types of nodes)
     if (ttHit && ttDepth >= depth && (!PvNode || !thisThread->isMainThread())  // Show full PV
@@ -1548,7 +1647,15 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     }
 
     // Step 5. Static position evaluation
-    if (ttHit) {
+    // In VC4 mode (attacker must play a VCF move), stand-pat does not apply.
+    // We initialise bestValue to the worst case (mated in 2 steps) so that:
+    //   - Stand-pat / delta-pruning are bypassed (they check !vcfOnly below).
+    //   - If no VCF moves are found, this worst-case score is returned.
+    //   - If VCF moves are found, bestValue is updated to a better score by the loop.
+    if (vcfOnly) {
+        bestValue = ss->staticEval = mated_in(ss->ply + 2);
+    }
+    else if (ttHit) {
         // Never assume anything about values stored in TT
         bestValue = ss->staticEval = ttEval;
         if (bestValue == VALUE_NONE)
@@ -1566,7 +1673,7 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
                                          : Evaluation::evaluate<Rule>(board, alpha, beta);
     }
 
-    // Stand pat. Return immediately if static value is at least beta
+    // Stand pat. Return immediately if static value is at least beta.
     if (bestValue >= beta) {
         // Save static evaluation into transposition table
         if (!ttHit)
@@ -1582,11 +1689,12 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         return bestValue;
     }
     // Keep improving alpha since we can stop anywhere in the move limited search.
-    else if (PvNode && bestValue > alpha)
+    // Not applicable in VC4 mode (attacker must play).
+    if (!vcfOnly && PvNode && bestValue > alpha)
         alpha = bestValue;
 
-    // Step 6. Delta pruning at non-PV node
-    if (!PvNode && bestValue + qvcfDeltaMargin<Rule>(depth) < alpha) {
+    // Step 6. Delta pruning at non-PV node (not applicable in VC4 mode).
+    if (!vcfOnly && !PvNode && bestValue + qvcfDeltaMargin<Rule>(depth) < alpha) {
         // Save static evaluation into transposition table
         if (!ttHit)
             TT.store(posKey,
@@ -1607,7 +1715,8 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         board,
         MovePicker::ExtraArgs<MovePicker::QVCF> {ttMove,
                                                  depth,
-                                                 {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]}});
+                                                 {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]},
+                                                 vcnAllowB4});
 
     while (Pos move = mp()) {
         assert(board.isLegal(move));
@@ -1618,11 +1727,13 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
         if (PvNode)
             (ss + 1)->pv[0] = Pos::NONE;
+        // Propagate vcnLevel to child (stays constant across the vcfsearch/vcfdefend chain)
+        (ss + 1)->vcnLevel = ss->vcnLevel;
 
         // Step 8. Make and search the move
         board.move<Rule>(move);
 
-        // Call defence-side vcf search
+        // Call defence-side vcf search (vcfdefend recomputes vcnAllowB4 from vcn mode)
         value = -vcfdefend<Rule, NT>(board, ss + 1, -beta, -alpha, depth - 1);
 
         board.undo<Rule>();
@@ -1678,7 +1789,8 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
     // Step 1. Initialize node
-    SearchThread *thisThread = board.thisThread();
+    SearchThread        *thisThread = board.thisThread();
+    const SearchOptions &options    = thisThread->options();
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
     Color    self = board.sideToMove(), oppo = ~self;
@@ -1690,13 +1802,22 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         thisThread->selDepth = ss->ply + 1;
 
     // Step 2. Check for immediate evaluation, draw and winning
-    // Return evaluation immediately if there is no vcf threat
-    if (!oppo5)
+    if (!oppo5) {
+        // If we are the defender side in VCN mode and the attacker currently has no A_FIVE,
+        // then we can immediately win in 1 step by playing a Pass move.
+        const bool vcnEnabled    = options.vcnMode.enabled();
+        const bool vcnIsDefender = vcnEnabled && self != options.vcnMode.attacker;
+        const bool vcfOnly       = vcnIsAttacker && ss->vcnLevel == VC4;
+        if (vcfOnly)
+            return mate_in(ss->ply + 1);
+
+        // Return evaluation immediately if there is no vcf threat
         return Evaluation::evaluate<Rule>(board, alpha, beta);
+    }
 
     // Check if the board has been filled or we have reached the max game ply.
-    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= thisThread->options().maxMoves)
-        return getDrawValue(board, thisThread->options(), ss->ply);
+    if (board.movesLeft() == 0 || board.nonPassMoveCount() >= options.maxMoves)
+        return getDrawValue(board, options, ss->ply);
 
     // Check if we reached the max ply
     if (ss->ply >= MAX_PLY)
@@ -1717,11 +1838,14 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         ss->moveP4[WHITE] = board.cell(move).pattern4[WHITE];
         if (PvNode)
             (ss + 1)->pv[0] = Pos::NONE;
+        // Propagate vcnLevel to child (stays constant across the vcfsearch/vcfdefend chain)
+        (ss + 1)->vcnLevel = ss->vcnLevel;
 
         board.move<Rule>(move);
-        TT.prefetch(board.zobristKey());
+        // Prefetch TT using the same VCN-XORed key that vcfsearch will use.
+        TT.prefetch(board.zobristKey() ^ Vcn::hashXor(options, (ss + 1)->vcnLevel));
 
-        // Call attack-side vcf search
+        // Call attack-side vcf search.
         // Note that we do not reduce depth for vcf defence move.
         value = -vcfsearch<Rule, NT>(board, ss + 1, -beta, -alpha, depth);
 

@@ -28,15 +28,18 @@
 namespace {
 
 /// Move picking stages.
-/// Usual procedure: X_TT -> X_MOVES -> ALLMOVES.
+/// Usual procedure: X_TT -> X_PASS (optional) -> X_MOVES -> ALLMOVES.
 enum Stages {
     MAIN_TT,
+    MAIN_PASS,  // Pass move stage for VCN defender (before main moves)
     MAIN_MOVES,
     DEFENDFIVE_TT,
     DEFENDFIVE_MOVES,
     DEFENDFOUR_TT,
+    DEFENDFOUR_PASS,  // Pass move stage for VCN defender (before defend-four moves)
     DEFENDFOUR_MOVES,
     DEFENDB4F3_TT,
+    DEFENDB4F3_PASS,  // Pass move stage for VCN defender (before defend-b4f3 moves)
     DEFENDB4F3_MOVES,
     QVCF_TT,
     QVCF_MOVES,
@@ -96,6 +99,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
     , rule(rule)
     , ttMove(Pos::NONE)
     , allowPlainB4InVCF(false)
+    , generatePassMove(false)
     , hasPolicy(false)
     , useNormalizedPolicy(args.useNormalizedPolicy)
     , normalizedPolicyTemp(args.normalizedPolicyTemp)
@@ -159,6 +163,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     , counterMoveHistory(args.counterMoveHistory)
     , rule(rule)
     , allowPlainB4InVCF(false)
+    , generatePassMove(args.generatePassMove)
     , hasPolicy(false)
     , useNormalizedPolicy(args.useNormalizedPolicy)
     , normalizedPolicyTemp(args.normalizedPolicyTemp)
@@ -168,14 +173,16 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
+        ttmValid = args.ttMove == Pos::PASS  // Allow pass move for VCN defender
+                   || board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
     }
     else if (board.p4Count(oppo, B_FLEX4)) {
         stage = DEFENDFOUR_TT;
 
-        const Cell &ttCell = board.cell(args.ttMove);
-        ttmValid           = ttCell.pattern4[BLACK] >= E_BLOCK4 || ttCell.pattern4[BLACK] == FORBID
-                   || ttCell.pattern4[WHITE] >= E_BLOCK4;
+        ttmValid = args.ttMove == Pos::PASS  // Allow pass move for VCN defender
+                   || board.cell(args.ttMove).pattern4[BLACK] >= E_BLOCK4
+                   || board.cell(args.ttMove).pattern4[BLACK] == FORBID
+                   || board.cell(args.ttMove).pattern4[WHITE] >= E_BLOCK4;
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -201,8 +208,9 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
     , mainHistory(nullptr)
     , rule(rule)
     , allowPlainB4InVCF(
-          args.depth >= DEPTH_QVCF_FULL
+          args.forceAllowB4InVCF || args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
+    , generatePassMove(false)
     , hasPolicy(false)
     , useNormalizedPolicy(false)
     , normalizedPolicyTemp(1.0f)
@@ -212,11 +220,11 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
+        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
     }
     else {
         stage    = QVCF_TT;
-        ttmValid = board.cell(args.ttMove).pattern4[self] >= E_BLOCK4;
+        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[self] >= E_BLOCK4;
     }
 
     // check legality for defence ttmove
@@ -353,6 +361,21 @@ top:
     case DEFENDFOUR_TT:
     case DEFENDB4F3_TT:
     case QVCF_TT: ++stage; return ttMove;
+
+    case MAIN_PASS:
+    case DEFENDFOUR_PASS:
+    case DEFENDB4F3_PASS:
+        stage = stage + 1;                       // advance to the corresponding MOVES stage
+        if (generatePassMove                     // generate pass move only when this flag is on
+            && board.getLastMove() != Pos::PASS  // never do consecutive passes
+            && ttMove != Pos::PASS               // If we did pass move in tt phase, skip it
+        ) {
+            curScore       = 0;
+            curPolicy      = 0.0f;
+            curPolicyScore = 0;
+            return Pos::PASS;
+        }
+        goto top;
 
     case MAIN_MOVES:
         assert(!board.p4Count(~board.sideToMove(), A_FIVE));

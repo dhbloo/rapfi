@@ -90,6 +90,7 @@ private:
     Rule                      rule;
     Pos                       ttMove;
     bool                      allowPlainB4InVCF;
+    bool                      generatePassMove;
     bool                      hasPolicy;
     bool                      useNormalizedPolicy;
     float                     normalizedPolicyTemp;
@@ -115,6 +116,8 @@ struct MovePicker::ExtraArgs<MovePicker::MAIN>
     CounterMoveHistory *counterMoveHistory;
     bool                useNormalizedPolicy  = false;
     float               normalizedPolicyTemp = 1.0f;
+    /// Whether to generate a pass move as a high-priority move for the VCN defender.
+    bool generatePassMove = false;
 };
 
 template <>
@@ -123,6 +126,9 @@ struct MovePicker::ExtraArgs<MovePicker::QVCF>
     Pos      ttMove;
     Depth    depth;  // negative depth in qvcf search
     Pattern4 previousSelfP4[2];
+    /// Force allowPlainB4InVCF=true regardless of depth/previous patterns.
+    /// Used when entering from VC4 mode so all E_BLOCK4 moves are enumerated.
+    bool forceAllowB4InVCF = false;
 };
 
 }  // namespace Search
