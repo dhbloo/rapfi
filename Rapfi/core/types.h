@@ -254,5 +254,3 @@ enum class CandidateRange {
     FULL_BOARD,
     CAND_RANGE_NB,
 };
-
-// -------------------------------------------------

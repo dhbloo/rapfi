@@ -44,7 +44,7 @@ struct SearchStack
     Pos        killers[2];
     Pattern4   moveP4[SIDE_NB];
     int16_t    numNullMoves;
-    VCNLevel   vcnLevel;  /// Current VCN level at this ply (VC_NONE if VCN mode is disabled)
+    VCNLevel   vcnLevel;  /// VCN level at this ply (defaults to VC_NONE if disabled)
     bool       ttPv;
     bool       dbChildWritten;
 

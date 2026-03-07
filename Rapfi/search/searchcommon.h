@@ -35,7 +35,7 @@ namespace Search {
 /// VC4 corresponds to VCF (Victory by Continuous Four), where the defender can pass once.
 /// VC5 means the attacker must win immediately (defender can never pass).
 /// VC2/VC3 allow progressively more passes for the defender.
-enum VCNLevel {
+enum VCNLevel : int8_t {
     VC_NONE,  ///< VCN mode disabled
     VC2,      ///< Defender can pass at most 3 times
     VC3,      ///< Defender can pass at most 2 times
@@ -180,13 +180,11 @@ struct SearchOptions
         RES_BLACK_WIN,
         RES_WHITE_WIN,
     } drawResult = RES_DRAW;
-
-    /// Blocked moves, which are filtered out before searching
-    std::vector<Pos> blockMoves;
-
     /// VCN (Victory by Continuous N-level Attack) mode configuration.
     /// When enabled, only searches for attacker-wins satisfying the VCN constraint.
     VCNMode vcnMode;
+    /// Blocked moves, which are filtered out before searching
+    std::vector<Pos> blockMoves;
 
     /// Checks if we are in analysis mode.
     bool isAnalysisMode() const { return !timeLimit && !maxNodes; }

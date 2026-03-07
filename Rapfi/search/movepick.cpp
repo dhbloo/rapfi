@@ -31,7 +31,7 @@ namespace {
 /// Usual procedure: X_TT -> X_PASS (optional) -> X_MOVES -> ALLMOVES.
 enum Stages {
     MAIN_TT,
-    MAIN_PASS,        // Pass move stage for VCN defender (before main moves)
+    MAIN_PASS,  // Pass move stage for VCN defender (before main moves)
     MAIN_MOVES,
     DEFENDFIVE_TT,
     DEFENDFIVE_MOVES,
@@ -173,15 +173,16 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
-        ttmValid = args.ttMove != Pos::PASS && board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
+        ttmValid = args.ttMove == Pos::PASS  // Allow pass move for VCN defender
+                   || board.cell(args.ttMove).pattern4[oppo] == A_FIVE;
     }
     else if (board.p4Count(oppo, B_FLEX4)) {
         stage = DEFENDFOUR_TT;
 
-        ttmValid = args.ttMove != Pos::PASS
-                   && (board.cell(args.ttMove).pattern4[BLACK] >= E_BLOCK4
-                       || board.cell(args.ttMove).pattern4[BLACK] == FORBID
-                       || board.cell(args.ttMove).pattern4[WHITE] >= E_BLOCK4);
+        ttmValid = args.ttMove == Pos::PASS  // Allow pass move for VCN defender
+                   || board.cell(args.ttMove).pattern4[BLACK] >= E_BLOCK4
+                   || board.cell(args.ttMove).pattern4[BLACK] == FORBID
+                   || board.cell(args.ttMove).pattern4[WHITE] >= E_BLOCK4;
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -207,8 +208,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
     , mainHistory(nullptr)
     , rule(rule)
     , allowPlainB4InVCF(
-          args.forceAllowB4InVCF
-          || args.depth >= DEPTH_QVCF_FULL
+          args.forceAllowB4InVCF || args.depth >= DEPTH_QVCF_FULL
           || (args.previousSelfP4[0] >= D_BLOCK4_PLUS && args.previousSelfP4[1] >= D_BLOCK4_PLUS))
     , generatePassMove(false)
     , hasPolicy(false)
@@ -365,9 +365,14 @@ top:
     case MAIN_PASS:
     case DEFENDFOUR_PASS:
     case DEFENDB4F3_PASS:
-        stage = stage + 1;  // advance to the corresponding MOVES stage
-        if (generatePassMove && board.getLastMove() != Pos::PASS && ttMove != Pos::PASS) {
-            curScore = 0;
+        stage = stage + 1;                       // advance to the corresponding MOVES stage
+        if (generatePassMove                     // generate pass move only when this flag is on
+            && board.getLastMove() != Pos::PASS  // never do consecutive passes
+            && ttMove != Pos::PASS               // If we did pass move in tt phase, skip it
+        ) {
+            curScore       = 0;
+            curPolicy      = 0.0f;
+            curPolicyScore = 0;
             return Pos::PASS;
         }
         goto top;

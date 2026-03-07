@@ -85,17 +85,16 @@ void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, V
     // Validate ttMove first
     if (!board.isLegal(ttMove))
         return;
-    // PASS is legal but has no board cell; it doesn't map to history tables.
-    if (ttMove == Pos::PASS)
-        return;
 
     Color    self = board.sideToMove(), oppo = ~self;
     bool     oppo5  = board.p4Count(oppo, A_FIVE);
     bool     oppo4  = oppo5 || board.p4Count(oppo, B_FLEX4);
-    Pattern4 selfP4 = board.cell(ttMove).pattern4[self];
-    int      bonus  = statBonus(depth);
-
+    
+    // If ttMove is a Pass, we always update the stats, since it might be a refute move in VCN search.
+    Pattern4 selfP4 = ttMove == Pos::PASS ? NONE : board.cell(ttMove).pattern4[self];
     if (!oppo4 && selfP4 < H_FLEX3) {
+        int bonus = statBonus(depth);
+
         // Bonus for a quiet ttMove that fails high
         if (ttValue >= beta)
             updateQuietStats(ttMove, bonus);
