@@ -31,16 +31,20 @@
 #endif
 
 #if defined(_MSC_VER)
-    #include <cstdlib>   // for _rotr64
-    #include <intrin.h>  // for __umulh, _mm_prefetch, __prefetch
+    #include <cstdlib>   // _rotr64
+    #include <intrin.h>  // __umulh, _mm_prefetch, __prefetch
 #endif
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <type_traits>
+#include <utility>
 
-// Define some macros for platform specific optimization hint
+// -------------------------------------------------
+// Compiler hint macros
+
 #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
     #define FORCE_INLINE inline __attribute__((always_inline))
     #define NO_INLINE    __attribute__((noinline))
@@ -62,15 +66,11 @@
 #endif
 
 // -------------------------------------------------
-// Platform related functions
+// Bit / integer intrinsics
 
-/// popcount(x) – portable population-count (Hamming weight) for 64-bit words.
-/// Tries to use the fastest compiler/CPU intrinsic that is available at
-/// compile time and falls back to a branch-free SWAR algorithm otherwise.
-/// • GCC / Clang  →  __builtin_popcountll
-/// • MSVC x64     →  __popcnt64
-/// • C++20        →  std::popcount
-/// • Fallback     →  SWAR (Parallel bit-count) algorithm
+/// 64-bit population count (Hamming weight). Picks the fastest available implementation:
+/// `std::popcount` (C++20) -> `__builtin_popcountll` (GCC/Clang) -> `__popcnt64` (MSVC x64)
+/// -> Hacker's Delight SWAR fallback.
 inline int popcount(uint64_t x)
 {
 #if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
@@ -80,7 +80,6 @@ inline int popcount(uint64_t x)
 #elif defined(_MSC_VER) && defined(_M_X64)
     return static_cast<int>(__popcnt64(x));
 #else
-    // 64-bit variant of “Hacker’s Delight” 5-step popcount
     x -= (x >> 1) & 0x5555'5555'5555'5555ULL;
     x = (x & 0x3333'3333'3333'3333ULL) + ((x >> 2) & 0x3333'3333'3333'3333ULL);
     x = (x + (x >> 4)) & 0x0F0F'0F0F'0F0F'0F0FULL;
@@ -88,8 +87,8 @@ inline int popcount(uint64_t x)
 #endif
 }
 
-/// A right logical shift function that supports negetive shamt.
-/// It might be implemented as rotr64 to avoid conditional branch.
+/// 64-bit rotate right that also accepts negative shift amounts (which rotate left). Lowered
+/// to a single instruction on x86 and ARM via the compiler's rotate intrinsic when available.
 inline uint64_t rotr(uint64_t x, int shamt)
 {
 #if defined(__clang__)
@@ -98,21 +97,22 @@ inline uint64_t rotr(uint64_t x, int shamt)
     return _rotr64(x, shamt);
 #else
     shamt &= 63;
+    if (shamt == 0)
+        return x;  // a 64-bit shift is undefined behaviour; rotating by 0 is identity
     return (x << (64 - shamt)) | (x >> shamt);
 #endif
 }
 
-/// mulhi64() returns the higher 64 bits from two 64 bits multiply.
-/// @see stackoverflow "getting-the-high-part-of-64-bit-integer-multiplication".
-
-#ifdef __SIZEOF_INT128__  // GNU C
+/// High 64 bits of a 64*64 -> 128 unsigned multiply. Used in TT bucket addressing.
+/// @see https://stackoverflow.com/q/28868367
+#ifdef __SIZEOF_INT128__
 
 inline uint64_t mulhi64(uint64_t a, uint64_t b)
 {
     return ((unsigned __int128)a * (unsigned __int128)b) >> 64;
 }
 
-#elif defined(_M_X64) || defined(_M_ARM64)  // MSVC for x86-64 or AArch64
+#elif defined(_M_X64) || defined(_M_ARM64)
 
     #define mulhi64 __umulh
 
@@ -130,9 +130,11 @@ inline uint64_t mulhi64(uint64_t a, uint64_t b)
 
 #endif
 
-/// Preloads the given address in L1/L2 cache. This is a non-blocking
-/// function that doesn't stall the CPU waiting for data to be loaded
-/// from memory, which can be quite slow.
+// -------------------------------------------------
+// Memory prefetch
+
+/// Bring `addr` into L1/L2 ahead of an upcoming load. Non-blocking; the CPU does not stall
+/// waiting for the line to arrive. Compiled to a no-op when built with `NO_PREFETCH`.
 inline void prefetch(const void *addr)
 {
 #ifndef NO_PREFETCH
@@ -146,172 +148,82 @@ inline void prefetch(const void *addr)
 #endif
 }
 
-namespace _PrefetchImpl {
+namespace detail {
 
-template <int N>
-struct PrefetchImpl
-{};
-
-template <>
-struct PrefetchImpl<1>
+template <size_t... I>
+inline void multiPrefetchImpl(const char *addr, std::index_sequence<I...>)
 {
-    inline static void call(const char *addr) { ::prefetch(addr); }
-};
+    constexpr size_t CacheLineSize = 64;
+    (prefetch(addr + I * CacheLineSize), ...);
+}
 
-template <>
-struct PrefetchImpl<2>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-    }
-};
+}  // namespace detail
 
-template <>
-struct PrefetchImpl<3>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-    }
-};
-
-template <>
-struct PrefetchImpl<4>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-        ::prefetch(addr + 192);
-    }
-};
-
-template <>
-struct PrefetchImpl<5>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-        ::prefetch(addr + 192);
-        ::prefetch(addr + 256);
-    }
-};
-
-template <>
-struct PrefetchImpl<6>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-        ::prefetch(addr + 192);
-        ::prefetch(addr + 256);
-        ::prefetch(addr + 320);
-    }
-};
-
-template <>
-struct PrefetchImpl<7>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-        ::prefetch(addr + 192);
-        ::prefetch(addr + 256);
-        ::prefetch(addr + 320);
-        ::prefetch(addr + 384);
-    }
-};
-
-template <>
-struct PrefetchImpl<8>
-{
-    inline static void call(const char *addr)
-    {
-        ::prefetch(addr);
-        ::prefetch(addr + 64);
-        ::prefetch(addr + 128);
-        ::prefetch(addr + 192);
-        ::prefetch(addr + 256);
-        ::prefetch(addr + 320);
-        ::prefetch(addr + 384);
-        ::prefetch(addr + 448);
-    }
-};
-
-}  // namespace _PrefetchImpl
-
+/// Prefetch a contiguous `NumBytes`-byte region, one prefetch per 64-byte cache line. The
+/// per-line calls are emitted via a parameter-pack expansion and inline to the same sequence
+/// the hand-unrolled version produced.
 template <int NumBytes>
 inline void multiPrefetch(const void *addr)
 {
     constexpr int CacheLineSize = 64;
     constexpr int NumCacheLines = (NumBytes + CacheLineSize - 1) / CacheLineSize;
-    _PrefetchImpl::PrefetchImpl<NumCacheLines>::call(reinterpret_cast<const char *>(addr));
+    detail::multiPrefetchImpl(reinterpret_cast<const char *>(addr),
+                              std::make_index_sequence<NumCacheLines> {});
 }
 
 // -------------------------------------------------
-// NUMA-aware helper
+// NUMA awareness
 
 namespace Numa {
 
-/// NumaNodeId is a type representing a NUMA node ID.
-typedef int32_t NumaNodeId;
+using NumaNodeId = int32_t;
 
-/// Default NUMA node ID, used when NUMA is not supported or not available.
+/// Returned by `bindThisThread` when NUMA is unsupported or binding fails.
 constexpr NumaNodeId DefaultNumaNodeId = 0;
 
-/// The threshold for the number of bind groups. If the number of threads is
-/// greater than this threshold, we will bind threads to NUMA groups to
-/// improve performance. This is a heuristic value to determine when to
-/// use NUMA-aware logic.
+/// If the thread pool grows above this many threads, threads are spread across NUMA nodes
+/// (and on Windows, across processor groups - one process is otherwise capped at 64 cores).
 constexpr int BindGroupThreshold = 8;
 
-/// Under Windows it is not possible for a process to run on more than one
-/// logical processor group. This usually means to be limited to use max 64
-/// cores. To overcome this, some special platform specific API should be
-/// called to set group affinity for each thread. Original code from Texel by
-/// Peter Österlund. We also let this function return the numa node ID for
-/// the thread, to allow NUMA-aware logics in the thread.
+/// Pin the calling thread to a NUMA node chosen by `idx` (round-robin across detected nodes)
+/// and return that node's id. On platforms without NUMA support, returns DefaultNumaNodeId
+/// without changing affinity. Original Windows implementation adapted from Texel by Peter
+/// Österlund.
 NumaNodeId bindThisThread(size_t idx);
 
 }  // namespace Numa
 
 // -------------------------------------------------
-// Large-Page memory allocator
+// Aligned and large-page allocation
 
 namespace MemAlloc {
 
-/// A warpper around std::aligned_alloc, which uses system calls if available.
-/// Memory allocated using this function should be freed with alignedFree().
+/// Aligned allocation backed by the platform's best aligned-allocator (posix_memalign /
+/// _aligned_malloc / std::aligned_alloc). Free with `alignedFree`.
 void *alignedAlloc(size_t alignment, size_t size);
-/// Free memory allocated by alignedAlloc().
+
+/// Free memory returned by `alignedAlloc`.
 void alignedFree(void *ptr);
-/// A helper to alloc an aligned array of type T. Ptr should be freed with alignedFree().
+
+/// Aligned allocation for an array of `arraySize` `T`s. Free with `alignedFree`.
 template <typename T, size_t Alignment = alignof(T)>
 T *alignedArrayAlloc(size_t arraySize)
 {
     return reinterpret_cast<T *>(alignedAlloc(Alignment, sizeof(T) * arraySize));
 }
 
-/// Allocate large page memory, with min alignment 4KiB. Memory allocated
-/// using this function should be freed with alignedLargePageFree().
+/// Allocate `size` bytes backed by large pages where the OS permits it (Windows large pages,
+/// Linux transparent huge pages via madvise), falling back to a 4KiB / page-aligned
+/// allocation otherwise. Always 4KiB-aligned at minimum. Free with `alignedLargePageFree`.
 void *alignedLargePageAlloc(size_t size);
 
-/// Free memory allocated by alignedLargePageAlloc().
+/// Free memory returned by `alignedLargePageAlloc`.
 void alignedLargePageFree(void *ptr);
 
 }  // namespace MemAlloc
 
+/// Deleter for `unique_ptr` of objects allocated through `MemAlloc::alignedLargePageAlloc`.
+/// Calls the destructor (unless `T` is trivially destructible) and then releases the pages.
 template <typename T>
 struct LargePageDeleter
 {
@@ -320,7 +232,6 @@ struct LargePageDeleter
         if (!ptr)
             return;
 
-        // Explicitly needed to call the destructor
         if constexpr (!std::is_trivially_destructible_v<T>)
             ptr->~T();
 
@@ -331,13 +242,15 @@ struct LargePageDeleter
 template <typename T>
 using LargePagePtr = std::unique_ptr<T, LargePageDeleter<T>>;
 
-// make_unique_large_page for single objects
+/// Construct a single `T` in large-page memory and return owning `LargePagePtr<T>`.
 template <typename T, typename... Args>
 LargePagePtr<T> make_unique_large_page(Args &&...args)
 {
     static_assert(alignof(T) <= 4096,
                   "alignedLargePageAlloc() may fail for such a big alignment requirement of T");
     void *raw_memory = MemAlloc::alignedLargePageAlloc(sizeof(T));
-    T    *obj        = new (raw_memory) T(std::forward<Args>(args)...);
+    if (!raw_memory)
+        throw std::bad_alloc {};  // never placement-new into a null pointer
+    T *obj = new (raw_memory) T(std::forward<Args>(args)...);
     return LargePagePtr<T>(obj);
 }

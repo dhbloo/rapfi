@@ -18,13 +18,15 @@
 
 #pragma once
 
+#include "core/math.h"
+#include "core/pos.h"
 #include "core/types.h"
-#include "core/utils.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <memory>
+#include <string>
 
 /// Total count of patterncode (pattern combination for 4 directions)
 constexpr uint32_t PCODE_NB = combineNumber(PATTERN_NB, 4);
@@ -33,9 +35,6 @@ constexpr uint32_t THREAT_NB = power(2, 11);
 
 /// MsgMode represents the message mode that controls how messages are outputed in search.
 enum class MsgMode { NONE, BRIEF, NORMAL, UCILIKE };
-
-/// CoordConvertionMode represents the coordinate convertion mode for protocol IO.
-enum class CoordConvertionMode { NONE, X_FLIPY, FLIPY_X };
 
 /// Pattern4Score struct packs score and pattern4 into a struct of 2 bytes.
 struct Pattern4Score
@@ -72,7 +71,7 @@ struct Pattern4Score
     Score          scoreSelf() const { return (Score)_scoreSelf; }
     Score          scoreOppo() const { return (Score)_scoreOppo; }
     Pattern4Score &operator=(Pattern4 pattern4) { return _pattern4 = pattern4, *this; }
-    operator Pattern4() const { return Pattern4(_pattern4); }
+                   operator Pattern4() const { return Pattern4(_pattern4); }
 };
 static_assert(sizeof(Pattern4Score) == sizeof(int32_t));
 

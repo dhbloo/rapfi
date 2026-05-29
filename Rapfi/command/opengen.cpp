@@ -17,6 +17,7 @@
  */
 
 #include "../core/iohelper.h"
+#include "../core/time.h"
 #include "../search/hashtable.h"
 #include "../search/opening.h"
 #include "../search/searchthread.h"

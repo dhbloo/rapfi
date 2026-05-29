@@ -18,6 +18,7 @@
 
 #include "dataset.h"
 
+#include "../core/compressor.h"
 #include "../core/iohelper.h"
 #include "../core/utils.h"
 #include "../eval/evaluator.h"
@@ -581,7 +582,7 @@ public:
         Compressor compressor(fileStream, Compressor::Type::ZIP_DEFAULT);
 
         auto openEntryThen = [&](std::string entryName,
-                                 bool        (DataSource::*receiver)(std::istream &is)) {
+                                 bool (DataSource::*receiver)(std::istream &is)) {
             std::istream *is = compressor.openInputStream(entryName);
             if (!is)
                 throw std::runtime_error("unable to open " + entryName + " in file "

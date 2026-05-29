@@ -17,6 +17,7 @@
  */
 
 #include "../config.h"
+#include "../core/filesystem.h"
 #include "../core/iohelper.h"
 #include "../tuning/dataset.h"
 #include "../tuning/tuner.h"

@@ -47,7 +47,7 @@ bool isNearBorder(const Board &board, Pos pos, int dist)
 /// @return The generated moves, empty if no opening is available.
 std::vector<Pos> generateOpening(const Board &board, GameRule rule)
 {
-    PRNG prng;
+    PRNG prng = PRNG::nondeterministic();
 
     switch (rule.opRule) {
     case GameRule::FREEOPEN:

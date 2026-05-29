@@ -20,6 +20,8 @@
 
 #include "../config.h"
 #include "../core/iohelper.h"
+#include "../core/random.h"
+#include "../core/time.h"
 #include "../eval/eval.h"
 #include "BS_thread_pool.hpp"
 #include "dataset.h"
@@ -513,7 +515,7 @@ void Tuner::run(size_t epochs, std::function<void(TuningStatistic)> callback)
 void Tuner::initParams()
 {
     std::vector<int>                       ruleSetIdx;
-    PRNG                                   prng;
+    PRNG                                   prng = PRNG::nondeterministic();
     std::uniform_real_distribution<double> rand;
 
     if (config.tuneRule[FREESTYLE])
@@ -651,7 +653,7 @@ void Tuner::initTuneEntries(std::vector<TuneEntry> &tuneEntries, class Dataset &
     if (config.shuffleTuneEntries) {
         MESSAGEL("Shuffling tune entries...");
 
-        PRNG prng;
+        PRNG prng = PRNG::nondeterministic();
         std::shuffle(tuneEntries.begin(), tuneEntries.end(), prng);
     }
 }

@@ -18,12 +18,14 @@
 
 #pragma once
 
-// Umbrella header kept for convenience and backwards compatibility. Prefer including the
-// focused headers below directly so translation units only pull in what they need.
+#include <string>
+#include <tuple>
 
-#include "filesystem.h"
-#include "math.h"
-#include "random.h"
-#include "string.h"
-#include "time.h"
-#include "version.h"
+/// Returns the engine version as `(major, minor, revision)`.
+std::tuple<int, int, int> getVersionNumbers();
+
+/// Returns `"<major>.<minor>.<rev> (<compiler> on <os> <ISA flags>)"`.
+std::string getVersionInfo();
+
+/// Returns the piskvork ABOUT-line payload: name, version, author, country.
+std::string getEngineInfo();

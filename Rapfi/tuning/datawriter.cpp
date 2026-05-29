@@ -19,6 +19,7 @@
 #include "datawriter.h"
 
 #include "../config.h"
+#include "../core/compressor.h"
 #include "../core/hash.h"
 #include "../core/iohelper.h"
 #include "../core/utils.h"

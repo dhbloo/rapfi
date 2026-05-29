@@ -18,6 +18,7 @@
 
 #include "mix9svqnnue.h"
 
+#include "../core/compressor.h"
 #include "../core/iohelper.h"
 #include "../core/platform.h"
 #include "../core/utils.h"

@@ -19,6 +19,7 @@
 #pragma once
 
 #include "../core/pos.h"
+#include "../core/random.h"
 #include "../core/types.h"
 #include "../game/board.h"
 
@@ -89,7 +90,10 @@ struct OpeningGenConfig
 class OpeningGenerator
 {
 public:
-    OpeningGenerator(int boardSize, Rule rule, OpeningGenConfig config = {}, PRNG prng = {});
+    OpeningGenerator(int              boardSize,
+                     Rule             rule,
+                     OpeningGenConfig config = {},
+                     PRNG             prng   = PRNG::nondeterministic());
 
     const Board &getBoard() const { return board; }
     std::string  positionString() const { return board.positionString(); }

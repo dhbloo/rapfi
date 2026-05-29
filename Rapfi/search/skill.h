@@ -61,7 +61,7 @@ private:
 inline Pos SkillMovePicker::pick(ThreadPool &threads, size_t numMultiPV)
 {
     const auto &rootMoves = threads.main()->rootMoves;
-    static PRNG prng;  // init seed from time to ensure randomness
+    static PRNG prng      = PRNG::nondeterministic();  // time seed for randomness
 
     // Init highest value and value range
     Value topValue = rootMoves[0].value;

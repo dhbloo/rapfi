@@ -20,15 +20,41 @@
 
 #include "../core/pos.h"
 #include "../core/types.h"
-#include "../core/utils.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <cstdlib>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 class Board;  // forward declaration
 
 namespace Search {
+
+namespace detail {
+
+    /// Builds a nested native array type: `MultiDimNativeArray<T, A, B>::type` is `T[A][B]`.
+    template <class T, size_t Size, size_t... Sizes>
+    struct MultiDimNativeArray
+    {
+        using Nested = typename MultiDimNativeArray<T, Sizes...>::type;
+        using type   = Nested[Size];
+    };
+
+    template <class T, size_t Size>
+    struct MultiDimNativeArray<T, Size>
+    {
+        using type = T[Size];
+    };
+
+}  // namespace detail
+
+/// Multi-dimensional native array, e.g. `MDNativeArray<int, 3, 4>` is `int[3][4]`. Used as the
+/// backing store of HistTable below (its only consumer).
+template <class T, size_t... Sizes>
+using MDNativeArray = typename detail::MultiDimNativeArray<T, Sizes...>::type;
 
 /// HistTable is a handy multi-demensional array to store history statistics.
 /// @tparam ValueT The base value type of the array
@@ -41,11 +67,10 @@ struct HistTable
     /// and overloads operator<<() function to ensure that values does not go out of bound.
     struct Entry
     {
-        void    operator=(const ValueT &v) { value = v; }
-        ValueT *operator&() { return &value; }
-                operator const ValueT &() const { return value; }
-        ValueT  get() const { return value; }
-        void    operator<<(int bonus)
+        void   operator=(const ValueT &v) { value = v; }
+               operator const ValueT &() const { return value; }
+        ValueT get() const { return value; }
+        void   operator<<(int bonus)
         {
             static_assert(Range <= std::numeric_limits<ValueT>::max());
             assert(std::abs(bonus) <= Range);  // Ensure bonus is in [-Range, Range]
@@ -61,8 +86,10 @@ struct HistTable
     const auto &operator[](std::size_t index) const { return table[index]; }
     void        init(const ValueT &fillValue)
     {
-        ValueT *p = reinterpret_cast<ValueT *>(table);
-        std::fill_n(p, sizeof(table) / sizeof(ValueT), fillValue);
+        // `table` is a contiguous block of Entry; fill it through Entry's own assignment
+        // operator rather than reinterpreting it as the raw value type.
+        Entry *first = reinterpret_cast<Entry *>(table);
+        std::fill_n(first, sizeof(table) / sizeof(Entry), fillValue);
     }
 
 private:

@@ -67,36 +67,12 @@ Board::Board(int boardSize, CandidateRange candRange)
     stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
     updateCache = new UpdateCache[1 + boardCellCount * 2];
 
-    // Set candidate range of the board
-    switch (candRange) {
-    case CandidateRange::SQUARE2:
-        candidateRange     = RANGE_SQUARE2;
-        candidateRangeSize = arraySize(RANGE_SQUARE2);
-        candAreaExpandDist = 2;
-        break;
-    case CandidateRange::SQUARE2_LINE3:
-        candidateRange     = RANGE_SQUARE2_LINE3;
-        candidateRangeSize = arraySize(RANGE_SQUARE2_LINE3);
-        candAreaExpandDist = 3;
-        break;
-    case CandidateRange::SQUARE3:
-        candidateRange     = RANGE_SQUARE3;
-        candidateRangeSize = arraySize(RANGE_SQUARE3);
-        candAreaExpandDist = 3;
-        break;
-    case CandidateRange::SQUARE3_LINE4:
-        candidateRange     = RANGE_SQUARE3_LINE4;
-        candidateRangeSize = arraySize(RANGE_SQUARE3_LINE4);
-        candAreaExpandDist = 3;
-        break;
-    case CandidateRange::SQUARE4:
-        candidateRange     = RANGE_SQUARE4;
-        candidateRangeSize = arraySize(RANGE_SQUARE4);
-        candAreaExpandDist = 4;
-        break;
-    default:  // Full board condidate
-        break;
-    }
+    // Set candidate range of the board. FULL_BOARD yields a null table and zero expand
+    // distance (every empty cell is a candidate; the candidate area is unused).
+    CandidateRangeInfo info = candidateRangeInfo(candRange);
+    candidateRange          = info.offsets;
+    candidateRangeSize      = info.offsetCount;
+    candAreaExpandDist      = info.expandDist;
 }
 
 Board::Board(const Board &other, Search::SearchThread *thread)

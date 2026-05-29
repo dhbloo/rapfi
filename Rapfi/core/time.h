@@ -18,12 +18,10 @@
 
 #pragma once
 
-// Umbrella header kept for convenience and backwards compatibility. Prefer including the
-// focused headers below directly so translation units only pull in what they need.
+#include <cstdint>
 
-#include "filesystem.h"
-#include "math.h"
-#include "random.h"
-#include "string.h"
-#include "time.h"
-#include "version.h"
+/// Milliseconds since some unspecified steady epoch.
+using Time = int64_t;
+
+/// Current value of the steady clock, in milliseconds.
+Time now();

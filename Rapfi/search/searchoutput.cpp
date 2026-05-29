@@ -24,9 +24,8 @@
 #include "searchthread.h"
 #include "timecontrol.h"
 
-#define REALTIME(type, pos, size)                                                  \
-    MESSAGEL("REALTIME " << (type) << ' ' << outputCoordXConvert(pos, size) << ',' \
-                         << outputCoordYConvert(pos, size))
+#define REALTIME(type, pos, size) \
+    MESSAGEL("REALTIME " << (type) << ' ' << (CoordText {pos, size, Config::IOCoordMode}))
 
 #define INFO(type, ...) sync_cout() << "INFO " << type << ' ' << __VA_ARGS__ << std::endl
 
@@ -119,7 +118,8 @@ void SearchPrinter::printPvCompletes(MainSearchThread  &th,
             INFO("SPEED", speed);
             INFO("EVAL", curMove.value);
             INFO("WINRATE", Config::valueToWinRate(curMove.value));
-            INFO("BESTLINE", MovesText {curMove.pv, true, true, th.board->size()});
+            INFO("BESTLINE",
+                 MovesText {curMove.pv, true, true, th.board->size(), Config::IOCoordMode});
             INFO("PV", "DONE");
         }
 
@@ -186,7 +186,8 @@ void SearchPrinter::printRootMoves(MainSearchThread  &th,
             INFO("PRIOR", curMove.policyPrior);
             INFO("STDEV", curMove.utilityStdev);
             INFO("LCBVALUE", curMove.lcbValue);
-            INFO("BESTLINE", MovesText {curMove.pv, true, true, th.board->size()});
+            INFO("BESTLINE",
+                 MovesText {curMove.pv, true, true, th.board->size(), Config::IOCoordMode});
             INFO("PV", "DONE");
         }
 
@@ -263,7 +264,7 @@ void SearchPrinter::printBestmoveWithoutSearch(MainSearchThread &th,
         INFO("SPEED", 0);
         INFO("EVAL", moveValue);
         INFO("WINRATE", Config::valueToWinRate(moveValue));
-        INFO("BESTLINE", MovesText {*pv, true, true, th.board->size()});
+        INFO("BESTLINE", MovesText {*pv, true, true, th.board->size(), Config::IOCoordMode});
         INFO("PV", "DONE");
     }
 

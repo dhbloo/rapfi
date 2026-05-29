@@ -163,6 +163,7 @@ set(CORE_SOURCES
     command/command.cpp
     command/gomocup.cpp
 
+    core/compressor.cpp
     core/hash.cpp
     core/iohelper.cpp
     core/utils.cpp
@@ -216,12 +217,19 @@ set(HEADERS
     command/command.h
     command/argutils.h
 
+    core/compressor.h
+    core/filesystem.h
     core/hash.h
     core/iohelper.h
+    core/math.h
     core/platform.h
     core/pos.h
+    core/random.h
+    core/string.h
+    core/time.h
     core/types.h
     core/utils.h
+    core/version.h
 
     database/cache.h
     database/dbclient.h

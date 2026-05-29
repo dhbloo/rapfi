@@ -559,7 +559,7 @@ std::vector<std::pair<Pos, std::string>> DBClient::queryBoardTexts(const Board &
     // Sort the list by canonical pos in ascending order
     std::sort(canonicalPosAndTexts.begin(),
               canonicalPosAndTexts.end(),
-              [](const auto &lhs, const auto &rhs) { return lhs.first._pos < rhs.first._pos; });
+              [](const auto &lhs, const auto &rhs) { return int(lhs.first) < int(rhs.first); });
 
     // Get the list of all empty positions
     std::vector<Pos> emptyPosList;
@@ -594,12 +594,12 @@ std::vector<std::pair<Pos, std::string>> DBClient::queryBoardTexts(const Board &
             canonicalPosAndTexts.begin(),
             canonicalPosAndTexts.end(),
             canonicalPos,
-            [](const auto &lhs, const Pos &rhs) { return lhs.first._pos < rhs._pos; });
+            [](const auto &lhs, const Pos &rhs) { return int(lhs.first) < int(rhs); });
         auto itEnd = std::upper_bound(
             canonicalPosAndTexts.begin(),
             canonicalPosAndTexts.end(),
             canonicalPos,
-            [](const Pos &lhs, const auto &rhs) { return lhs._pos < rhs.first._pos; });
+            [](const Pos &lhs, const auto &rhs) { return int(lhs) < int(rhs.first); });
         if (itBegin < itEnd)
             childBoardTexts.emplace_back(pos, std::string {itBegin->second});
     }

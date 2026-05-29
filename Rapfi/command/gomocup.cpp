@@ -80,7 +80,7 @@ std::optional<Pos> parseLegalCoord(std::istream &is, Board &board)
     char comma;
     is >> x >> comma >> y;
 
-    Pos pos = inputCoordConvert(x, y, board.size());
+    Pos pos = inputCoordConvert(x, y, board.size(), Config::IOCoordMode);
     if (board.isLegal(pos)) {
         if (checkLastMoveIsNotPass(board))
             return std::nullopt;
@@ -106,18 +106,15 @@ void sendActionAndUpdateBoard(ActionType action, Pos bestMove)
 {
     if (action == ActionType::Move) {
         board->move(options.rule, bestMove);
-        std::cout << outputCoordXConvert(bestMove, board->size()) << ','
-                  << outputCoordYConvert(bestMove, board->size()) << std::endl;
+        std::cout << CoordText {bestMove, board->size(), Config::IOCoordMode} << std::endl;
     }
     else if (action == ActionType::Move2) {
         Pos move1 = Search::Threads.main()->rootMoves[0].pv[0];
         Pos move2 = Search::Threads.main()->rootMoves[0].pv[1];
         board->move(options.rule, move1);
         board->move(options.rule, move2);
-        std::cout << outputCoordXConvert(move1, board->size()) << ','
-                  << outputCoordYConvert(move1, board->size()) << ' '
-                  << outputCoordXConvert(move2, board->size()) << ','
-                  << outputCoordYConvert(move2, board->size()) << std::endl;
+        std::cout << CoordText {move1, board->size(), Config::IOCoordMode} << ' '
+                  << CoordText {move2, board->size(), Config::IOCoordMode} << std::endl;
     }
     else if (action == ActionType::Swap) {
         std::cout << "SWAP" << std::endl;
@@ -131,10 +128,8 @@ void sendActionAndUpdateBoard(ActionType action, Pos bestMove)
         Search::Threads.startThinking(*board, options, false, []() {
             Pos move1 = Search::Threads.main()->rootMoves[0].pv[0];
             Pos move2 = Search::Threads.main()->rootMoves[0].pv[1];
-            std::cout << outputCoordXConvert(move1, board->size()) << ','
-                      << outputCoordYConvert(move1, board->size()) << ' '
-                      << outputCoordXConvert(move2, board->size()) << ','
-                      << outputCoordYConvert(move2, board->size()) << std::endl;
+            std::cout << CoordText {move1, board->size(), Config::IOCoordMode} << ' '
+                      << CoordText {move2, board->size(), Config::IOCoordMode} << std::endl;
         });
     }
 }
@@ -548,10 +543,11 @@ void databaseToLib()
         }
 
         DBClient dbClient(*Search::Threads.dbStorage(), RECORD_MASK_ALL);
-        size_t   nodeCount = ::Database::exportDatabaseToLib(dbClient, libStream, *board, options.rule);
-        auto     endTime   = now();
-        MESSAGEL("Exported " << nodeCount << " nodes to lib file using "
-                             << (endTime - startTime) << " ms.");
+        size_t   nodeCount =
+            ::Database::exportDatabaseToLib(dbClient, libStream, *board, options.rule);
+        auto endTime = now();
+        MESSAGEL("Exported " << nodeCount << " nodes to lib file using " << (endTime - startTime)
+                             << " ms.");
     }
 }
 
@@ -710,7 +706,7 @@ void getBlock(bool remove = false)
         ss << coordStr;
         ss >> x >> comma >> y;
 
-        Pos pos = inputCoordConvert(x, y, board->size());
+        Pos pos = inputCoordConvert(x, y, board->size(), Config::IOCoordMode);
         if (!board->isInBoard(pos) || pos == Pos::PASS)
             ERRORL("Block coord is a pass or invalid.");
 
@@ -739,10 +735,11 @@ void showForbid()
     if (board->sideToMove() == BLACK) {
         FOR_EVERY_EMPTY_POS(board, pos)
         {
-            if (board->checkForbiddenPoint(pos))
-                std::cout << std::setfill('0') << std::setw(2)
-                          << outputCoordXConvert(pos, board->size()) << std::setfill('0')
-                          << std::setw(2) << outputCoordYConvert(pos, board->size());
+            if (board->checkForbiddenPoint(pos)) {
+                auto [cx, cy] = outputCoordConvert(pos, board->size(), Config::IOCoordMode);
+                std::cout << std::setfill('0') << std::setw(2) << cx << std::setfill('0')
+                          << std::setw(2) << cy;
+            }
         }
     }
     std::cout << '.' << std::endl;
@@ -831,13 +828,13 @@ void queryDatabaseAll(bool getPosition)
             }
 
             // Print this position if it has DBRecord or board text
-            if (printThisPos)
-                MESSAGEL("DATABASE " << outputCoordXConvert(pos, board->size()) << ' '
-                                     << outputCoordYConvert(pos, board->size()) << ' '
-                                     << displayLabelValue << ' ' << record.value << ' '
-                                     << record.depth() << ' ' << int(record.bound()) << ' '
-                                     << int(!record.comment().empty()) << ' '
-                                     << UTF8ToConsoleCP(boardTextUTF8));
+            if (printThisPos) {
+                auto [cx, cy] = outputCoordConvert(pos, board->size(), Config::IOCoordMode);
+                MESSAGEL("DATABASE " << cx << ' ' << cy << ' ' << displayLabelValue << ' '
+                                     << record.value << ' ' << record.depth() << ' '
+                                     << int(record.bound()) << ' ' << int(!record.comment().empty())
+                                     << ' ' << UTF8ToConsoleCP(boardTextUTF8));
+            }
         }
 
         MESSAGEL("DATABASE DONE");
@@ -1160,12 +1157,9 @@ void swap2board()
             opening[2] = Pos(2, 4);
         }
 
-        std::cout << outputCoordXConvert(opening[0], board->size()) << ','
-                  << outputCoordYConvert(opening[0], board->size()) << ' '
-                  << outputCoordXConvert(opening[1], board->size()) << ','
-                  << outputCoordYConvert(opening[1], board->size()) << ' '
-                  << outputCoordXConvert(opening[2], board->size()) << ','
-                  << outputCoordYConvert(opening[2], board->size()) << std::endl;
+        std::cout << CoordText {opening[0], board->size(), Config::IOCoordMode} << ' '
+                  << CoordText {opening[1], board->size(), Config::IOCoordMode} << ' '
+                  << CoordText {opening[2], board->size(), Config::IOCoordMode} << std::endl;
     }
     else {
         think(*board, 1, Search::SearchOptions::BALANCE_NONE, true);

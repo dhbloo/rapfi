@@ -16,10 +16,9 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "utils.h"
-
-#include "../config.h"
-#include "iohelper.h"
+#include "filesystem.h"
+#include "string.h"
+#include "time.h"
 
 #include <algorithm>
 #include <chrono>
@@ -32,6 +31,9 @@
     #include <windows.h>
 #endif
 
+// -------------------------------------------------
+// Time
+
 Time now()
 {
     static_assert(sizeof(Time) == sizeof(std::chrono::milliseconds::rep), "Time should be 64 bits");
@@ -41,6 +43,7 @@ Time now()
 }
 
 // -------------------------------------------------
+// String helpers
 
 std::string &trimInplace(std::string &s)
 {
@@ -54,16 +57,22 @@ std::string &trimInplace(std::string &s)
 
 std::string &upperInplace(std::string &s)
 {
-    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    // Cast to unsigned char first: passing a negative char to ::toupper is undefined behaviour.
+    std::transform(s.begin(), s.end(), s.begin(), [](char c) {
+        return static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+    });
     return s;
 }
 
 std::string &replaceAll(std::string &str, std::string_view from, std::string_view to)
 {
+    if (from.empty())  // An empty needle would match at every position and loop forever.
+        return str;
+
     size_t start = 0;
     while ((start = str.find(from, start)) != std::string::npos) {
         str.replace(start, from.length(), to);
-        start += to.length();  // Handles case where 'to' is a substring of 'from'
+        start += to.length();  // Skip past `to` in case `to` contains `from`.
     }
     return str;
 }
@@ -89,6 +98,7 @@ std::vector<std::string_view> split(std::string_view s, std::string_view delims,
 }
 
 // -------------------------------------------------
+// Human-readable formatters
 
 std::string timeText(Time time)
 {
@@ -127,54 +137,75 @@ std::string speedText(uint64_t nodesPerSecond)
 }
 
 // -------------------------------------------------
+// String encoding conversion
+//
+// All public conversions go through the same pair of helpers: multi-byte -> wide and
+// wide -> multi-byte using a caller-supplied Windows codepage. On non-Windows targets these
+// are no-ops (the project's text inputs and outputs are already UTF-8 there).
 
-std::string LegacyFileCPToUTF8(std::string str)
-{
 #if defined(_WIN32)
-    if (str.empty())
+
+namespace {
+
+std::wstring mbToWide(const std::string &mb, UINT codepage)
+{
+    if (mb.empty())
         return {};
 
-    int nCodePage = Config::DatabaseLegacyFileCodePage;
-    // Use system's active code page if not specified
-    if (nCodePage == 0)
-        nCodePage = GetACP();
-    int wideSize = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
-    if (!wideSize)
-        return {};  // error
+    int wideLen = MultiByteToWideChar(codepage, 0, mb.c_str(), (int)mb.length(), nullptr, 0);
+    if (wideLen <= 0)
+        return {};
 
-    std::wstring wstr(wideSize + 1, '\0');
-    if (!MultiByteToWideChar(nCodePage,
+    std::wstring wide(wideLen, L'\0');
+    if (!MultiByteToWideChar(codepage, 0, mb.c_str(), (int)mb.length(), wide.data(), wideLen))
+        return {};
+
+    return wide;
+}
+
+std::string wideToMb(const std::wstring &wide, UINT codepage)
+{
+    if (wide.empty())
+        return {};
+
+    int mbLen = WideCharToMultiByte(codepage,
+                                    0,
+                                    wide.c_str(),
+                                    (int)wide.length(),
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    nullptr);
+    if (mbLen <= 0)
+        return {};
+
+    std::string mb(mbLen, '\0');
+    if (!WideCharToMultiByte(codepage,
                              0,
-                             str.c_str(),
-                             (int)str.length(),
-                             wstr.data(),
-                             (int)wstr.size()))
-        return {};  // error
-
-    int utf8Size = WideCharToMultiByte(CP_UTF8,
-                                       0,
-                                       wstr.c_str(),
-                                       (int)wstr.length(),
-                                       nullptr,
-                                       0,
-                                       nullptr,
-                                       nullptr);
-    if (!utf8Size)
-        return {};  // error
-
-    std::string utf8str(utf8Size, '\0');
-    if (!WideCharToMultiByte(CP_UTF8,
-                             0,
-                             wstr.c_str(),
-                             (int)wstr.length(),
-                             utf8str.data(),
-                             (int)utf8str.size(),
+                             wide.c_str(),
+                             (int)wide.length(),
+                             mb.data(),
+                             mbLen,
                              nullptr,
                              nullptr))
-        return {};  // error
+        return {};
 
-    return utf8str;
+    return mb;
+}
+
+}  // namespace
+
+#endif  // _WIN32
+
+std::string LegacyFileCPToUTF8(std::string str, uint16_t codepage)
+{
+#if defined(_WIN32)
+    UINT cp = codepage;
+    if (cp == 0)  // 0 means "use the system's active codepage".
+        cp = GetACP();
+    return wideToMb(mbToWide(str, cp), CP_UTF8);
 #else
+    (void)codepage;
     return str;
 #endif
 }
@@ -182,46 +213,7 @@ std::string LegacyFileCPToUTF8(std::string str)
 std::string ConsoleCPToUTF8(std::string str)
 {
 #if defined(_WIN32)
-    if (str.empty())
-        return {};
-
-    int nCodePage = GetConsoleCP();
-    int wideSize  = MultiByteToWideChar(nCodePage, 0, str.c_str(), (int)str.length(), nullptr, 0);
-    if (!wideSize)
-        return {};  // error
-
-    std::wstring wstr(wideSize + 1, '\0');
-    if (!MultiByteToWideChar(nCodePage,
-                             0,
-                             str.c_str(),
-                             (int)str.length(),
-                             wstr.data(),
-                             (int)wstr.size()))
-        return {};  // error
-
-    int utf8Size = WideCharToMultiByte(CP_UTF8,
-                                       0,
-                                       wstr.c_str(),
-                                       (int)wstr.length(),
-                                       nullptr,
-                                       0,
-                                       nullptr,
-                                       nullptr);
-    if (!utf8Size)
-        return {};  // error
-
-    std::string utf8str(utf8Size, '\0');
-    if (!WideCharToMultiByte(CP_UTF8,
-                             0,
-                             wstr.c_str(),
-                             (int)wstr.length(),
-                             utf8str.data(),
-                             (int)utf8str.size(),
-                             nullptr,
-                             nullptr))
-        return {};  // error
-
-    return utf8str;
+    return wideToMb(mbToWide(str, GetConsoleCP()), CP_UTF8);
 #else
     return str;
 #endif
@@ -230,77 +222,21 @@ std::string ConsoleCPToUTF8(std::string str)
 std::string UTF8ToConsoleCP(std::string utf8str)
 {
 #if defined(_WIN32)
-    if (utf8str.empty())
-        return {};
-
-    int nCodePage = GetConsoleOutputCP();
-    int wideSize =
-        MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), (int)utf8str.length(), nullptr, 0);
-    if (!wideSize)
-        return {};  // error
-
-    std::wstring wstr(wideSize + 1, '\0');
-    if (!MultiByteToWideChar(CP_UTF8,
-                             0,
-                             utf8str.c_str(),
-                             (int)utf8str.length(),
-                             wstr.data(),
-                             (int)wstr.size()))
-        return {};  // error
-
-    int utf8Size = WideCharToMultiByte(nCodePage,
-                                       0,
-                                       wstr.c_str(),
-                                       (int)wstr.length(),
-                                       nullptr,
-                                       0,
-                                       nullptr,
-                                       nullptr);
-    if (!utf8Size)
-        return {};  // error
-
-    std::string str(utf8Size, '\0');
-    if (!WideCharToMultiByte(nCodePage,
-                             0,
-                             wstr.c_str(),
-                             (int)wstr.length(),
-                             str.data(),
-                             (int)str.size(),
-                             nullptr,
-                             nullptr))
-        return {};  // error
-
-    return str;
+    return wideToMb(mbToWide(utf8str, CP_UTF8), GetConsoleOutputCP());
 #else
     return utf8str;
 #endif
 }
 
 // -------------------------------------------------
+// Filesystem helpers
 
 std::filesystem::path pathFromConsoleString(const std::string &path)
 {
 #if defined(_WIN32)
-    // Use windows string conversion api due to mingw64 limitations.
-    int nCodePage = GetConsoleCP();
-    int convertResult =
-        MultiByteToWideChar(nCodePage, 0, path.c_str(), (int)path.length(), nullptr, 0);
-
-    if (convertResult > 0) {
-        std::wstring widePath;
-        widePath.resize(convertResult + 1);
-        convertResult = MultiByteToWideChar(nCodePage,
-                                            0,
-                                            path.c_str(),
-                                            (int)path.length(),
-                                            widePath.data(),
-                                            (int)widePath.size());
-
-        if (convertResult > 0)
-            return widePath;
-    }
-
-    return {};
+    // Round-trip through wide chars to preserve non-ASCII characters that the OEM/console
+    // codepage cannot represent in std::string.
+    return mbToWide(path, GetConsoleCP());
 #else
     return path;
 #endif
@@ -309,36 +245,7 @@ std::filesystem::path pathFromConsoleString(const std::string &path)
 std::string pathToConsoleString(const std::filesystem::path &path)
 {
 #if defined(_WIN32)
-    std::wstring widePath = path.wstring();
-
-    // Use windows string conversion api due to mingw64 limitations.
-    int nCodePage     = GetConsoleOutputCP();
-    int convertResult = WideCharToMultiByte(nCodePage,
-                                            0,
-                                            widePath.c_str(),
-                                            (int)widePath.length(),
-                                            nullptr,
-                                            0,
-                                            0,
-                                            0);
-
-    if (convertResult > 0) {
-        std::string narrowPath;
-        narrowPath.resize(convertResult + 1);
-        convertResult = WideCharToMultiByte(nCodePage,
-                                            0,
-                                            widePath.c_str(),
-                                            (int)widePath.length(),
-                                            narrowPath.data(),
-                                            (int)narrowPath.size(),
-                                            0,
-                                            0);
-
-        if (convertResult > 0)
-            return narrowPath.c_str();
-    }
-
-    return {};
+    return wideToMb(path.wstring(), GetConsoleOutputCP());
 #else
     return path.string();
 #endif
@@ -383,7 +290,9 @@ bool ensureDir(std::string dirpath, bool raiseException)
 {
     std::filesystem::path path = pathFromConsoleString(dirpath);
     std::error_code       ec;
-    if (std::filesystem::exists(path, ec))
+    // Only short-circuit when a *directory* already exists; a regular file at this path is not
+    // a satisfied directory, so fall through and let create_directories report the conflict.
+    if (std::filesystem::is_directory(path, ec))
         return true;
 
     if (raiseException)

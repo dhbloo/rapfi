@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "../core/compressor.h"
 #include "../core/iohelper.h"
 #include "../core/platform.h"
 
@@ -27,6 +28,18 @@
 #include <istream>
 #include <mutex>
 #include <type_traits>
+
+/// Linear scan: does `c` contain a value equal to `elem`? Used by the weight loaders below to
+/// validate header fields (supported rules / board sizes) and model output names.
+template <typename Container, typename ElemType>
+bool contains(const Container &c, ElemType elem)
+{
+    for (auto it = c.cbegin(); it != c.end(); it++) {
+        if (*it == elem)
+            return true;
+    }
+    return false;
+}
 
 namespace Evaluation {
 

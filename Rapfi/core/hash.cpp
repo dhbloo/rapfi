@@ -18,19 +18,19 @@
 
 #include "hash.h"
 
-#include "utils.h"
-
-#define ZOBRISH_SEED 0xa52ca39782739747ULL
+#include "random.h"  // PRNG (the only utility hash.cpp needs)
 
 namespace Hash {
 
-/// Global zobrist table that will be inititalized at startup.
+/// Seed for the Zobrist table PRNG. Changing this value invalidates all transposition table
+/// contents persisted between runs and is part of what makes the bench hash deterministic.
+constexpr uint64_t ZOBRIST_SEED = 0xa52ca39782739747ULL;
+
 HashKey zobrist[SIDE_NB][FULL_BOARD_CELL_COUNT];
 HashKey zobristSide[SIDE_NB];
 
-/// Init zobrish table using PRNG with the given seed.
-/// @param seed Seed of PRNG.
-void initZobrish(uint64_t seed)
+/// Fill the Zobrist tables with a deterministic stream of pseudo-random keys.
+static void initZobrist(uint64_t seed)
 {
     PRNG prng {seed};
 
@@ -43,8 +43,9 @@ void initZobrish(uint64_t seed)
     zobristSide[WHITE] = prng();
 }
 
-const auto init = []() {
-    initZobrish(ZOBRISH_SEED);
+/// Run `initZobrist` once at program start, before any board is constructed.
+[[maybe_unused]] static const bool zobristInitialised = [] {
+    initZobrist(ZOBRIST_SEED);
     return true;
 }();
 

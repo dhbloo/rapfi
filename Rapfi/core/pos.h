@@ -18,49 +18,69 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
 
 // -------------------------------------------------
-// Board size & limits
+// Board address-space layout
+//
+// Positions are packed into a single 16-bit integer with a power-of-two row stride, and a
+// few rows/columns of WALL boundary on every side. This lets neighbour lookups skip explicit
+// edge checks: walking off the board lands on WALL cells that the pattern code naturally
+// classifies as DEAD.
 
-/// Full board size. We use uint64_t bitboard and each cell takes 2 bits.
-constexpr int FULL_BOARD_SIZE = 32;
-/// Full board array size. This also counts all boundary cells.
+constexpr int FULL_BOARD_SIZE       = 32;  ///< Row stride (power of two), including boundary.
 constexpr int FULL_BOARD_CELL_COUNT = FULL_BOARD_SIZE * FULL_BOARD_SIZE;
-/// Reserved boundary for branchless query in Board class implementation.
-constexpr int BOARD_BOUNDARY = 5;
-/// The actual maximum board size we can use.
-constexpr int MAX_BOARD_SIZE = FULL_BOARD_SIZE - 2 * BOARD_BOUNDARY;
-/// The maximum possible moves on an empty board (including a PASS).
-constexpr int MAX_MOVES = MAX_BOARD_SIZE * MAX_BOARD_SIZE + 1;
+constexpr int BOARD_BOUNDARY        = 5;  ///< Padding cells on every side, filled with WALL.
+constexpr int MAX_BOARD_SIZE        = FULL_BOARD_SIZE - 2 * BOARD_BOUNDARY;
+constexpr int MAX_MOVES             = MAX_BOARD_SIZE * MAX_BOARD_SIZE + 1;  ///< +1 for PASS.
 
 // -------------------------------------------------
+// Pos
 
-/// Pos represents a move coordinate on board
+/// Packed (x, y) coordinate in the board address space `[NONE, FULL_BOARD_END)`.
+///
+/// The packing `((y + BOARD_BOUNDARY) << 5) | (x + BOARD_BOUNDARY)` puts the playable cells
+/// inside a 32-column strip, lets a `Direction` offset be added with plain integer arithmetic,
+/// and keeps the WALL boundary inside addressable range so border checks are unnecessary in
+/// the inner pattern-lookup loops.
 struct Pos
 {
-public:
-    int16_t _pos;
-
     Pos() = default;
     constexpr Pos(int x, int y) : _pos(((y + BOARD_BOUNDARY) << 5) | (x + BOARD_BOUNDARY)) {}
-    constexpr explicit Pos(int16_t _pos) : _pos(_pos) {}
+    constexpr explicit Pos(int16_t pos) : _pos(pos) {}
+
     constexpr int x() const { return (_pos & 31) - BOARD_BOUNDARY; }
     constexpr int y() const { return (_pos >> 5) - BOARD_BOUNDARY; }
-    constexpr     operator int() const { return _pos; }
-    inline bool   valid() const { return _pos >= PASS._pos && _pos < FULL_BOARD_END._pos; }
-    inline int    moveIndex() const { return y() * MAX_BOARD_SIZE + x(); }
-    inline bool   isInBoard(int boardWidth, int boardHeight) const;
 
+    /// Implicit conversion to the packed integer index (used for array indexing and ordering).
+    constexpr operator int() const { return _pos; }
+
+    /// True iff this is an addressable index: PASS, NONE, a wall cell, or a playable cell.
+    /// Use `isInBoard(w, h)` for the stricter "inside the playable region" test.
+    inline bool valid() const { return _pos >= PASS._pos && _pos < FULL_BOARD_END._pos; }
+
+    /// Row-major index into a `MAX_BOARD_SIZE * MAX_BOARD_SIZE` array (boundary excluded).
+    inline int moveIndex() const { return y() * MAX_BOARD_SIZE + x(); }
+
+    inline bool isInBoard(int boardWidth, int boardHeight) const;
+
+    /// Chebyshev (king-move) distance. Returns -1 if either operand is PASS or NONE.
     static int distance(Pos p1, Pos p2);
+
+    /// Chebyshev distance if both operands share a horizontal / vertical / diagonal line;
+    /// otherwise `FULL_BOARD_SIZE`. Returns -1 if either operand is PASS or NONE.
     static int lineDistance(Pos p1, Pos p2);
 
-    static const Pos NONE;
-    static const Pos PASS;
-    static const Pos FULL_BOARD_START;
-    static const Pos FULL_BOARD_END;
+    static const Pos NONE;              ///< Index 0: first boundary cell, also used as sentinel.
+    static const Pos PASS;              ///< Sentinel for a pass / null move (`_pos == -1`).
+    static const Pos FULL_BOARD_START;  ///< First index for full-address-space iteration.
+    static const Pos FULL_BOARD_END;    ///< One past the last addressable cell.
+
+private:
+    int16_t _pos;  ///< Packed coordinate; read via operator int().
 };
 
 inline constexpr Pos Pos::NONE {0};
@@ -68,7 +88,11 @@ inline constexpr Pos Pos::PASS {-1};
 inline constexpr Pos Pos::FULL_BOARD_START {0};
 inline constexpr Pos Pos::FULL_BOARD_END {FULL_BOARD_CELL_COUNT};
 
-/// Direction represents one of the eight line directions on the board
+// -------------------------------------------------
+// Direction
+
+/// Offset added to a `Pos` to reach a neighbour. Precomputed for the packed row stride so
+/// `pos + dir` is a single integer add.
 enum Direction : int16_t {
     UP    = -FULL_BOARD_SIZE,
     LEFT  = -1,
@@ -78,13 +102,29 @@ enum Direction : int16_t {
     UP_LEFT    = UP + LEFT,
     UP_RIGHT   = UP + RIGHT,
     DOWN_LEFT  = DOWN + LEFT,
-    DOWN_RIGHT = DOWN + RIGHT
+    DOWN_RIGHT = DOWN + RIGHT,
 };
 
+/// The four canonical line directions iterated in pattern lookups: horizontal, vertical, and
+/// the two diagonals. Each line pattern walks outward from a cell in one of these directions
+/// and its inverse.
 constexpr Direction DIRECTION[] = {RIGHT, DOWN, UP_RIGHT, DOWN_RIGHT};
 
+constexpr Direction operator+(Direction d1, Direction d2)
+{
+    return Direction(int(d1) + int(d2));
+}
+constexpr Direction operator*(int i, Direction d)
+{
+    return Direction(i * int(d));
+}
+constexpr Direction operator*(Direction d, int i)
+{
+    return Direction(int(d) * i);
+}
+
 // -------------------------------------------------
-// Pos/Direction related operations
+// Pos / Direction arithmetic
 
 constexpr Pos &operator++(Pos &p)
 {
@@ -107,8 +147,6 @@ constexpr Pos operator--(Pos &p, int)
     return tmp;
 }
 
-// Additional operators to add a Direction to a Pos
-
 constexpr Pos operator+(Pos p, Direction i)
 {
     return Pos(int(p) + i);
@@ -126,15 +164,12 @@ inline Pos &operator-=(Pos &p, Direction i)
     return p = Pos(int(p) - i);
 }
 
-/// Check whether the pos is inside a board with width and height.
 inline bool Pos::isInBoard(int boardWidth, int boardHeight) const
 {
     int X = x(), Y = y();
     return X >= 0 && X < boardWidth && Y >= 0 && Y < boardHeight;
 }
 
-/// Return the Chebyshev Distance between two pos.
-/// @note If any of the pos is a pass or none, it will return -1.
 inline int Pos::distance(Pos p1, Pos p2)
 {
     if (p1 <= Pos::NONE || p2 <= Pos::NONE)
@@ -145,10 +180,6 @@ inline int Pos::distance(Pos p1, Pos p2)
     return xDist < yDist ? yDist : xDist;
 }
 
-/// Return the line distance between the two pos.
-/// If two pos lies in a line, return the Chebyshev Distance of the two pos.
-/// Otherwise, it will return FULL_BOARD_SIZE.
-/// @note If any of the pos is a pass or none, it will return -1.
 inline int Pos::lineDistance(Pos p1, Pos p2)
 {
     if (p1 <= Pos::NONE || p2 <= Pos::NONE)
@@ -171,66 +202,48 @@ struct std::hash<Pos>
     std::size_t operator()(Pos const &p) const noexcept { return p; }
 };
 
-constexpr Direction operator+(Direction d1, Direction d2)
-{
-    return Direction(int(d1) + int(d2));
-}
-constexpr Direction operator*(int i, Direction d)
-{
-    return Direction(i * int(d));
-}
-constexpr Direction operator*(Direction d, int i)
-{
-    return Direction(int(d) * i);
-}
-
 // -------------------------------------------------
+// Board symmetries
 
-/// TransformType represents one of the eight transforms.
+/// The eight symmetries of a square board (D4 dihedral group).
 enum TransformType {
-    IDENTITY,    // (x, y) -> (x, y)
-    ROTATE_90,   // (x, y) -> (y, s - x)
-    ROTATE_180,  // (x, y) -> (s - x, s - y)
-    ROTATE_270,  // (x, y) -> (s - y, x)
-    FLIP_X,      // (x, y) -> (x, s - y)
-    FLIP_Y,      // (x, y) -> (s - x, y)
-    FLIP_XY,     // (x, y) -> (y, x)
-    FLIP_YX,     // (x, y) -> (s - y, s - x)
+    IDENTITY,    ///< (x, y) -> (x, y)
+    ROTATE_90,   ///< (x, y) -> (y, s - x)
+    ROTATE_180,  ///< (x, y) -> (s - x, s - y)
+    ROTATE_270,  ///< (x, y) -> (s - y, x)
+    FLIP_X,      ///< (x, y) -> (x, s - y) - reflect across the horizontal mid-line.
+    FLIP_Y,      ///< (x, y) -> (s - x, y) - reflect across the vertical mid-line.
+    FLIP_XY,     ///< (x, y) -> (y, x)     - reflect across the main diagonal.
+    FLIP_YX,     ///< (x, y) -> (s - y, s - x) - reflect across the anti-diagonal.
     TRANS_NB
 };
 
-/// Check if a transform type is applicable to rectangle.
+/// Whether the transform is meaningful on a non-square board (no axis-swap).
 constexpr bool isRectangleTransform(TransformType t)
 {
     return t == IDENTITY || t == ROTATE_180 || t == FLIP_X || t == FLIP_Y;
 }
 
-/// Apply a type of transform to the pos with a square board size.
+/// Apply a transform on a square board of side `boardsize`.
 constexpr Pos applyTransform(Pos pos, int boardsize, TransformType trans)
 {
     int x = pos.x(), y = pos.y();
     int s = boardsize - 1;
 
     switch (trans) {
-    case ROTATE_90:  // (x, y) -> (y, s - x)
-        return {y, s - x};
-    case ROTATE_180:  // (x, y) -> (s - x, s - y)
-        return {s - x, s - y};
-    case ROTATE_270:  // (x, y) -> (s - y, x)
-        return {s - y, x};
-    case FLIP_X:  // (x, y) -> (x, s - y)
-        return {x, s - y};
-    case FLIP_Y:  // (x, y) -> (s - x, y)
-        return {s - x, y};
-    case FLIP_XY:  // (x, y) -> (y, x)
-        return {y, x};
-    case FLIP_YX:  // (x, y) -> (s - y, s - x)
-        return {s - y, s - x};
+    case ROTATE_90: return {y, s - x};
+    case ROTATE_180: return {s - x, s - y};
+    case ROTATE_270: return {s - y, x};
+    case FLIP_X: return {x, s - y};
+    case FLIP_Y: return {s - x, y};
+    case FLIP_XY: return {y, x};
+    case FLIP_YX: return {s - y, s - x};
     default: return {x, y};
     }
 }
 
-/// Apply a type of transform to the pos with a rectangle board size.
+/// Apply a transform on a rectangular board. Axis-swap transforms degrade to IDENTITY when
+/// `sizeX != sizeY`.
 constexpr Pos applyTransform(Pos pos, int sizeX, int sizeY, TransformType trans)
 {
     if (sizeX == sizeY)
@@ -240,383 +253,121 @@ constexpr Pos applyTransform(Pos pos, int sizeX, int sizeY, TransformType trans)
     int sx = sizeX - 1, sy = sizeY - 1;
 
     switch (trans) {
-    case ROTATE_180:  // (x, y) -> (sx - x, sy - y)
-        return {sx - x, sy - y};
-    case FLIP_X:  // (x, y) -> (x, sy - y)
-        return {x, sy - y};
-    case FLIP_Y:  // (x, y) -> (sx - x, y)
-        return {sx - x, y};
+    case ROTATE_180: return {sx - x, sy - y};
+    case FLIP_X: return {x, sy - y};
+    case FLIP_Y: return {sx - x, y};
     default: return {x, y};
     }
 }
 
 // -------------------------------------------------
-// Direction ranges
+// Protocol coordinate orientation
 
-const Direction RANGE_LINE2[] = {
-    UP_LEFT * 2,
-    UP * 2,
-    UP_RIGHT * 2,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    LEFT * 2,
-    LEFT,
-    RIGHT * 2,
-    RIGHT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_LEFT * 2,
-    DOWN * 2,
-    DOWN_RIGHT * 2,
+/// How protocol (x, y) integer pairs are remapped to/from internal board coordinates, so the
+/// engine can match different GUIs' coordinate orientations. The active mode is held by the
+/// configuration layer (`Config::IOCoordMode`) and passed explicitly to the conversion
+/// helpers in iohelper.h.
+enum class CoordConvertionMode {
+    NONE,     ///< No remapping.
+    X_FLIPY,  ///< Keep x, flip y.
+    FLIPY_X,  ///< Swap and flip: (x, y) <-> (flipped y, x).
 };
 
-const Direction RANGE_SQUARE2[] = {
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
+// -------------------------------------------------
+// Candidate ranges
+//
+// A "candidate range" is the set of cells (expressed as Direction offsets from a played
+// stone) that the engine considers as move candidates around that stone. A range is
+// parameterised by a filled square of side `2*SquareDist + 1` and an extension along the
+// eight directions out to `LineDist` cells.
+
+/// Set of cells considered as move candidates around played stones. Larger ranges produce
+/// more candidates but slower move generation; `FULL_BOARD` disables the optimization.
+enum class CandidateRange {
+    SQUARE2,        ///< 5x5 square.
+    SQUARE2_LINE3,  ///< 5x5 square plus 8-direction line out to 3 cells.
+    SQUARE3,        ///< 7x7 square.
+    SQUARE3_LINE4,  ///< 7x7 square plus 8-direction line out to 4 cells.
+    SQUARE4,        ///< 9x9 square.
+    FULL_BOARD,     ///< Every empty cell is a candidate.
+    CAND_RANGE_NB,
 };
 
-const Direction RANGE_SQUARE2_LINE3[] = {
-    UP_LEFT * 3,
-    UP * 3,
-    UP_RIGHT * 3,
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
-    DOWN_LEFT * 3,
-    DOWN * 3,
-    DOWN_RIGHT * 3,
+namespace detail {
+
+/// Predicate: does offset (dx, dy) belong to the (SquareDist, LineDist) candidate range?
+/// The centre cell (0, 0) is always excluded.
+constexpr bool inCandidateRange(int dx, int dy, int squareDist, int lineDist)
+{
+    int ax = dx < 0 ? -dx : dx;
+    int ay = dy < 0 ? -dy : dy;
+    if (ax == 0 && ay == 0)
+        return false;
+    if (ax > lineDist || ay > lineDist)
+        return false;
+    bool inSquare = ax <= squareDist && ay <= squareDist;
+    bool onLine   = dx == 0 || dy == 0 || dx == dy || dx == -dy;
+    return inSquare || onLine;
+}
+
+template <int SquareDist, int LineDist>
+constexpr int candidateRangeCellCount()
+{
+    int n = 0;
+    for (int dy = -LineDist; dy <= LineDist; ++dy)
+        for (int dx = -LineDist; dx <= LineDist; ++dx)
+            if (inCandidateRange(dx, dy, SquareDist, LineDist))
+                ++n;
+    return n;
+}
+
+/// Build the Direction array for a (SquareDist, LineDist) candidate range, ordered
+/// row-major (y ascending, then x ascending) with the centre cell skipped.
+template <int SquareDist, int LineDist>
+constexpr auto buildCandidateRange()
+{
+    std::array<Direction, candidateRangeCellCount<SquareDist, LineDist>()> arr {};
+    int                                                                    i = 0;
+    for (int dy = -LineDist; dy <= LineDist; ++dy)
+        for (int dx = -LineDist; dx <= LineDist; ++dx)
+            if (inCandidateRange(dx, dy, SquareDist, LineDist))
+                arr[i++] = Direction(dy * FULL_BOARD_SIZE + dx);
+    return arr;
+}
+
+}  // namespace detail
+
+inline constexpr auto RANGE_SQUARE2       = detail::buildCandidateRange<2, 2>();
+inline constexpr auto RANGE_SQUARE2_LINE3 = detail::buildCandidateRange<2, 3>();
+inline constexpr auto RANGE_SQUARE3       = detail::buildCandidateRange<3, 3>();
+inline constexpr auto RANGE_SQUARE3_LINE4 = detail::buildCandidateRange<3, 4>();
+inline constexpr auto RANGE_SQUARE4       = detail::buildCandidateRange<4, 4>();
+
+/// Internal range used only by VCF move generation (search/movepick.cpp), not a board-
+/// selectable CandidateRange. Kept here next to the other ranges since it shares the builder.
+inline constexpr auto RANGE_SQUARE2_LINE4 = detail::buildCandidateRange<2, 4>();
+
+/// Resolved data for a board-selectable candidate range.
+struct CandidateRangeInfo
+{
+    const Direction *offsets;      ///< Neighbour offset table; nullptr for FULL_BOARD.
+    size_t           offsetCount;  ///< Length of `offsets`; 0 for FULL_BOARD.
+    int              expandDist;   ///< Candidate-area expansion distance; 0 for FULL_BOARD.
 };
 
-const Direction RANGE_SQUARE3[] = {
-    UP_LEFT * 3,
-    UP_LEFT * 2 + UP,
-    UP_LEFT + UP * 2,
-    UP * 3,
-    UP_RIGHT + UP * 2,
-    UP_RIGHT * 2 + UP,
-    UP_RIGHT * 3,
-    UP_LEFT * 2 + LEFT,
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_RIGHT * 2 + RIGHT,
-    UP_LEFT + LEFT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    UP_RIGHT + RIGHT * 2,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    DOWN_LEFT + LEFT * 2,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_RIGHT + RIGHT * 2,
-    DOWN_LEFT * 2 + LEFT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
-    DOWN_RIGHT * 2 + RIGHT,
-    DOWN_LEFT * 3,
-    DOWN_LEFT * 2 + DOWN,
-    DOWN_LEFT + DOWN * 2,
-    DOWN * 3,
-    DOWN_RIGHT + DOWN * 2,
-    DOWN_RIGHT * 2 + DOWN,
-    DOWN_RIGHT * 3,
-};
-
-const Direction RANGE_LINE4[] = {
-    UP_LEFT * 4,
-    UP * 4,
-    UP_RIGHT * 4,
-    UP_LEFT * 3,
-    UP * 3,
-    UP_RIGHT * 3,
-    UP_LEFT * 2,
-    UP * 2,
-    UP_RIGHT * 2,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    LEFT * 4,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    RIGHT * 4,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_LEFT * 2,
-    DOWN * 2,
-    DOWN_RIGHT * 2,
-    DOWN_LEFT * 3,
-    DOWN * 3,
-    DOWN_RIGHT * 3,
-    DOWN_LEFT * 4,
-    DOWN * 4,
-    DOWN_RIGHT * 4,
-};
-
-const Direction RANGE_SQUARE2_LINE4[] = {
-    UP_LEFT * 4,
-    UP * 4,
-    UP_RIGHT * 4,
-    UP_LEFT * 3,
-    UP * 3,
-    UP_RIGHT * 3,
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    LEFT * 4,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    RIGHT * 4,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
-    DOWN_LEFT * 3,
-    DOWN * 3,
-    DOWN_RIGHT * 3,
-    DOWN_LEFT * 4,
-    DOWN * 4,
-    DOWN_RIGHT * 4,
-};
-
-const Direction RANGE_SQUARE3_LINE4[] = {
-    UP_LEFT * 4,
-    UP * 4,
-    UP_RIGHT * 4,
-
-    UP_LEFT * 3,
-    UP_LEFT * 2 + UP,
-    UP_LEFT + UP * 2,
-    UP * 3,
-    UP_RIGHT + UP * 2,
-    UP_RIGHT * 2 + UP,
-    UP_RIGHT * 3,
-
-    UP_LEFT * 2 + LEFT,
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_RIGHT * 2 + RIGHT,
-
-    UP_LEFT + LEFT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    UP_RIGHT + RIGHT * 2,
-
-    LEFT * 4,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    RIGHT * 4,
-
-    DOWN_LEFT + LEFT * 2,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_RIGHT + RIGHT * 2,
-
-    DOWN_LEFT * 2 + LEFT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
-    DOWN_RIGHT * 2 + RIGHT,
-
-    DOWN_LEFT * 3,
-    DOWN_LEFT * 2 + DOWN,
-    DOWN_LEFT + DOWN * 2,
-    DOWN * 3,
-    DOWN_RIGHT + DOWN * 2,
-    DOWN_RIGHT * 2 + DOWN,
-    DOWN_RIGHT * 3,
-
-    DOWN_LEFT * 4,
-    DOWN * 4,
-    DOWN_RIGHT * 4,
-};
-
-const Direction RANGE_SQUARE4[] = {
-    UP_LEFT * 4,
-    UP_LEFT * 3 + UP,
-    UP_LEFT * 2 + UP * 2,
-    UP_LEFT + UP * 3,
-    UP * 4,
-    UP_RIGHT + UP * 3,
-    UP_RIGHT * 2 + UP * 2,
-    UP_RIGHT * 3 + UP,
-    UP_RIGHT * 4,
-
-    UP_LEFT * 3 + LEFT,
-    UP_LEFT * 3,
-    UP_LEFT * 2 + UP,
-    UP_LEFT + UP * 2,
-    UP * 3,
-    UP_RIGHT + UP * 2,
-    UP_RIGHT * 2 + UP,
-    UP_RIGHT * 3,
-    UP_RIGHT * 3 + RIGHT,
-
-    UP_LEFT * 2 + LEFT * 2,
-    UP_LEFT * 2 + LEFT,
-    UP_LEFT * 2,
-    UP_LEFT + UP,
-    UP * 2,
-    UP_RIGHT + UP,
-    UP_RIGHT * 2,
-    UP_RIGHT * 2 + RIGHT,
-    UP_RIGHT * 2 + RIGHT * 2,
-
-    UP_LEFT + LEFT * 3,
-    UP_LEFT + LEFT * 2,
-    UP_LEFT + LEFT,
-    UP_LEFT,
-    UP,
-    UP_RIGHT,
-    UP_RIGHT + RIGHT,
-    UP_RIGHT + RIGHT * 2,
-    UP_RIGHT + RIGHT * 3,
-
-    LEFT * 4,
-    LEFT * 3,
-    LEFT * 2,
-    LEFT,
-    RIGHT,
-    RIGHT * 2,
-    RIGHT * 3,
-    RIGHT * 4,
-
-    DOWN_LEFT + LEFT * 3,
-    DOWN_LEFT + LEFT * 2,
-    DOWN_LEFT + LEFT,
-    DOWN_LEFT,
-    DOWN,
-    DOWN_RIGHT,
-    DOWN_RIGHT + RIGHT,
-    DOWN_RIGHT + RIGHT * 2,
-    DOWN_RIGHT + RIGHT * 3,
-
-    DOWN_LEFT * 2 + LEFT * 2,
-    DOWN_LEFT * 2 + LEFT,
-    DOWN_LEFT * 2,
-    DOWN_LEFT + DOWN,
-    DOWN * 2,
-    DOWN_RIGHT + DOWN,
-    DOWN_RIGHT * 2,
-    DOWN_RIGHT * 2 + RIGHT,
-    DOWN_RIGHT * 2 + RIGHT * 2,
-
-    DOWN_LEFT * 3 + LEFT,
-    DOWN_LEFT * 3,
-    DOWN_LEFT * 2 + DOWN,
-    DOWN_LEFT + DOWN * 2,
-    DOWN * 3,
-    DOWN_RIGHT + DOWN * 2,
-    DOWN_RIGHT * 2 + DOWN,
-    DOWN_RIGHT * 3,
-    DOWN_RIGHT * 3 + RIGHT,
-
-    DOWN_LEFT * 4,
-    DOWN_LEFT * 3 + DOWN,
-    DOWN_LEFT * 2 + DOWN * 2,
-    DOWN_LEFT + DOWN * 3,
-    DOWN * 4,
-    DOWN_RIGHT + DOWN * 3,
-    DOWN_RIGHT * 2 + DOWN * 2,
-    DOWN_RIGHT * 3 + DOWN,
-    DOWN_RIGHT * 4,
-};
+/// Map a board-selectable CandidateRange to its precomputed offset table and expansion
+/// distance, keeping the enum and the RANGE_* arrays in agreement in one place. FULL_BOARD
+/// has no table (every empty cell is a candidate) and yields {nullptr, 0, 0}.
+constexpr CandidateRangeInfo candidateRangeInfo(CandidateRange range)
+{
+    switch (range) {
+    case CandidateRange::SQUARE2: return {RANGE_SQUARE2.data(), RANGE_SQUARE2.size(), 2};
+    case CandidateRange::SQUARE2_LINE3:
+        return {RANGE_SQUARE2_LINE3.data(), RANGE_SQUARE2_LINE3.size(), 3};
+    case CandidateRange::SQUARE3: return {RANGE_SQUARE3.data(), RANGE_SQUARE3.size(), 3};
+    case CandidateRange::SQUARE3_LINE4:
+        return {RANGE_SQUARE3_LINE4.data(), RANGE_SQUARE3_LINE4.size(), 3};
+    case CandidateRange::SQUARE4: return {RANGE_SQUARE4.data(), RANGE_SQUARE4.size(), 4};
+    default: return {nullptr, 0, 0};  // FULL_BOARD
+    }
+}

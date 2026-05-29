@@ -16,30 +16,34 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "utils.h"
+#include "version.h"
 
+#include <iomanip>
 #include <sstream>
 
 #define RAPFI_MAJOR_VER    0
 #define RAPFI_MINOR_VER    43
-#define RAPFI_REVISION_VER 01
+#define RAPFI_REVISION_VER 1
 
-#define MACRO_STR(s)         #s
-#define VERSION_STR(a, b, c) MACRO_STR(a) "." MACRO_STR(b) "." MACRO_STR(c)
-#define VERSION_STR2(a, b)   MACRO_STR(a) "." MACRO_STR(b)
-#define CURRENT_VER          VERSION_STR(RAPFI_MAJOR_VER, RAPFI_MINOR_VER, RAPFI_REVISION_VER)
+// Two-step stringify so macro arguments are themselves expanded before becoming text. Used to
+// format compiler version macros like __clang_major__.
+#define STRINGIFY(s)         #s
+#define VERSION_STR(a, b, c) STRINGIFY(a) "." STRINGIFY(b) "." STRINGIFY(c)
+#define VERSION_STR2(a, b)   STRINGIFY(a) "." STRINGIFY(b)
 
 std::tuple<int, int, int> getVersionNumbers()
 {
     return {RAPFI_MAJOR_VER, RAPFI_MINOR_VER, RAPFI_REVISION_VER};
 }
 
-std::string getBuildInfo()
+/// One-liner describing the toolchain, target OS, and enabled instruction-set features that
+/// the binary was built with. Appended in parentheses to the version string.
+static std::string getBuildInfo()
 {
     std::stringstream ss;
 
 #if defined(__INTEL_LLVM_COMPILER)
-    ss << "ICX " << MACRO_STR(__INTEL_LLVM_COMPILER);
+    ss << "ICX " << STRINGIFY(__INTEL_LLVM_COMPILER);
 #elif defined(__clang__)
     ss << "clang++ " << VERSION_STR(__clang_major__, __clang_minor__, __clang_patchlevel__);
 #elif _MSC_VER
@@ -95,11 +99,9 @@ std::string getBuildInfo()
 #if !defined(MULTI_THREADING)
     ss << " SINGLE_THREAD";
 #endif
-
 #if defined(NO_PREFETCH)
     ss << " NO_PREFETCH";
 #endif
-
 #if !defined(NDEBUG)
     ss << " DEBUG";
 #endif
@@ -109,8 +111,11 @@ std::string getBuildInfo()
 
 std::string getVersionInfo()
 {
+    // Revision is zero-padded to two digits (e.g. "0.43.01") at runtime, so the numeric
+    // RAPFI_REVISION_VER macro stays a plain decimal and can safely exceed 7.
     std::stringstream ss;
-    ss << CURRENT_VER << " (" << getBuildInfo() << ')';
+    ss << RAPFI_MAJOR_VER << '.' << RAPFI_MINOR_VER << '.' << std::setfill('0') << std::setw(2)
+       << RAPFI_REVISION_VER << " (" << getBuildInfo() << ')';
     return ss.str();
 }
 

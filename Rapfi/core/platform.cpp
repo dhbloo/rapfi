@@ -18,16 +18,16 @@
 
 #include "platform.h"
 
-#include "iohelper.h"
-
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <vector>
 
 #ifdef _WIN32
     #if _WIN32_WINNT < 0x0601
         #undef _WIN32_WINNT
-        #define _WIN32_WINNT 0x0601  // Force to include needed API prototypes
+        #define _WIN32_WINNT 0x0601  // Force-pull the API prototypes we need.
     #endif
 
     #ifndef NOMINMAX
@@ -35,17 +35,18 @@
     #endif
 
     #include <windows.h>
-// The needed Windows API for processor groups could be missed from old Windows
-// versions, so instead of calling them directly (forcing the linker to resolve
-// the calls at compile time), try to load them at runtime. To do this we need
-// first to define the corresponding function pointers.
+
+// Some processor-group APIs are missing on older Windows versions, so we resolve them at
+// runtime via GetProcAddress instead of linking against them directly.
+// Match the real Windows API signatures exactly: BOOL return (not bool) and WINAPI calling
+// convention, so the function-pointer casts are ABI-correct on every architecture.
 extern "C" {
-typedef bool (*fun1_t)(const PPROCESSOR_NUMBER, PUSHORT);
-typedef bool (*fun2_t)(USHORT, PGROUP_AFFINITY);
-typedef bool (*fun3_t)(HANDLE, CONST GROUP_AFFINITY *, PGROUP_AFFINITY);
-typedef bool (*fun4_t)(USHORT, PGROUP_AFFINITY, USHORT, PUSHORT);
-typedef WORD (*fun5_t)();
-typedef bool (*fun6_t)(HANDLE, PGROUP_AFFINITY, USHORT);
+typedef BOOL(WINAPI *fun1_t)(PPROCESSOR_NUMBER, PUSHORT);
+typedef BOOL(WINAPI *fun2_t)(USHORT, PGROUP_AFFINITY);
+typedef BOOL(WINAPI *fun3_t)(HANDLE, CONST GROUP_AFFINITY *, PGROUP_AFFINITY);
+typedef BOOL(WINAPI *fun4_t)(USHORT, PGROUP_AFFINITY, USHORT, PUSHORT);
+typedef WORD(WINAPI *fun5_t)();
+typedef BOOL(WINAPI *fun6_t)(HANDLE, PGROUP_AFFINITY, USHORT);
 }
 #endif
 
@@ -67,22 +68,21 @@ typedef bool (*fun6_t)(HANDLE, PGROUP_AFFINITY, USHORT);
 #endif
 
 // -------------------------------------------------
+// NUMA awareness
 
 namespace Numa {
 
 #if defined(_WIN64)
 
-/// getThreadIdToNodeMapping() build once-per-process vector that maps every
-/// logical processor ID (0 … onlineCPUCount-1, enumerated in [group, number] order)
-/// to the NUMA-node the CPU belongs to.
+/// Build a vector mapping each online logical processor (in `[group, number]` order) to a
+/// NUMA node id, with processors interleaved across nodes so that the first N threads land
+/// on N distinct nodes (rather than filling node 0 first).
 ///
-/// 1. Query each online logical processor with GetNumaProcessorNodeEx() to learn
-///    its NUMA node.  Optionally split nodes that span several processor groups.
-/// 2. Re-order the CPUs *round-robin* by node, so the first N threads each land
-///    on a different node, the next N again, …  This makes the engine fill all
-///    NUMA nodes evenly instead of exhausting node-0 first.
-/// 3. Return a vector<int> threads → node-id.
-std::vector<int> getThreadIdToNodeMapping()
+/// 1. Walk every online processor with `GetNumaProcessorNodeEx` to learn its physical node.
+/// 2. Subdivide each node further by processor group, so a node that spans groups counts as
+///    several logical "split nodes" (avoids the scheduler biasing toward one group).
+/// 3. Emit a round-robin order across split nodes.
+static std::vector<int> getThreadIdToNodeMapping()
 {
     HMODULE k32 = GetModuleHandle("Kernel32.dll");
     if (!k32)
@@ -92,15 +92,13 @@ std::vector<int> getThreadIdToNodeMapping()
     if (!gnpne)
         return {};
 
-    // enumerate CPUs
     const WORD groupCnt = GetActiveProcessorGroupCount();
     size_t     totalLps = 0;
     for (WORD g = 0; g < groupCnt; ++g)
         totalLps += GetActiveProcessorCount(g);
 
-    // buckets[node-id] -> list of CPUs that belong to that (possibly split) node
-    std::map<int, std::vector<int>>        buckets;  // ordered by node-id
-    std::map<std::pair<USHORT, WORD>, int> splitId;  // (node,group) -> split-id
+    std::map<int, std::vector<int>>        buckets;  // split-node id -> list of CPU indices
+    std::map<std::pair<USHORT, WORD>, int> splitId;  // (node, group) -> split-node id
     int                                    nextSplitId = 0;
 
     int cpuIndex = 0;  // global, monotonically increasing
@@ -112,42 +110,33 @@ std::vector<int> getThreadIdToNodeMapping()
             if (!gnpne(&pn, &node) || node == USHRT_MAX)
                 continue;  // skip offline / unknown
 
-            // split physical node by processor-group to avoid scheduler bias
             auto key = std::make_pair(node, g);
             auto it  = splitId.find(key);
             if (it == splitId.end())
                 it = splitId.emplace(key, nextSplitId++).first;
 
-            const int splitNodeId = it->second;
-            buckets[splitNodeId].push_back(cpuIndex);
+            buckets[it->second].push_back(cpuIndex);
         }
     }
 
     if (buckets.empty())
-        return {};  // nothing usable
+        return {};
 
-    // build round-robin order
     std::vector<int> mapping;
     mapping.reserve(totalLps);
-
-    for (bool still = true; still;) {
-        still = false;
+    for (bool more = true; more;) {
+        more = false;
         for (auto &[nodeId, cpus] : buckets)
             if (!cpus.empty()) {
-                mapping.push_back(nodeId);  // take one CPU of this node
-                cpus.pop_back();            // remove it
-                still = true;               // at least one bucket not empty
+                mapping.push_back(nodeId);
+                cpus.pop_back();
+                more = true;
             }
     }
 
-    return mapping;  // size == #online logical processors
+    return mapping;
 }
 
-/// bindThisThread() set the group affinity of the current thread, and returns the
-/// numa node id for the thread. It uses the best_node() function to determine
-/// the best node id for the thread with index idx.
-
-// ----------------------------------------------------------------------------
 NumaNodeId bindThisThread(std::size_t idx)
 {
     static const std::vector<int> groups = getThreadIdToNodeMapping();
@@ -164,22 +153,23 @@ NumaNodeId bindThisThread(std::size_t idx)
 
     HANDLE hThread = GetCurrentThread();
 
-    // 1. Preferred: Windows-11 API  (affinity may span groups)
+    // Preferred path on Windows 11+: SetThreadSelectedCpuSetMasks accepts affinity that spans
+    // processor groups.
     if (stscsm && gnpm2 && gmpgc) {
-        const USHORT                      groupCount = gmpgc();  // max groups
+        const USHORT                      groupCount = gmpgc();
         std::unique_ptr<GROUP_AFFINITY[]> ga(new GROUP_AFFINITY[groupCount]);
         USHORT                            returned = 0;
 
         if (gnpm2(node, ga.get(), groupCount, &returned) && returned) {
             if (stscsm(hThread, ga.get(), returned)) {
-                SwitchToThread();  // let scheduler apply it
+                SwitchToThread();  // let the scheduler honour the new affinity
                 return static_cast<NumaNodeId>(node);
             }
-            /* if the call failed we fall through to old API */
+            // Fall through to the legacy path on failure.
         }
     }
 
-    // 2. Fallback: old one-group API  (Win-7 … Win-10)
+    // Legacy path (Win 7 .. Win 10): one processor group per call.
     if (gnpmex && stga) {
         GROUP_AFFINITY ga {};
         if (gnpmex(node, &ga) && stga(hThread, &ga, nullptr)) {
@@ -188,13 +178,14 @@ NumaNodeId bindThisThread(std::size_t idx)
         }
     }
 
-    return DefaultNumaNodeId;  // nothing worked → scheduler decides
+    return DefaultNumaNodeId;
 }
 
 #elif defined(__linux__) && !defined(__ANDROID__)
 
-/// read_index_list_from_file() read a file, strip whitespace, turn "0,2-3" into {0,2,3}
-static std::optional<std::vector<int>> read_index_list_from_file(std::string path)
+/// Read a kernel "index list" file (e.g. `"0,2-3"`) into a vector of integers.
+/// Returns nullopt if the file is missing or empty.
+static std::optional<std::vector<int>> readIndexListFromFile(std::string path)
 {
     std::ifstream in(path);
     if (!in)
@@ -211,13 +202,13 @@ static std::optional<std::vector<int>> read_index_list_from_file(std::string pat
 
     while (std::getline(iss, token, ',')) {
         auto dash_pos = token.find('-');
-        if (dash_pos != std::string::npos) {  // Range: "2-5"
+        if (dash_pos != std::string::npos) {
             int lo = std::atoi(token.substr(0, dash_pos).c_str());
             int hi = std::atoi(token.substr(dash_pos + 1).c_str());
             for (int v = lo; v <= hi; ++v)
                 out.push_back(v);
         }
-        else if (!token.empty()) {  // Single number: "7"
+        else if (!token.empty()) {
             out.push_back(std::atoi(token.c_str()));
         }
     }
@@ -226,12 +217,12 @@ static std::optional<std::vector<int>> read_index_list_from_file(std::string pat
 }
 
 using CpuIndex  = int;
-using NumaTable = std::vector<std::vector<CpuIndex>>;  // node -> cpus
+using NumaTable = std::vector<std::vector<CpuIndex>>;  // node -> list of CPU indices
 
-/// build_numa_table() reads the NUMA topology from /sys/devices/system/node/online
-/// and /sys/devices/system/node/node<N>/cpulist, and returns a vector of
-/// vectors, where each vector contains the CPU indices for that NUMA node.
-static NumaTable build_numa_table(bool respectAffinity)
+/// Read the NUMA topology from `/sys/devices/system/node/` and return a per-node list of CPU
+/// indices. When `respectAffinity` is true, CPUs outside the calling thread's affinity mask
+/// are filtered out. Falls back to a single all-CPU node if /sys is unreadable.
+static NumaTable buildNumaTable(bool respectAffinity)
 {
     const int onlineCpus = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
 
@@ -249,18 +240,18 @@ static NumaTable build_numa_table(bool respectAffinity)
     NumaTable tbl;
     bool      fallback = false;
 
-    //--------------- read /sys/devices/system/node/online -----------------
-    auto nodeIndices = read_index_list_from_file("/sys/devices/system/node/online");
+    auto nodeIndices = readIndexListFromFile("/sys/devices/system/node/online");
     if (!nodeIndices)
         fallback = true;
     else {
-        // Pre-allocate to maximum node index to handle gaps
+        // Pre-allocate to the maximum node index to keep table[n] valid even when node ids
+        // are sparse.
         int maxNode = *std::max_element(nodeIndices->begin(), nodeIndices->end());
         tbl.resize(maxNode + 1);
 
         for (int n : *nodeIndices) {
             std::string path = "/sys/devices/system/node/node" + std::to_string(n) + "/cpulist";
-            auto        cpuIndices = read_index_list_from_file(path);
+            auto        cpuIndices = readIndexListFromFile(path);
             if (!cpuIndices) {
                 fallback = true;
                 break;
@@ -272,15 +263,13 @@ static NumaTable build_numa_table(bool respectAffinity)
         }
     }
 
-    // fallback
     if (fallback || tbl.empty()) {
-        tbl.assign(1, {});  // single node 0
+        tbl.assign(1, {});
         for (CpuIndex c = 0; c < onlineCpus; ++c)
             if (allowed(c))
                 tbl[0].push_back(c);
     }
 
-    // ensure each cpu list is sorted and remove empty nodes
     auto newEnd =
         std::remove_if(tbl.begin(), tbl.end(), [](const auto &cpus) { return cpus.empty(); });
     tbl.erase(newEnd, tbl.end());
@@ -291,10 +280,9 @@ static NumaTable build_numa_table(bool respectAffinity)
     return tbl;
 }
 
-// bindThisThread(idx) pins calling thread to node in round-robin order
 NumaNodeId bindThisThread(std::size_t idx)
 {
-    static const NumaTable numaTable = build_numa_table(true);
+    static const NumaTable numaTable = buildNumaTable(true);
 
     if (numaTable.empty())
         return DefaultNumaNodeId;
@@ -304,7 +292,6 @@ NumaNodeId bindThisThread(std::size_t idx)
     if (cpus.empty())
         return DefaultNumaNodeId;
 
-    // build CPU mask
     cpu_set_t *mask = CPU_ALLOC(cpus.back() + 1);
     if (!mask)
         return DefaultNumaNodeId;
@@ -326,7 +313,7 @@ NumaNodeId bindThisThread(std::size_t idx)
 
 #else
 
-/// Do no-op and return the default numa node id for unsupported platforms.
+/// No-op on unsupported platforms.
 NumaNodeId bindThisThread(size_t)
 {
     return DefaultNumaNodeId;
@@ -337,6 +324,7 @@ NumaNodeId bindThisThread(size_t)
 }  // namespace Numa
 
 // -------------------------------------------------
+// MemAlloc
 
 namespace MemAlloc {
 
@@ -363,31 +351,30 @@ void alignedFree(void *ptr)
 #endif
 }
 
-/// Allocating large page on Windows OS needs to change the privileges of current process,
-/// If we failed to acquire the privilege level, or current processor does not support
-/// large pages, this function would return nullptr, thus fallback to our alignedAlloc().
-/// Code is borrowed from
-/// https://github.com/official-stockfish/Stockfish/pull/2656/commits/1c53ec970bb77c05d81c266fb22e5db6b1a14ff5
-void *alignedLargePageAllocWindows(size_t size)
+/// Try to allocate large pages on Windows. Requires SeLockMemoryPrivilege; returns nullptr
+/// if the privilege cannot be obtained or large pages are otherwise unavailable, in which
+/// case `alignedLargePageAlloc` falls back to a regular page-aligned allocation.
+///
+/// Adapted from Stockfish: https://github.com/official-stockfish/Stockfish/pull/2656/commits/
+/// 1c53ec970bb77c05d81c266fb22e5db6b1a14ff5
+static void *alignedLargePageAllocWindows(size_t size)
 {
 #ifndef _WIN64
-    (void)size;  // suppress unused-parameter compiler warning
+    (void)size;
     return nullptr;
 #else
-    HANDLE hProcessToken {};
-    LUID   luid {};
-    void  *mem = nullptr;
-
     const size_t largePageSize = GetLargePageMinimum();
     if (!largePageSize)
         return nullptr;
 
-    // We need SeLockMemoryPrivilege, so try to enable it for the process
+    HANDLE hProcessToken {};
     if (!OpenProcessToken(GetCurrentProcess(),
                           TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
                           &hProcessToken))
         return nullptr;
 
+    void *mem = nullptr;
+    LUID  luid {};
     if (LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, &luid)) {
         TOKEN_PRIVILEGES tp {};
         TOKEN_PRIVILEGES prevTp {};
@@ -397,9 +384,8 @@ void *alignedLargePageAllocWindows(size_t size)
         tp.Privileges[0].Luid       = luid;
         tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
-        // Try to enable SeLockMemoryPrivilege. Note that even if AdjustTokenPrivileges()
-        // succeeds, we still need to query GetLastError() to ensure that the privileges
-        // were actually obtained.
+        // AdjustTokenPrivileges can return success while leaving the privilege un-enabled;
+        // the GetLastError check is what actually confirms the request was honoured.
         if (AdjustTokenPrivileges(hProcessToken,
                                   FALSE,
                                   &tp,
@@ -407,14 +393,12 @@ void *alignedLargePageAllocWindows(size_t size)
                                   &prevTp,
                                   &prevTpLen)
             && GetLastError() == ERROR_SUCCESS) {
-            // Round up size to full pages and allocate
             size = (size + largePageSize - 1) & ~size_t(largePageSize - 1);
             mem  = VirtualAlloc(NULL,
                                size,
                                MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES,
                                PAGE_READWRITE);
 
-            // Privilege no longer needed, restore previous state
             AdjustTokenPrivileges(hProcessToken, FALSE, &prevTp, 0, NULL, NULL);
         }
     }
@@ -427,15 +411,17 @@ void *alignedLargePageAllocWindows(size_t size)
 void *alignedLargePageAlloc(size_t size)
 {
 #ifdef _WIN32
-    // Try to allocate large pages
     void *mem = alignedLargePageAllocWindows(size);
 
-    // Fall back to regular, page aligned, allocation if necessary
     if (!mem)
         mem = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     else {
-        static bool _init = []() {
-            MESSAGEL("Large page memory allocation enabled.");
+        // Announce success once per process so the user can confirm large pages took effect.
+        // Written directly (not via the iohelper MESSAGE macros) to keep this allocator layer
+        // free of any dependency on the protocol output module.
+        static bool init = []() {
+            std::printf("MESSAGE Large page memory allocation enabled.\n");
+            std::fflush(stdout);
             return true;
         }();
     }
@@ -443,12 +429,11 @@ void *alignedLargePageAlloc(size_t size)
     return mem;
 #else
     #if defined(__linux__)
-    constexpr size_t alignment = 2 * 1024 * 1024;  // assumed 2MB page size
+    constexpr size_t alignment = 2 * 1024 * 1024;  // assume 2MB huge pages
     #else
-    constexpr size_t alignment = 4096;  // assumed small page size
+    constexpr size_t alignment = 4096;  // assume small (4KiB) pages
     #endif
 
-    // round up to multiples of alignment
     size      = ((size + alignment - 1) / alignment) * alignment;
     void *mem = alignedAlloc(alignment, size);
     #if defined(MADV_HUGEPAGE)
@@ -463,8 +448,11 @@ void alignedLargePageFree(void *ptr)
 {
 #ifdef _WIN32
     if (ptr && !VirtualFree(ptr, 0, MEM_RELEASE)) {
+        // Written directly to stdout (where the protocol's ERROR lines go) to keep this
+        // allocator layer free of any dependency on the protocol output module.
         DWORD err = GetLastError();
-        ERRORL("Failed to free large page memory. Error code: 0x" << std::hex << err << std::dec);
+        std::printf("ERROR Failed to free large page memory. Error code: 0x%lx\n", err);
+        std::fflush(stdout);
         std::exit(EXIT_FAILURE);
     }
 #else

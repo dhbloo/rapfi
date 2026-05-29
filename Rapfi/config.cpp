@@ -19,6 +19,7 @@
 #include "config.h"
 
 #include "command/command.h"
+#include "core/compressor.h"
 #include "core/iohelper.h"
 #include "database/dbstorage.h"
 #include "database/yxdbstorage.h"
@@ -90,7 +91,7 @@ bool ClearHashAfterConfigLoaded = true;
 size_t DefaultThreadNum = 1;
 /// Message output mode.
 MsgMode MessageMode = MsgMode::BRIEF;
-/// Coordinate convertion mode.
+/// Coordinate convertion mode for protocol I/O.
 CoordConvertionMode IOCoordMode = CoordConvertionMode::NONE;
 /// Default candidate range mode if not specified when creating board.
 CandidateRange DefaultCandidateRange = CandidateRange::SQUARE3_LINE4;

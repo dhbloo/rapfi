@@ -315,7 +315,7 @@ void Command::selfplay(int argc, char *argv[])
     Search::Threads.setNumThreads(numThreads);
     Search::Threads.searcher()->setMemoryLimit(hashSizeMb * 1024);
 
-    PRNG                               prng {};
+    PRNG                               prng = PRNG::nondeterministic();
     std::uniform_int_distribution<int> boardSizeDis(boardSizeMin, boardSizeMax);
     std::normal_distribution<double>   nodesDis(meanNodes, varNodes);
     size_t                             totalGamePly = 0;
