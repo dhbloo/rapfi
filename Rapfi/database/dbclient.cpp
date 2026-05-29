@@ -19,6 +19,7 @@
 #include "dbclient.h"
 
 #include "../game/board.h"
+#include "../game/scopedmove.h"
 
 #include <algorithm>
 #include <functional>
@@ -529,18 +530,16 @@ bool DBClient::query(const Board &board, Rule rule, DBRecord &record)
 std::vector<std::pair<Pos, DBRecord>> DBClient::queryChildren(const Board &board, Rule rule)
 {
     DBRecord record;
-    Board   &b = const_cast<Board &>(board);
 
     std::vector<std::pair<Pos, DBRecord>> childRecords;
-    FOR_EVERY_EMPTY_POS(&b, pos)
+    FOR_EVERY_EMPTY_POS(&board, pos)
     {
         if (rule == RENJU && board.sideToMove() == BLACK && board.checkForbiddenPoint(pos))
             continue;
 
-        b.move(rule, pos);
-        if (query(b, rule, record))
+        ScopedRuleMove probe(board, rule, pos);
+        if (query(board, rule, record))
             childRecords.emplace_back(pos, record);
-        b.undo(rule);
     }
     return childRecords;
 }
@@ -616,12 +615,12 @@ void DBClient::setBoardText(const Board &board, Rule rule, Pos pos, std::string 
     if (!query(board, rule, record))
         record = DBRecord {LABEL_NONE};
 
-    Board &b = const_cast<Board &>(board);
-    b.move(rule, pos);
-    // Add new child record for board text
-    if (!text.empty() && !query(b, rule, childRecord))
-        save(b, rule, DBRecord {LABEL_NONE}, OverwriteRule::Always);
-    b.undo(rule);
+    {
+        ScopedRuleMove probe(board, rule, pos);
+        // Add new child record for board text
+        if (!text.empty() && !query(board, rule, childRecord))
+            save(board, rule, DBRecord {LABEL_NONE}, OverwriteRule::Always);
+    }
 
     // Find the smallest canonical pos considering symmetries to set board text
     TransformType parentTrans;

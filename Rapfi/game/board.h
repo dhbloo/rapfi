@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cassert>
+#include <memory>
 
 namespace Search {
 class SearchThread;
@@ -35,14 +36,17 @@ namespace Evaluation {
 class Evaluator;
 }
 
+/// Iterate `pos` over every on-board (non-wall) cell.
 #define FOR_EVERY_POSITION(board, pos)                                   \
     for (Pos pos = (board)->startPos(); pos <= (board)->endPos(); pos++) \
         if ((board)->get(pos) != WALL)
 
+/// Iterate `pos` over every empty cell.
 #define FOR_EVERY_EMPTY_POS(board, pos)                                  \
     for (Pos pos = (board)->startPos(); pos <= (board)->endPos(); pos++) \
         if ((board)->isEmpty(pos))
 
+/// Iterate `pos` over every cell of the given candidate-area rectangle (row-major).
 #define FOR_EVERY_CANDAREA_POS(board, pos, candArea) \
     for (int8_t _y = (candArea).y0,                  \
                 y1 = (candArea).y1,                  \
@@ -53,12 +57,13 @@ class Evaluator;
          _y++, _x = x0)                              \
         for (Pos pos {_x, _y}; _x <= x1; _x++, pos++)
 
+/// Iterate `pos` over every empty candidate cell inside the current candidate area.
 #define FOR_EVERY_CAND_POS(board, pos)                                \
     FOR_EVERY_CANDAREA_POS(board, pos, (board)->stateInfo().candArea) \
     if ((board)->isEmpty(pos) && (board)->cell(pos).isCandidate())
 
-/// CandArea struct represents a rectangle area on board which can be considered
-/// as move candidate.
+/// An axis-aligned bounding rectangle of the cells worth considering as move candidates. Starts
+/// empty (inverted bounds) and only ever grows via expand().
 struct CandArea
 {
     int8_t x0, y0, x1, y1;
@@ -66,7 +71,8 @@ struct CandArea
     CandArea() : x0(INT8_MAX), y0(INT8_MAX), x1(INT8_MIN), y1(INT8_MIN) {}
     CandArea(int8_t x0, int8_t y0, int8_t x1, int8_t y1) : x0(x0), y0(y0), x1(x1), y1(y1) {}
 
-    /// Expand candidate area at pos with a range of square with length 'dist'.
+    /// Grow the area to include the square of half-width `dist` centered on `pos`, clamped to the
+    /// board.
     void expand(Pos pos, int boardSize, int dist)
     {
         int x = pos.x(), y = pos.y();
@@ -78,17 +84,21 @@ struct CandArea
     }
 };
 
-/// StateInfo struct records all incremental board information used in one ply.
+/// Per-ply snapshot of the incremental board state. One StateInfo exists per move played, so a
+/// move only has to record what changed and undo() can restore the previous ply cheaply.
 struct StateInfo
 {
-    CandArea candArea;
-    Pos      lastMove;
-    Pos      lastFlex4AttackMove[SIDE_NB];
-    Pos      lastPattern4Move[SIDE_NB][3];
+    CandArea candArea;  ///< Bounding box of candidate cells at this ply.
+    Pos      lastMove;  ///< The move that produced this ply (Pos::PASS for a pass).
+    /// Move that first created a flex four for this side (set only on a 0 -> nonzero transition).
+    Pos lastFlex4AttackMove[SIDE_NB];
+    /// Most recent empty cell reaching C_BLOCK4_FLEX3 / B_FLEX4 / A_FIVE, per side.
+    Pos lastPattern4Move[SIDE_NB][3];
+    /// Count of empty cells holding each Pattern4, per side.
     uint16_t p4Count[SIDE_NB][PATTERN4_NB];
-    Value    valueBlack;
+    Value    valueBlack;  ///< Incremental classical evaluation from black's view.
 
-    /// Query the last emerged pattern4 pos.
+    /// The most recent empty cell that reached the given Pattern4.
     /// @note p4 must be one of [C_BLOCK4_FLEX3, B_FLEX4, A_FIVE].
     Pos lastPattern4(Color side, Pattern4 p4) const
     {
@@ -97,28 +107,29 @@ struct StateInfo
     }
 };
 
-/// Cell struct contains all information for a move cell on board, including current
-/// stone piece, candidate, pattern, pattern4 and move score.
+/// All per-cell state the engine maintains: the stone (or EMPTY/WALL), candidate refcount, and the
+/// incrementally-updated patterns, scores and evaluation for both sides.
 struct Cell
 {
-    Color     piece;
-    uint8_t   cand;
-    Pattern4  pattern4[SIDE_NB];
-    Score     score[SIDE_NB];
-    Value     valueBlack;
-    Pattern2x pattern2x[4];
+    Color     piece;  ///< Stone color, or EMPTY / WALL.
+    uint8_t   cand;   ///< Candidate refcount; nonzero means the cell is currently a move candidate.
+    Pattern4  pattern4[SIDE_NB];  ///< Aggregate four-direction pattern, per side.
+    Score     score[SIDE_NB];     ///< Move-ordering score, per side.
+    Value     valueBlack;    ///< This cell's contribution to the classical eval, from black's view.
+    Pattern2x pattern2x[4];  ///< Line pattern of both colors, one per direction.
 
-    /// Check if this cell is a move candidate, which can be used in move generation.
+    /// Whether this cell is currently a move candidate (used to prune move generation).
     bool isCandidate() const { return cand > 0; }
 
-    /// Get the line level pattern of this cell.
+    /// The line-level pattern of this cell in direction `dir`, from `c`'s perspective.
     Pattern pattern(Color c, int dir) const
     {
         assert(c == BLACK || c == WHITE);
         return c == BLACK ? pattern2x[dir].patBlack : pattern2x[dir].patWhite;
     }
 
-    /// Get the complex pattern code at this cell for one side.
+    /// The combined four-direction pattern code at this cell for one side (indexes the score
+    /// and eval tables).
     template <Color C>
     PatternCode pcode() const
     {
@@ -131,7 +142,8 @@ struct Cell
                                        [pattern2x[2].patWhite][pattern2x[3].patWhite];
     }
 
-    /// Update the pattern4 and score with the new pattern code for both sides.
+    /// Recompute both sides' pattern4 and move-ordering score from fresh pattern codes. Each
+    /// side's score blends its own attacking score with the opponent's defensive score.
     template <Rule R>
     void updatePattern4AndScore(PatternCode pcodeBlack, PatternCode pcodeWhite)
     {
@@ -144,25 +156,31 @@ struct Cell
     }
 };
 
-/// Board class is the main class used to represent a board position state.
-/// It also records the whole board history info and bitboard state, to speed up
-/// move() and undo() update methods. Copy constructor is explicit to avoid
-/// unintended expensive copy operation.
+/// The central board-position representation. Beyond the cell grid it keeps the per-direction
+/// bitkeys and a per-ply StateInfo/UpdateCache history, so move() and undo() update the position
+/// incrementally rather than rescanning the board. The copy constructor is explicit (and the
+/// implicit copy deleted) to avoid accidental expensive copies.
 class Board
 {
 public:
-    /// MoveType represents the update mode of move/undo.
-    enum class MoveType { NORMAL, NO_EVALUATOR, NO_EVAL, NO_EVAL_MULTI };
+    /// How much state move()/undo() should maintain. Cheaper modes skip work the caller does not
+    /// need, and must be paired (the same MT in the matching undo()).
+    enum class MoveType {
+        NORMAL,        ///< Update cell, pattern, score, classical eval, and external evaluator.
+        NO_EVALUATOR,  ///< As NORMAL but skip the external evaluator.
+        NO_EVAL,       ///< Update cell, pattern and score only (no eval at all).
+        NO_EVAL_MULTI  ///< As NO_EVAL, but do not flip the side to move.
+    };
 
-    /// Creates a board with board size and condidate range.
+    /// Allocate a board of the given size and candidate range. The position is uninitialized
+    /// until newGame() is called.
     /// @param boardSize Size of the board, in range [1, MAX_BOARD_SIZE].
     explicit Board(int boardSize, CandidateRange candRange = Config::DefaultCandidateRange);
-    /// Clone a board object from other board and bind a search thread to it.
+    /// Clone a board from another and bind a search thread to the clone.
     /// @param other Board object to clone from.
-    /// @param thread Search thread to be binded (nullptr for not binding).
+    /// @param thread Search thread to bind (nullptr for no binding).
     explicit Board(const Board &other, Search::SearchThread *thread);
     Board(const Board &) = delete;
-    ~Board();
 
     // ------------------------------------------------------------------------
     // board modifier (and dynamic dispatch version)
@@ -172,17 +190,12 @@ public:
     template <Rule R>
     void newGame();
 
-    /// Make move and incremental update the board state.
-    /// @param pos Pos to put the next stone. A Pass move is allowed.
+    /// Play a move and incrementally update the board state.
+    /// @param pos Pos to put the next stone. Pos::PASS is allowed.
     /// @tparam R Game rule to use.
-    /// @tparam MT Type of this move. There are four types of move:
-    ///     1. NORMAL: Updates cell, pattern, score, eval and external evaluator.
-    ///     2. NO_EVALUATOR: Updates cell, pattern, score, eval.
-    ///     3. NO_EVAL: Updates cell, pattern, score.
-    ///     4. NO_EVAL_MULTI: Updates cell, pattern, score. Side to move is not swapped.
-    /// @note Recursive pass move is allowed, but the total number of null moves
-    ///     must be not greater than MAX_PASS_MOVES. As long as consecutive pass
-    ///     moves are not allowed, this condition should be met.
+    /// @tparam MT How much state to maintain (see MoveType).
+    /// @note Recursive pass moves are allowed, but the total number of passes must stay below
+    ///     cellCount(). As long as consecutive pass moves are not allowed, this holds.
     template <Rule R, MoveType MT = MoveType::NORMAL>
     void move(Pos pos);
 
@@ -202,9 +215,8 @@ public:
     // ------------------------------------------------------------------------
     // special helper function
 
-    /// Flip current side to move without recording in state info.
-    /// This is only served for some special board checking proecess. It must be
-    /// used in pair locally. If a pass is desired, use move(Pos::PASS) instead.
+    /// Flip the side to move without recording a ply in the state info. Intended only for local
+    /// board-checking routines and must be used in pairs. For an actual pass, use move(Pos::PASS).
     void flipSide() { currentSide = ~currentSide; }
 
     // ------------------------------------------------------------------------
@@ -330,43 +342,47 @@ public:
     std::string trace() const;
 
 private:
+    /// Saved per-cell state of one updated cell, so undo() can restore it without recomputation.
     struct SingleCellUpdateCache
     {
         Pattern4 pattern4[SIDE_NB];
         Score    score[SIDE_NB];
         Value    valueBlack;
     };
+    /// Per-move scratch for the cells a single move touches. A move updates at most 2*L cells per
+    /// direction over 4 directions; with the largest half-line length L=5 that is 40 cells.
     using UpdateCache = std::array<SingleCellUpdateCache, 40>;
 
-    /// The cells array of the board. It is designed to be larger than the actual
-    /// board size, thus relaxing the need to check if an index is in range.
+    /// The board cell grid. Sized to the padded coordinate space (boundary walls included) so
+    /// neighbour accesses never need an in-range check.
     Cell cells[FULL_BOARD_CELL_COUNT];
 
-    // Bitkeys of 4 directions, used as key to index pattern update.
-    uint64_t bitKey0[FULL_BOARD_SIZE];          // [RIGHT(MSB) - LEFT(LSB)]
-    uint64_t bitKey1[FULL_BOARD_SIZE];          // [DOWN(MSB) - UP(LSB)]
-    uint64_t bitKey2[FULL_BOARD_SIZE * 2 - 1];  // [UP_RIGHT(MSB) - DOWN_LEFT(LSB)]
-    uint64_t bitKey3[FULL_BOARD_SIZE * 2 - 1];  // [DOWN_RIGHT(MSB) - UP_LEFT(LSB)]
+    // Per-direction bitkeys: 2 bits per cell, indexed so one line maps to a contiguous run of
+    // bits. Each array is indexed by the line's fixed coordinate; the bracket shows bit order.
+    uint64_t bitKey0[FULL_BOARD_SIZE];          // horizontal   [RIGHT(MSB) - LEFT(LSB)]
+    uint64_t bitKey1[FULL_BOARD_SIZE];          // vertical     [DOWN(MSB) - UP(LSB)]
+    uint64_t bitKey2[FULL_BOARD_SIZE * 2 - 1];  // main diag    [UP_RIGHT(MSB) - DOWN_LEFT(LSB)]
+    uint64_t bitKey3[FULL_BOARD_SIZE * 2 - 1];  // anti diag    [DOWN_RIGHT(MSB) - UP_LEFT(LSB)]
 
-    int                    boardSize;           /// Size of the board
-    int                    boardCellCount;      /// Number of cells of the board
-    int                    moveCount;           /// Number of moves played (=numStones+numPasses)
-    int                    passCount[SIDE_NB];  /// Number of passes for both sides
-    Color                  currentSide;         /// The current side to move
-    HashKey                currentZobristKey;   /// The current zobrist key
-    StateInfo             *stateInfos;          /// StateInfo array pointer
-    UpdateCache           *updateCache;         /// UpdateCache array pointer
-    const Direction       *candidateRange;      /// Candidate array pointer
-    uint32_t               candidateRangeSize;  /// Size of candidate array
-    uint32_t               candAreaExpandDist;  /// Expand distance of candidate area
-    Evaluation::Evaluator *evaluator_;          /// External evaluator pointer
-    Search::SearchThread  *thisThread_;         /// External search thread pointer
+    int     boardSize;           ///< Side length of the board.
+    int     boardCellCount;      ///< Number of playable cells (boardSize^2).
+    int     moveCount;           ///< Number of moves played (stones + passes).
+    int     passCount[SIDE_NB];  ///< Number of passes by each side.
+    Color   currentSide;         ///< The side to move.
+    HashKey currentZobristKey;   ///< Zobrist key of the position (side-to-move excluded).
+    std::unique_ptr<StateInfo[]>   stateInfos;   ///< Per-ply state history, indexed by ply.
+    std::unique_ptr<UpdateCache[]> updateCache;  ///< Per-ply saved cell state for undo, by ply.
+    const Direction *candidateRange;  ///< Offset table defining a move's candidate neighborhood.
+    uint32_t         candidateRangeSize;  ///< Number of offsets in `candidateRange`.
+    uint32_t         candAreaExpandDist;  ///< Candidate-area expansion distance per move.
+    Evaluation::Evaluator *evaluator_;    ///< External evaluator (may be null).
+    Search::SearchThread  *thisThread_;   ///< Owning search thread (may be null).
 
     void setBitKey(Pos pos, Color c);
     void flipBitKey(Pos pos, Color c);
 };
 
-/// Set bitkey of 4 directions at pos to color.
+/// OR color `c`'s bit into all four directional bitkeys at `pos` (used to seed empty cells).
 inline void Board::setBitKey(Pos pos, Color c)
 {
     assert(c == BLACK || c == WHITE);
@@ -380,7 +396,7 @@ inline void Board::setBitKey(Pos pos, Color c)
     bitKey3[FULL_BOARD_SIZE - 1 - x + y] |= mask << (2 * x);
 }
 
-/// Flip the color of bitkey of 4 directions at pos.
+/// Toggle color `c`'s bit in all four directional bitkeys at `pos` (placing or removing a stone).
 inline void Board::flipBitKey(Pos pos, Color c)
 {
     assert(c == BLACK || c == WHITE);
@@ -400,6 +416,8 @@ inline void Board::flipBitKey(Pos pos, Color c)
     bitKey3[FULL_BOARD_SIZE - 1 - x + y] ^= mask << (2 * x);
 }
 
+/// Extract the line bitkey centered on `pos` in direction `dir`, rotated so the center cell sits
+/// at the table-expected position for pattern lookup.
 template <Rule R>
 inline uint64_t Board::getKeyAt(Pos pos, int dir) const
 {
@@ -420,24 +438,30 @@ inline uint64_t Board::getKeyAt(Pos pos, int dir) const
 
 inline void Board::newGame(Rule rule)
 {
-    assert(rule < RULE_NB);
-    void (Board::*F[])() = {&Board::newGame<FREESTYLE>,
-                            &Board::newGame<STANDARD>,
-                            &Board::newGame<RENJU>};
-    (this->*F[rule])();
+    switch (rule) {
+    case FREESTYLE: return newGame<FREESTYLE>();
+    case STANDARD: return newGame<STANDARD>();
+    case RENJU: return newGame<RENJU>();
+    default: assert(false && "invalid rule");
+    }
 }
 
 inline void Board::move(Rule rule, Pos pos)
 {
-    assert(rule < RULE_NB);
-    void (Board::*F[])(
-        Pos) = {&Board::move<FREESTYLE>, &Board::move<STANDARD>, &Board::move<RENJU>};
-    (this->*F[rule])(pos);
+    switch (rule) {
+    case FREESTYLE: return move<FREESTYLE>(pos);
+    case STANDARD: return move<STANDARD>(pos);
+    case RENJU: return move<RENJU>(pos);
+    default: assert(false && "invalid rule");
+    }
 }
 
 inline void Board::undo(Rule rule)
 {
-    assert(rule < RULE_NB);
-    void (Board::*F[])() = {&Board::undo<FREESTYLE>, &Board::undo<STANDARD>, &Board::undo<RENJU>};
-    (this->*F[rule])();
+    switch (rule) {
+    case FREESTYLE: return undo<FREESTYLE>();
+    case STANDARD: return undo<STANDARD>();
+    case RENJU: return undo<RENJU>();
+    default: assert(false && "invalid rule");
+    }
 }

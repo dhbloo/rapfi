@@ -20,32 +20,40 @@
 
 #include "board.h"
 #include "pattern.h"
+#include "scopedmove.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace {
 
 /// Max distance to find a pos in a line.
 constexpr int MaxFindDist = 4;
 
-/// Filter move by Pattern4 according to GenType.
+// -------------------------------------------------
+// Move filters
+
+/// Decide whether a candidate move qualifies for any threat tier requested by GenType, based on
+/// its Pattern4 (and, for COMB types, its per-direction line patterns).
 template <GenType Type>
 inline bool basicPatternFilter(const Board &board, Pos pos, Color side)
 {
     const Cell &c  = board.cell(pos);
     Pattern4    p4 = c.pattern4[side];
 
-    if (bool(Type & WINNING)) {
+    if constexpr (bool(Type & WINNING)) {
         if (p4 >= B_FLEX4)
             return true;
     }
 
-    if (bool(Type & VCF)) {
+    if constexpr (bool(Type & VCF)) {
         if constexpr (bool(Type & COMB)) {
             if (p4 >= D_BLOCK4_PLUS)
                 return true;
         }
-        else if constexpr (bool(Type & RULE_RENJU)) {
+        // RULE_* occupy the low two bits as a selector, so test for renju by equality, not by a
+        // bitwise-AND flag check (which would also fire for RULE_FREESTYLE / RULE_STANDARD).
+        else if constexpr ((Type & RULE_RENJU) == RULE_RENJU) {
             if (p4 >= E_BLOCK4
                 || p4 == FORBID
                        && (c.pattern(side, 0) >= B4 || c.pattern(side, 1) >= B4
@@ -104,6 +112,9 @@ constexpr bool preCheckFilter(const Board &board, Color side)
     return true;
 }
 
+// -------------------------------------------------
+// Pattern4 position lookup
+
 /// Get the first found pos that has the given pattern4.
 /// @return Pos::NONE if we cannot find the pattern4 pos.
 /// @note Board state must satisfy `board.p4Count(side, p4) > 0`.
@@ -117,6 +128,18 @@ Pos findFirstPattern4Pos(const Board &board, Color side, Pattern4 p4)
 
     assert(false && "can not find pattern4");
     return Pos::NONE;
+}
+
+/// Locate the most recent empty cell with `p4` for `side`, trusting the StateInfo lastPattern4
+/// marker on the fast path and falling back to a full candidate scan only if the marker is stale.
+/// @note p4 must be one of [C_BLOCK4_FLEX3, B_FLEX4, A_FIVE] (the values lastPattern4 tracks).
+Pos findPattern4Pos(const Board &board, Color side, Pattern4 p4)
+{
+    Pos         pos  = board.stateInfo().lastPattern4(side, p4);
+    const Cell &cell = board.cell(pos);
+    if (cell.piece == EMPTY && cell.pattern4[side] == p4)
+        return pos;
+    return findFirstPattern4Pos(board, side, p4);
 }
 
 /// Find all pseudo defence pos of FOUR pattern4.
@@ -145,6 +168,9 @@ ScoredMove *findAllPseudoFourDefendPos(const Board &board, Color side, ScoredMov
 
     return moveList;
 }
+
+// -------------------------------------------------
+// Exact defence reconstruction: opponent flex four (B_FLEX4)
 
 /// Find all exact defence pos of opponent FOUR pattern4.
 template <bool IncludeLosingMoves>
@@ -260,7 +286,6 @@ ScoredMove *findFourDefence(const Board &board, ScoredMove *const moveList)
                             return moveList;
 
                         last = findF3LineDefence(pos, dir, last);
-                        // return last;
                         goto next_F3_dir;
                     }
                     continue;
@@ -281,7 +306,6 @@ ScoredMove *findFourDefence(const Board &board, ScoredMove *const moveList)
                             return moveList;
 
                         last = findF3LineDefence(pos, dir, last);
-                        // return last;
                         goto next_F3_dir;
                     }
                     continue;
@@ -348,6 +372,9 @@ ScoredMove *findFourDefence(const Board &board, ScoredMove *const moveList)
     return findAllPseudoFourDefendPos(board, oppo, last);
 }
 
+// -------------------------------------------------
+// Exact defence reconstruction: opponent block four + flex three (C_BLOCK4_FLEX3)
+
 /// Find all exact defence pos of opponent B4F3 pattern4.
 /// @note If no direct defence is needed, empty move list is returned.
 template <Rule R>
@@ -375,12 +402,13 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
         bool       foundLeftForbidden  = false;
         bool       foundRightForbidden = false;
 
-        // In order to check renju defence, we need to put a black move at f3Pos,
-        // so that checkForbidden Point will work correctly.
+        // In order to check renju defence, we need to put a black move at f3Pos, so that
+        // checkForbiddenPoint works correctly. The guards remove it when this lambda returns.
+        std::optional<ScopedSwitchSide>                                  sideGuard;
+        std::optional<ScopedMove<Rule::RENJU, Board::MoveType::NO_EVAL>> moveGuard;
         if (checkRenjuDefence) {
-            Board &b = const_cast<Board &>(board);
-            b.flipSide();
-            b.move<Rule::RENJU, Board::MoveType::NO_EVAL>(f3Pos);
+            sideGuard.emplace(board, oppo);
+            moveGuard.emplace(board, f3Pos);
         }
 
         for (int i = 0; i < 4; i++) {
@@ -425,11 +453,6 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
                 *list++ = rightRenjuDefence;
             if (foundRightForbidden && leftRenjuDefence)
                 *list++ = leftRenjuDefence;
-
-            // Remember to undo the f3Pos, make sure board is const
-            Board &b = const_cast<Board &>(board);
-            b.undo<Rule::RENJU, Board::MoveType::NO_EVAL>();
-            b.flipSide();
         }
 
         return list;
@@ -444,15 +467,16 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
         };
         // Detect overline B4 (which is not a valid B4 point) in Standard/Renju
         auto checkNotOverlineB4 = [b4Pos, oppo, dir, &board](const Cell &c, Pos pos) {
-            Board &b = const_cast<Board &>(board);
-            b.flipSide();
-            b.move<R, Board::MoveType::NO_EVAL>(pos);
-            bool hasFive = board.cell(b4Pos).pattern(oppo, dir) == F5;
-            b.undo<R, Board::MoveType::NO_EVAL>();
-            b.flipSide();
-            return hasFive;
+            ScopedSwitchSide                        side(board, oppo);
+            ScopedMove<R, Board::MoveType::NO_EVAL> probe(board, pos);
+            return board.cell(b4Pos).pattern(oppo, dir) == F5;
         };
 
+        // A block four has a single five-completing square. Scan backward first: if the nearest
+        // candidate there is an overline (a fake B4 that makes six, not five, under Standard/Renju)
+        // the checkNotOverlineB4 gate rejects it and we fall through to the forward scan. Because
+        // the completion is unique, reaching the forward scan means the real completion lies that
+        // way, so its candidate is always a genuine five and needs no overline gate.
         int i, j;
         Pos pos = b4Pos;
         for (i = 0; i < MaxFindDist; i++) {
@@ -518,16 +542,8 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
         return list;
     };
 
-    // Get opponent B4F3 pos from last memorized C type move.
-    Pos B4F3Pos = board.stateInfo().lastPattern4(oppo, C_BLOCK4_FLEX3);
-
-    // Make sure we found the right B4F3 pos. If fast query failed in
-    // some rare case, we find it by iterating all move candidates.
-    if (const Cell &cell = board.cell(B4F3Pos);
-        cell.piece != EMPTY || cell.pattern4[oppo] != C_BLOCK4_FLEX3) {
-        B4F3Pos = findFirstPattern4Pos(board, oppo, C_BLOCK4_FLEX3);
-    }
-
+    // Get opponent B4F3 pos from the last memorized C-type move (rescans if the marker is stale).
+    Pos         B4F3Pos  = findPattern4Pos(board, oppo, C_BLOCK4_FLEX3);
     const Cell &B4F3Cell = board.cell(B4F3Pos);
     assert(B4F3Cell.piece == EMPTY);
     assert(B4F3Cell.pattern4[oppo] == C_BLOCK4_FLEX3);
@@ -558,9 +574,11 @@ ScoredMove *findB4F3Defence(const Board &board, ScoredMove *const moveList)
     return last;
 }
 
-/// Generates defence moves for opponent B_FLEX4 pattern4.
-/// All VCF moves of us is excluded. VCF moves should be generated
-/// by other generator.
+// -------------------------------------------------
+// Defence move-list assembly (sort + dedup + filter)
+
+/// Generate defence moves against the opponent's B_FLEX4, deduplicated and sorted. Our own VCF
+/// moves are excluded here; they are produced by a separate generator.
 /// @note Board state must satisfy `board.p4Count(oppo, B_FLEX4) > 0`.
 template <bool IncludeLosingMoves>
 ScoredMove *generateFourDefence(const Board &board, ScoredMove *moveList)
@@ -581,10 +599,9 @@ ScoredMove *generateFourDefence(const Board &board, ScoredMove *moveList)
     });
 }
 
-/// Generates defence moves for opponent C_BLOCK4_FLEX3 pattern4.
-/// All VCF moves of us is excluded. VCF moves should be generated
-/// by other generator. If direct defence is not needed since we
-/// have some B4 counter defence move, empty move list is returned.
+/// Generate defence moves against the opponent's C_BLOCK4_FLEX3, deduplicated and sorted. Our own
+/// VCF moves are excluded (produced by a separate generator). Returns an empty list when no direct
+/// defence is needed because we have a B4 counter-defence move.
 /// @note Board state must satisfy `board.p4Count(oppo, C_BLOCK4_FLEX3) > 0`.
 template <Rule R>
 ScoredMove *generateB4F3Defence(const Board &board, ScoredMove *moveList)
@@ -607,16 +624,22 @@ ScoredMove *generateB4F3Defence(const Board &board, ScoredMove *moveList)
 
 }  // namespace
 
+// -------------------------------------------------
+// Public move generators
+
 template <GenType Type>
 ScoredMove *generate(const Board &board, ScoredMove *moveList)
 {
-    Color self = board.sideToMove();
+    [[maybe_unused]] Color self = board.sideToMove();
 
     FOR_EVERY_CAND_POS(&board, pos)
     {
-        if (basicPatternFilter<Type>(board, pos, self)) {
+        // ALL accepts every candidate (basicPatternFilter falls through to TRIVIAL), so skip the
+        // per-move filter entirely on this hot path.
+        if constexpr (Type == ALL)
             *moveList++ = pos;
-        }
+        else if (basicPatternFilter<Type>(board, pos, self))
+            *moveList++ = pos;
     }
 
     return moveList;
@@ -745,25 +768,12 @@ bool validateOpponentCMove(const Board &board)
 
     // We check black C_BLOCK4_FLEX3 move by making the move,
     // then check if there is any B_FLEX4 on board.
-    Board &b = const_cast<Board &>(board);
-    assert(b.p4Count(BLACK, C_BLOCK4_FLEX3) > 0);
-    assert(b.p4Count(BLACK, B_FLEX4) == 0);
+    assert(board.p4Count(BLACK, C_BLOCK4_FLEX3) > 0);
+    assert(board.p4Count(BLACK, B_FLEX4) == 0);
 
-    Pos lastB4F3Pos = board.stateInfo().lastPattern4(BLACK, C_BLOCK4_FLEX3);
-    // Make sure we found the right B4F3 pos. If fast query failed in
-    // some rare case, we find it by iterating all move candidates.
-    if (const Cell &cell = board.cell(lastB4F3Pos);
-        cell.piece != EMPTY || cell.pattern4[BLACK] != C_BLOCK4_FLEX3) {
-        lastB4F3Pos = findFirstPattern4Pos(board, BLACK, C_BLOCK4_FLEX3);
-    }
+    Pos lastB4F3Pos = findPattern4Pos(board, BLACK, C_BLOCK4_FLEX3);
 
-    b.flipSide();
-    b.move<Rule::RENJU, Board::MoveType::NO_EVAL>(lastB4F3Pos);
-
-    bool hasBMove = b.p4Count(BLACK, B_FLEX4);
-
-    b.undo<Rule::RENJU, Board::MoveType::NO_EVAL>();
-    b.flipSide();
-
-    return hasBMove;
+    ScopedSwitchSide                                  side(board, BLACK);
+    ScopedMove<Rule::RENJU, Board::MoveType::NO_EVAL> probe(board, lastB4F3Pos);
+    return board.p4Count(BLACK, B_FLEX4);
 }

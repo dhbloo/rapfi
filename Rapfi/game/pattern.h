@@ -23,11 +23,12 @@
 
 #include <cassert>
 
-/// Pattern2x struct compresses two patterns into one byte to save space.
+/// Packs the line patterns of both colors for one cell into a single byte (4 bits each), so a
+/// `Cell` can store all four directions compactly.
 struct Pattern2x
 {
-    Pattern patBlack : 4;
-    Pattern patWhite : 4;
+    Pattern patBlack : 4;  ///< Line pattern seen from black's perspective.
+    Pattern patWhite : 4;  ///< Line pattern seen from white's perspective.
 
     Pattern operator[](Color side) const { return side == BLACK ? patBlack : patWhite; }
 };
@@ -35,24 +36,33 @@ static_assert(sizeof(Pattern2x) == sizeof(uint8_t));
 
 namespace PatternConfig {
 
+/// Number of cells on each side of the center cell in a line. Freestyle only cares about five in
+/// a row (4 neighbours suffice); standard and renju must also detect overlines, needing 5.
 template <Rule R>
 constexpr int HalfLineLen = R == Rule::FREESTYLE ? 4 : 5;
 
+/// Bit width of a fused line key: two half-lines (the center cell is implicit), 2 bits per cell.
 template <Rule R>
 constexpr int KeyLen = HalfLineLen<R> * 4;
 
+/// Number of distinct fused line keys, i.e. the size of every per-rule lookup table.
 template <Rule R>
 constexpr int KeyCnt = 1 << KeyLen<R>;
 
-extern Pattern2x   PATTERN2x[KeyCnt<FREESTYLE>];
-extern Pattern2x   PATTERN2xStandard[KeyCnt<STANDARD>];
-extern Pattern2x   PATTERN2xRenju[KeyCnt<RENJU>];
+/// Fused line key -> line pattern of both colors, one table per rule.
+extern Pattern2x PATTERN2x[KeyCnt<FREESTYLE>];
+extern Pattern2x PATTERN2xStandard[KeyCnt<STANDARD>];
+extern Pattern2x PATTERN2xRenju[KeyCnt<RENJU>];
+/// The four line patterns around a cell (one per direction) -> a single packed pattern code,
+/// order-independent so the four directions can be supplied in any order.
 extern PatternCode PCODE[PATTERN_NB][PATTERN_NB][PATTERN_NB][PATTERN_NB];
-extern uint8_t     DEFENCE[KeyCnt<FREESTYLE>][2];
-extern uint8_t     DEFENCEStandard[KeyCnt<STANDARD>][2];
-extern uint8_t     DEFENCERenju[KeyCnt<RENJU>][2];
+/// Fused line key + attacking color -> bitmask of cells that defend against the attack.
+extern uint8_t DEFENCE[KeyCnt<FREESTYLE>][2];
+extern uint8_t DEFENCEStandard[KeyCnt<STANDARD>][2];
+extern uint8_t DEFENCERenju[KeyCnt<RENJU>][2];
 
-/// Remove the center cell in a key according to the rule.
+/// Drop the (implicit, always-self) center cell from a raw line key, yielding the fused key used
+/// to index the lookup tables. BMI2's parallel-extract collapses the two half-lines in one op.
 template <Rule R>
 inline uint64_t fuseKey(uint64_t key)
 {
@@ -76,7 +86,7 @@ inline uint64_t fuseKey(uint64_t key)
     return key;
 }
 
-/// Lookup line pattern from a 64bit bit key.
+/// Look up the line pattern of both colors from a raw 64-bit line key.
 template <Rule R>
 inline Pattern2x lookupPattern(uint64_t key)
 {
@@ -93,7 +103,9 @@ inline Pattern2x lookupPattern(uint64_t key)
         return PATTERN2xRenju[key];
 }
 
-/// Lookup line pattern from a 64bit bit key.
+/// Look up the defence-move bitmask for `attackSide` from a raw 64-bit line key. The bitkey
+/// encodes each cell in 2 bits (00 wall, 01 white, 10 black, 11 empty); the table carries a
+/// separate entry per attacking color rather than normalizing the key to a single perspective.
 template <Rule R>
 inline uint8_t lookupDefenceTable(uint64_t key, Color attackSide)
 {
@@ -102,19 +114,6 @@ inline uint8_t lookupDefenceTable(uint64_t key, Color attackSide)
     assert(attackSide == BLACK || attackSide == WHITE);
 
     key = fuseKey<R>(key);
-
-    //// Bitkey: 00-empty, 01-black, 10-white, 11-wall
-    //// Attack should be black, if not, flip all black and white stones
-    //// (which is the same operation as reversing all bits in the key)
-    // if (attackSide != BLACK) {
-    //    if constexpr (HalfLineLen<R> == 5)
-    //        key = ((uint64_t)reverseByte(uint8_t(key)) << 12)
-    //              | ((uint64_t)reverseByte(uint8_t(key >> 8)) << 4)
-    //              | ((uint64_t)reverseByte(uint8_t(key >> 16)) >> 4);  // Reverse 20-bits
-    //    else
-    //        key = ((uint64_t)reverseByte(uint8_t(key)) << 8)
-    //              | (uint64_t)reverseByte(uint8_t(key >> 8));  // Reverse 16-bits
-    //}
 
     if constexpr (R == Rule::FREESTYLE)
         return DEFENCE[key][attackSide];

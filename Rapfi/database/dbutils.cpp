@@ -20,6 +20,7 @@
 
 #include "../core/iohelper.h"
 #include "../game/board.h"
+#include "../game/scopedmove.h"
 #include "dbclient.h"
 
 #include <iomanip>
@@ -425,19 +426,14 @@ size_t importLibToDatabase(DBStorage &dbDst, std::istream &libStream, Rule rule,
                     newRecord.setDepthBound(0, BOUND_EXACT);
                 }
                 else if (board.ply() > 0 && !Config::DatabaseLibIgnoreBoardText) {
-                    // Write parent record for board text
-                    Pos    lastMove = board.getLastMove();
-                    Board &b        = const_cast<Board &>(board);
-                    b.undo(rule);
-                    {
-                        DBClient dbClient(dbDst, RECORD_MASK_TEXT);
-                        dbClient.setBoardText(
-                            b,
-                            rule,
-                            lastMove,
-                            LegacyFileCPToUTF8(t, Config::DatabaseLegacyFileCodePage));
-                    }
-                    b.move(rule, lastMove);
+                    // Write parent record for board text, on the parent position.
+                    ScopedRuleUndo rewind(board, rule);
+                    DBClient       dbClient(dbDst, RECORD_MASK_TEXT);
+                    dbClient.setBoardText(
+                        board,
+                        rule,
+                        rewind.lastMove(),
+                        LegacyFileCPToUTF8(t, Config::DatabaseLegacyFileCodePage));
                 }
             }
 

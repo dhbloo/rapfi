@@ -23,6 +23,7 @@
 #include "../core/utils.h"
 #include "../eval/evaluator.h"
 #include "../search/searchthread.h"
+#include "scopedmove.h"
 
 #include <algorithm>
 #include <cstring>  // for std::memset
@@ -32,7 +33,8 @@
 
 namespace {
 
-/// Checks whether current p4Count in stateInfo matches that on board (used in debug).
+/// Recompute the Pattern4 histogram by scanning every empty cell and check it against the
+/// incrementally-maintained p4Count in the current StateInfo. Debug-only consistency assertion.
 bool checkP4(const Board *board)
 {
     int p4[SIDE_NB][PATTERN4_NB] = {0};
@@ -64,8 +66,10 @@ Board::Board(int boardSize, CandidateRange candRange)
     , thisThread_(nullptr)
 {
     assert(0 < boardSize && boardSize <= MAX_BOARD_SIZE);
-    stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
-    updateCache = new UpdateCache[1 + boardCellCount * 2];
+    // One extra slot for the initial (pre-move) ply; *2 leaves room for pass moves on top of the
+    // at-most-boardCellCount stone moves.
+    stateInfos  = std::make_unique<StateInfo[]>(1 + boardCellCount * 2);
+    updateCache = std::make_unique<UpdateCache[]>(1 + boardCellCount * 2);
 
     // Set candidate range of the board. FULL_BOARD yields a null table and zero expand
     // distance (every empty cell is a candidate; the candidate area is unused).
@@ -94,27 +98,22 @@ Board::Board(const Board &other, Search::SearchThread *thread)
     std::copy_n(other.bitKey2, arraySize(bitKey2), bitKey2);
     std::copy_n(other.bitKey3, arraySize(bitKey3), bitKey3);
 
-    stateInfos  = new StateInfo[1 + boardCellCount * 2] {};
-    updateCache = new UpdateCache[1 + boardCellCount * 2];
+    stateInfos  = std::make_unique<StateInfo[]>(1 + boardCellCount * 2);
+    updateCache = std::make_unique<UpdateCache[]>(1 + boardCellCount * 2);
     // Only copy stateinfo in [0, moveCount]
-    std::copy_n(other.stateInfos, 1 + moveCount, stateInfos);
-    std::copy_n(other.updateCache, 1 + moveCount, updateCache);
+    std::copy_n(other.stateInfos.get(), 1 + moveCount, stateInfos.get());
+    std::copy_n(other.updateCache.get(), 1 + moveCount, updateCache.get());
 
     // Sync evaluator state with board state
     if (evaluator_)
         evaluator_->syncWithBoard(*this);
 }
 
-Board::~Board()
-{
-    delete[] stateInfos;
-    delete[] updateCache;
-}
-
 template <Rule R>
 void Board::newGame()
 {
-    // Zero out cells and bitkeys
+    // Reset to an empty board, then compute every empty cell's patterns/scores from scratch once;
+    // all later positions are reached incrementally through move()/undo().
     std::fill_n(cells, FULL_BOARD_CELL_COUNT, Cell {});
     std::fill_n(bitKey0, arraySize(bitKey0), 0);
     std::fill_n(bitKey1, arraySize(bitKey1), 0);
@@ -130,6 +129,8 @@ void Board::newGame()
     for (Pos i = Pos::FULL_BOARD_START; i < Pos::FULL_BOARD_END; i++) {
         cells[i].piece = i.isInBoard(boardSize, boardSize) ? EMPTY : WALL;
 
+        // Seed empty cells with both color bits set (encoding 11); walls keep 00. Placing a stone
+        // later toggles one bit, leaving the opposite color's bit set (black 10, white 01).
         if (cells[i].piece == EMPTY) {
             setBitKey(i, BLACK);
             setBitKey(i, WHITE);
@@ -179,7 +180,7 @@ template void Board::newGame<RENJU>();
 template <Rule R, Board::MoveType MT>
 void Board::move(Pos pos)
 {
-    // handle the case when the pos is a PASS move
+    // A pass copies the previous ply unchanged apart from the side to move and pass counter.
     if (UNLIKELY(pos == Pos::PASS)) {
         assert(passMoveCount() < cellCount());
 
@@ -217,6 +218,11 @@ void Board::move(Pos pos)
     int   f4CountBeforeMove[SIDE_NB] = {p4Count(BLACK, B_FLEX4), p4Count(WHITE, B_FLEX4)};
     int   updateCacheIdx             = 0;
 
+    // Placing a stone only changes the line patterns of the cells within L steps of `pos` along
+    // each of the 4 directions. We walk those cells from i=-L to i=+L (skipping i=0, the stone
+    // itself), and instead of recomputing a rotated line key per cell we keep `bitKey[dir]`
+    // pre-aligned to the i=-L cell and shift it one cell (2 bits) per step. Stepping past the
+    // center (i=-1 -> i=+1) skips two cells, hence the doubled increment and shift amount below.
     constexpr int L         = PatternConfig::HalfLineLen<R>;
     int           x         = pos.x() + BOARD_BOUNDARY;
     int           y         = pos.y() + BOARD_BOUNDARY;
@@ -240,6 +246,7 @@ void Board::move(Pos pos)
 
             c.pattern2x[dir] = PatternConfig::lookupPattern<R>(bitKey[dir]);
 
+            // Save the cell's pre-update pattern4/score/value so undo() can restore it verbatim.
             pc[updateCacheIdx].pattern4[BLACK] = c.pattern4[BLACK];
             pc[updateCacheIdx].pattern4[WHITE] = c.pattern4[WHITE];
             pc[updateCacheIdx].score[BLACK]    = c.score[BLACK];
@@ -275,6 +282,8 @@ void Board::move(Pos pos)
         bitKey[3] >>= shamt;
     }
 
+    // The placed cell is no longer empty: drop its own (now stale) value and p4 contributions
+    // that were folded in above.
     const Cell &c = cell(pos);
     if (MT == MoveType::NORMAL || MT == MoveType::NO_EVALUATOR) {
         st.valueBlack += deltaValueBlack - c.valueBlack;
@@ -288,9 +297,12 @@ void Board::move(Pos pos)
     assert(checkP4(this));
     assert(updateCacheIdx <= std::tuple_size_v<UpdateCache>);
 
+    // Mark the new stone's neighborhood as candidates (undo() decrements the same cells).
     for (size_t i = 0; i < candidateRangeSize; i++)
         cells[pos + candidateRange[i]].cand++;
 
+    // If this move is what first created a flex four for a side, remember it as that side's
+    // flex-four attack move (used by the four-defence move generator).
     for (Color c : {BLACK, WHITE}) {
         if (!f4CountBeforeMove[c] && p4Count(c, B_FLEX4))
             st.lastFlex4AttackMove[c] = pos;
@@ -314,7 +326,7 @@ void Board::undo()
     assert(moveCount > 0);
     Pos lastPos = getLastMove();
 
-    // handle the case when the last move is a PASS
+    // Undoing a pass just restores the side to move and pass counter.
     if (UNLIKELY(lastPos == Pos::PASS)) {
         currentSide = ~currentSide;
         assert(passCount[currentSide] > 0);
@@ -343,6 +355,9 @@ void Board::undo()
     const UpdateCache &pc             = updateCache[moveCount];
     int                updateCacheIdx = 0;
 
+    // Mirror move()'s line walk over the same cells in the same order, but restore each cell's
+    // pattern4/score/value from the saved UpdateCache instead of recomputing them. The recomputed
+    // line pattern (pattern2x) is the one piece that must still be derived from the bitkey.
     constexpr int L         = PatternConfig::HalfLineLen<R>;
     int           x         = lastPos.x() + BOARD_BOUNDARY;
     int           y         = lastPos.y() + BOARD_BOUNDARY;
@@ -381,6 +396,7 @@ void Board::undo()
     assert(checkP4(this));
     assert(updateCacheIdx <= std::tuple_size_v<UpdateCache>);
 
+    // Reverse the candidate-refcount bump that move() applied around this stone.
     for (size_t i = 0; i < candidateRangeSize; i++)
         cells[lastPos + candidateRange[i]].cand--;
 
@@ -398,12 +414,14 @@ template void Board::undo<RENJU, Board::MoveType::NO_EVAL>();
 
 bool Board::checkForbiddenPoint(Pos pos) const
 {
+    // Renju forbids black from playing an overline, a double-four, or a double-three. The pattern
+    // tables flag candidates as FORBID, but some are false positives (e.g. a "double three" where
+    // one three can only be completed via another forbidden point is not actually forbidden), so
+    // overline and double-four are confirmed directly from the line patterns while double-three is
+    // verified by placing the stone and counting threes that lead to a genuine win.
     const Cell &fpCell = cell(pos);
     if (fpCell.pattern4[BLACK] != FORBID)
         return false;
-
-    // This pos is a possible black forbidden point.
-    // Still need to check possible false forbidden point.
 
     int winByFour = 0;
     for (int dir = 0; dir < 4; dir++) {
@@ -417,13 +435,10 @@ bool Board::checkForbiddenPoint(Pos pos) const
         }
     }
 
-    // Check false forbidden point by putting stones recursively.
-    // Cast out const qualifier of this as we guarantee not to modify its state.
-    Board &board    = const_cast<Board &>(*this);
-    Color  prevSide = board.currentSide;
-
-    board.currentSide = BLACK;
-    board.move<Rule::RENJU, MoveType::NO_EVAL_MULTI>(pos);
+    // Check the remaining false-forbidden cases by placing black at pos and recursing. The guards
+    // restore the side to move and undo the stone on every exit path of this function.
+    ScopedSwitchSide                                        asBlack(*this, BLACK);
+    ScopedMove<Rule::RENJU, Board::MoveType::NO_EVAL_MULTI> probe(*this, pos);
 
     constexpr int MaxFindDist = 4;
     int           winByThree  = 0;
@@ -473,9 +488,6 @@ bool Board::checkForbiddenPoint(Pos pos) const
         if (winByThree >= 2)
             break;
     }
-
-    board.undo<Rule::RENJU, MoveType::NO_EVAL_MULTI>();
-    board.currentSide = prevSide;
 
     return winByThree >= 2;
 }
@@ -633,7 +645,7 @@ std::string Board::trace() const
         Evaluation::PolicyBuffer policyBuf(boardSize);
         policyBuf.setComputeFlagForAllEmptyCell(*this);
 
-        // Calcualate policy for the current side
+        // Calculate policy for the current side
         evaluator_->evaluatePolicy(*this, policyBuf);
 
         ss << "----------Policy------Self-----------\n";
@@ -649,10 +661,11 @@ std::string Board::trace() const
             },
             4);
 
-        // Calcualate for the opponent side
-        const_cast<Board *>(this)->flipSide();
-        evaluator_->evaluatePolicy(*this, policyBuf);
-        const_cast<Board *>(this)->flipSide();
+        // Calculate for the opponent side
+        {
+            ScopedSwitchSide oppoSide(*this, ~sideToMove());
+            evaluator_->evaluatePolicy(*this, policyBuf);
+        }
 
         ss << "----------Policy------Oppo-----------\n";
         printBoard(

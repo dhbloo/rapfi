@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include "pattern.h"
 
@@ -23,7 +23,6 @@
 
 #include <array>
 #include <cassert>
-#include <ostream>
 #include <tuple>
 
 namespace {
@@ -31,65 +30,66 @@ namespace {
 using PatternConfig::HalfLineLen;
 using PatternConfig::KeyCnt;
 
-/// ColorFlag represents one of the three states in a cell:
-/// 1.self stone, 2.opponent stone, 3.empty cell.
+/// One cell's state from the perspective of the side whose pattern is being computed.
 enum ColorFlag { SELF, OPPO, EMPT };
 
-/// The length of a line to determine the pattern (OOOO_OOOO).
+/// Length of the line examined to classify a pattern: the center cell plus both half-lines
+/// (e.g. OOOO_OOOO for freestyle).
 template <Rule R>
 constexpr int LineLen = HalfLineLen<R> * 2 + 1;
 
-/// Line struct is a array representing a stright line of color flags.
+/// A straight line of color flags centered on the cell under consideration.
 template <Rule R>
 struct Line : std::array<ColorFlag, LineLen<R>>
 {
     explicit Line() = default;
 
-    /// Construct a line from 64bit key and self color.
+    /// Decode a line from a raw 64-bit line key, classifying each cell relative to `self`.
     explicit Line(uint64_t key, Color self);
 };
 
-/// Memorandum for (Line -> Pattern) table used in dynamic programming.
+/// Memo table for the (Line -> Pattern) dynamic program, indexed by the line's base-3 encoding.
 template <Rule R>
 struct PatternMemo : std::array<Pattern, power(3, LineLen<R>)>
 {
-    // Special flag for uninitialized line pat
-    static constexpr Pattern NilPat = Pattern(0xff);
+    static constexpr Pattern NilPat = Pattern(0xff);  ///< Sentinel for a not-yet-computed entry.
 
     PatternMemo() { this->fill(NilPat); }
     Pattern &get(const Line<R> &line);
 };
 
-/// Count a line's SELF length, start/end position.
-/// @return (RealLen, FullLen, Start, End)
+/// Measure the self-run through the center: returns (realLen, fullLen, start, end), where realLen
+/// counts contiguous self stones, fullLen spans up to the first blocking opponent stone on each
+/// side, and [start, end] are the inclusive bounds of that span.
 template <Rule R>
 constexpr std::tuple<int, int, int, int> countLine(const Line<R> &line);
 
-/// Shift a line to where i is the middle stone (i' = 4).
+/// Re-center a line so that index `i` becomes the middle cell (off-line cells become OPPO).
 template <Rule R>
 constexpr Line<R> shiftLine(const Line<R> &line, int i);
 
-/// Calculate line pattern (using dynamic programming).
+/// Classify a line into its `Pattern` via the dynamic program described at the definition.
 template <Rule R, Color Side>
 constexpr Pattern getPattern(PatternMemo<R> &patMemo, const Line<R> &line);
 
-/// Initialize a (64bit key -> pattern2x) LUT.
+/// Fill a (fused line key -> Pattern2x) lookup table.
 template <Rule R>
 void fillPattern2xLUT(Pattern2x pattern2x[KeyCnt<R>]);
 
-/// @brief Get pattern4 from four line pattern.
-/// @tparam Forbid Whether to mark forbidden point (for renju).
+/// Combine four directional line patterns into the cell's `Pattern4`.
+/// @tparam Forbid Whether to flag renju forbidden points (overline / double-four / double-three).
 template <bool Forbid>
 Pattern4 getPattern4(Pattern p1, Pattern p2, Pattern p3, Pattern p4);
 
-/// Initialize a (pattern code -> pattern4) LUT.
+/// Fill a (pattern code -> Pattern4 score) lookup table.
 template <bool Forbid>
 void fillPattern4LUT(Pattern4Score p4Score[PCODE_NB]);
 
-/// Initialize a (pattern x 4 -> pattern code) LUT.
+/// Fill the (four line patterns -> pattern code) lookup table, assigning each unordered
+/// combination of four patterns a dense, order-independent code.
 void fillPatternCodeLUT(PatternCode pcode[PATTERN_NB][PATTERN_NB][PATTERN_NB][PATTERN_NB]);
 
-/// Initialize a (64bit key -> defence moves mask) LUT.
+/// Fill a (fused line key + attacker -> defence-move bitmask) lookup table.
 template <Rule R>
 void fillDefenceLUT(uint8_t defence[KeyCnt<R>][2]);
 
@@ -105,8 +105,9 @@ uint8_t     DEFENCE[KeyCnt<FREESTYLE>][2];
 uint8_t     DEFENCEStandard[KeyCnt<STANDARD>][2];
 uint8_t     DEFENCERenju[KeyCnt<RENJU>][2];
 
-// this will force compiler run initialization code before main()
-const auto init = []() {
+// Populate every lookup table before main() runs. PCODE must come first because fillPattern4LUT
+// reads it to map each pattern combination to its dense code.
+[[maybe_unused]] static const bool init = []() {
     fillPatternCodeLUT(PCODE);
 
     fillPattern2xLUT<FREESTYLE>(PATTERN2x);
@@ -134,6 +135,10 @@ Line<R>::Line(uint64_t key, Color self)
     assert(self == BLACK || self == WHITE);
     constexpr auto Mid = HalfLineLen<R>;
 
+    // Each cell is 2 bits (bit BLACK = bit 0, bit WHITE = bit 1). An empty cell sets both bits;
+    // placing a stone of color c clears bit c, so the bit left set marks the opposite color.
+    // Hence 00 wall, 01 white, 10 black, 11 empty. Both bits set means empty; otherwise the cell
+    // holds `self`'s stone iff the opposite color's bit is set.
     for (int i = 0; i < LineLen<R>; i++) {
         bool c[2];
         if (i < Mid) {
@@ -155,8 +160,8 @@ Line<R>::Line(uint64_t key, Color self)
 template <Rule R>
 Pattern &PatternMemo<R>::get(const Line<R> &line)
 {
-    // Encode a line into a unsigned int, used for indexing line pattern memo
-    // 0 <= code < pow(3,9) = 19683
+    // Each cell holds one of three flags, so the line packs into a base-3 integer in [0,
+    // 3^LineLen).
     uint32_t code = 0;
     for (int i = 0; i < LineLen<R>; i++) {
         code = code * 3 + uint32_t(line[i]);
@@ -218,29 +223,28 @@ constexpr Line<R> shiftLine(const Line<R> &line, int i)
 template <Rule R, Color Side>
 constexpr Pattern getPattern(PatternMemo<R> &patMemo, const Line<R> &line)
 {
-    // In order to calcuate a line's pattern, we can use a dynamic programming solution: continue
+    // In order to calculate a line's pattern, we can use a dynamic programming solution: continue
     // to put stones at EMPT position, and recursively see what's the next pattern, until it
     // reaches trivial state (i.e. OL[realLen >= 6] or F5[realLen >= 5] or DEAD[fullLen < 5]).
     // Then by tracing back which max pattern we got we can infer current line's pattern.
     //
-    // Here's the description in chinese:
-    // 动态规划求解棋型
-    // 1. 当 realLen >= 6, 棋型为长连
-    // 2. 当 realLen == 5, 棋型为连五
-    // 3. 当 fullLen <  5, 棋型为死型
-    // 4. 其余情况递归判断棋型:
-    //    a. 下一步有两个以上连五点的是活四
-    //    b. 下一步有一个连五点的是冲四
-    //    c. 下一步有两个以上活四点的是连活三
-    //    d. 下一步有一个活四点的是普通活三
-    //    e. 下一步有冲四点的是眠三
-    //    f. 下一步有四个活三点的是连活二
-    //    g. 下一步有三个活三点的是跳活二
-    //    h. 下一步有两个活三点的是大跳活二
-    //    i. 下一步有眠三点的是眠二
-    //    j. 下一步有活二点的是活一
-    //    k. 下一步有眠二点的是眠一
-    //    l. 其余情况是长连，棋型为死型
+    // Classification rules:
+    // 1. realLen >= 6  -> overline (OL)
+    // 2. realLen == 5  -> five (F5)
+    // 3. fullLen <  5  -> dead (DEAD)
+    // 4. otherwise, classify by what the empty points in the span become with one more self stone:
+    //    a. >= 2 five-points       -> open four (F4)
+    //    b.    1 five-point        -> block four (B4)
+    //    c. >= 2 open-four-points  -> connected open three (F3S)
+    //    d.    1 open-four-point   -> plain open three (F3)
+    //    e. a block-four-point     -> block three (B3)
+    //    f.    4 open-three-points -> connected open two (F2B)
+    //    g.    3 open-three-points -> jump open two (F2A)
+    //    h.    2 open-three-points -> wide-jump open two (F2)
+    //    i. a block-three-point    -> block two (B2)
+    //    j. an open-two-point      -> open one (F1)
+    //    k. a block-two-point      -> block one (B1)
+    //    l. none of the above      -> dead (DEAD)
 
     constexpr auto Mid           = LineLen<R> / 2;
     constexpr bool CheckOverline = R == Rule::STANDARD || (R == Rule::RENJU && Side == BLACK);
@@ -405,58 +409,43 @@ void fillPattern4LUT(Pattern4Score p4Score[PCODE_NB])
 
 void fillPatternCodeLUT(PatternCode pcode[PATTERN_NB][PATTERN_NB][PATTERN_NB][PATTERN_NB])
 {
-    constexpr int N     = PATTERN_NB;
-    constexpr int N2    = N * N;
-    constexpr int N3    = N2 * N;
-    constexpr int N4    = N3 * N;
-    int           v[N4] = {-1};
+    constexpr int N = PATTERN_NB;
 
-    for (int x = 0, i = 0; x < N; x++)
-        for (int y = 0; y < N; y++)
-            for (int z = 0; z < N; z++)
-                for (int w = 0; w < N; w++) {
-                    int a = x, b = y, c = z, d = w;
-                    if (a > b)
-                        std::swap(a, b);
-                    if (c > d)
-                        std::swap(c, d);
-                    if (a > c)
-                        std::swap(a, c);
-                    if (b > d)
-                        std::swap(b, d);
-                    if (b > c)
-                        std::swap(b, c);
+    // Sort four patterns ascending with a 5-comparator network. Two orderings collide iff they
+    // are the same multiset, so the sorted tuple is each combination's canonical representative.
+    auto sort4 = [](int &a, int &b, int &c, int &d) {
+        if (a > b)
+            std::swap(a, b);
+        if (c > d)
+            std::swap(c, d);
+        if (a > c)
+            std::swap(a, c);
+        if (b > d)
+            std::swap(b, d);
+        if (b > c)
+            std::swap(b, c);
+    };
 
-                    v[i++] = a * N3 + b * N2 + c * N + d;
-                }
+    // Pass 1: hand each non-decreasing 4-tuple a dense code in lexicographic order. This is exactly
+    // the order in which canonical representatives first appear when scanning all N^4 tuples by
+    // linear index, so the resulting mapping is identical to the historical O(N^8) construction.
+    PatternCode code = 0;
+    for (int a = 0; a < N; a++)
+        for (int b = a; b < N; b++)
+            for (int c = b; c < N; c++)
+                for (int d = c; d < N; d++)
+                    pcode[a][b][c][d] = code++;
 
-    for (int i = 0; i < N4; i++)
-        if (v[i] > -1)
-            for (int j = i + 1; j < N4; j++)
-                if (v[i] == v[j])
-                    v[j] = -1;
-
-    for (int i = 0, count = 0; i < N4; i++)
-        if (v[i] > -1)
-            v[i] = count++;
-
+    // Pass 2: every ordering of four patterns inherits its sorted representative's code. Safe
+    // in place: only sorted slots (finalized in pass 1) are read; a sorted slot just re-stores
+    // its own code.
     for (int i = 0; i < N; i++)
         for (int j = 0; j < N; j++)
             for (int m = 0; m < N; m++)
                 for (int n = 0; n < N; n++) {
                     int a = i, b = j, c = m, d = n;
-                    if (a > b)
-                        std::swap(a, b);
-                    if (c > d)
-                        std::swap(c, d);
-                    if (a > c)
-                        std::swap(a, c);
-                    if (b > d)
-                        std::swap(b, d);
-                    if (b > c)
-                        std::swap(b, c);
-
-                    pcode[i][j][m][n] = v[a * N3 + b * N2 + c * N + d];
+                    sort4(a, b, c, d);
+                    pcode[i][j][m][n] = pcode[a][b][c][d];
                 }
 }
 
@@ -495,23 +484,6 @@ void fillDefenceLUT(uint8_t defence[KeyCnt<R>][2])
             defence[key][attacker] = defenceMask;
         }
     }
-}
-
-template <Rule R>
-std::ostream &operator<<(std::ostream &os, const Line<R> &line)
-{
-    for (int i = line.size() - 1; i >= 0; i--) {
-        if (i == line.size() / 2)
-            os << ".";
-        else {
-            switch (line[i]) {
-            case SELF: os << 'O'; break;
-            case OPPO: os << 'X'; break;
-            default: os << '_'; break;
-            }
-        }
-    }
-    return os;
 }
 
 }  // namespace

@@ -249,6 +249,7 @@ set(HEADERS
     game/board.h
     game/movegen.h
     game/pattern.h
+    game/scopedmove.h
     game/wincheck.h
 
     tuning/dataentry.h
