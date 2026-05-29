@@ -455,7 +455,11 @@ endif()
 if(MSVC)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         message(STATUS "Setting up build for MSVC Clang-CL.")
-        string(REGEX REPLACE "/O2" "/clang:-O3" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+        # clang-cl maps /O2 to -O2; append /clang:-O3 (wins as the last -O flag) so Release and
+        # RelWithDebInfo share the same -O3. Appending keeps /O2 -> <Optimization>MaxSpeed, which
+        # matters for RelWithDebInfo since it has no LTO to re-optimize at link time.
+        string(APPEND CMAKE_CXX_FLAGS_RELEASE        " /clang:-O3")
+        string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " /clang:-O3")
     else()
         message(STATUS "Setting up build for MSVC.")
         string(REGEX REPLACE "/O2" "/Ox" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")

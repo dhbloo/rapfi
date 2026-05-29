@@ -29,7 +29,7 @@
       "inherits": [
         "base"
       ],
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "toolset": "ClangCL",
       "architecture": {
         "strategy": "set",
@@ -68,7 +68,7 @@
       "inherits": [
         "base"
       ],
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "toolset": "ClangCL",
       "architecture": {
         "strategy": "set",
@@ -116,8 +116,7 @@
         "base-x64-msvc"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -222,8 +221,7 @@
         "base-onnx"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -252,8 +250,7 @@
         "base-x64-clang"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -369,8 +366,7 @@
         "base-onnx"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -398,8 +394,7 @@
         "base-arm64-msvc"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -448,8 +443,7 @@
         "base-arm64-clang"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
@@ -500,8 +494,7 @@
         "base-onnx"
       ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "FORCE_ASSERTION": "True"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
