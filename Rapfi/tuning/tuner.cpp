@@ -128,16 +128,14 @@ void collectMoveScoreCoeffs(Rule r, const Board &board, Collector collect)
     Color self = board.sideToMove(), oppo = ~self;
 
     // Collect scores of all candidate moves
-    FOR_EVERY_EMPTY_POS(&board, pos)
+    FOR_EVERY_EMPTY_CAND_POS(&board, pos)
     {
         const Cell &c = board.cell(pos);
-        if (c.isCandidate()) {
-            collect(pos,
-                    1,
-                    1,
-                    &Config::P4SCORES[Config::tableIndex(r, self)][c.pcode<BLACK>()],
-                    &Config::P4SCORES[Config::tableIndex(r, oppo)][c.pcode<WHITE>()]);
-        }
+        collect(pos,
+                1,
+                1,
+                &Config::P4SCORES[Config::tableIndex(r, self)][c.pcode<BLACK>()],
+                &Config::P4SCORES[Config::tableIndex(r, oppo)][c.pcode<WHITE>()]);
     }
 }
 
@@ -262,7 +260,7 @@ TuneEntry::TuneEntry(const DataEntry                 &dataEntry,
     // Calculate all coefficients with best move (if best move is not none)
     if (tuner.config.tuneMoveScore
         && dataEntry.move != Pos {dataEntry.boardsize, dataEntry.boardsize}
-        && board.cell(dataEntry.move).isCandidate()) {
+        && board.isCandidate(dataEntry.move)) {
         bestMove = dataEntry.move;
         collectMoveScoreCoeffs(
             dataEntry.rule,

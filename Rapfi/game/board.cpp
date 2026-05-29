@@ -34,9 +34,15 @@
 namespace {
 
 /// Recompute the Pattern4 histogram by scanning every empty cell and check it against the
-/// incrementally-maintained p4Count in the current StateInfo. Debug-only consistency assertion.
+/// incrementally-maintained p4Count in the current StateInfo. Also cross-checks the empty-cell
+/// bitboard against the move counters. Debug-only consistency assertion.
 bool checkP4(const Board *board)
 {
+    // Every playable cell is either empty or holds a stone (passes occupy none), so the empty
+    // bitboard's population must equal the playable cells minus the stones placed.
+    if (board->emptyCells().count() != board->cellCount() - board->nonPassMoveCount())
+        return false;
+
     int p4[SIDE_NB][PATTERN4_NB] = {0};
     FOR_EVERY_EMPTY_POS(board, pos)
     {
@@ -71,12 +77,13 @@ Board::Board(int boardSize, CandidateRange candRange)
     stateInfos  = std::make_unique<StateInfo[]>(1 + boardCellCount * 2);
     updateCache = std::make_unique<UpdateCache[]>(1 + boardCellCount * 2);
 
-    // Set candidate range of the board. FULL_BOARD yields a null table and zero expand
-    // distance (every empty cell is a candidate; the candidate area is unused).
+    // Set candidate range of the board. FULL_BOARD yields a null table (every empty cell is a
+    // candidate, seeded once in newGame).
     CandidateRangeInfo info = candidateRangeInfo(candRange);
     candidateRange          = info.offsets;
     candidateRangeSize      = info.offsetCount;
     candAreaExpandDist      = info.expandDist;
+    candStencil.build(candidateRange, candidateRangeSize);
 }
 
 Board::Board(const Board &other, Search::SearchThread *thread)
@@ -92,11 +99,14 @@ Board::Board(const Board &other, Search::SearchThread *thread)
     , evaluator_(thread ? thread->evaluator.get() : nullptr)
     , thisThread_(thread)
 {
+    candStencil.build(candidateRange, candidateRangeSize);
     std::copy_n(other.cells, FULL_BOARD_CELL_COUNT, cells);
     std::copy_n(other.bitKey0, arraySize(bitKey0), bitKey0);
     std::copy_n(other.bitKey1, arraySize(bitKey1), bitKey1);
     std::copy_n(other.bitKey2, arraySize(bitKey2), bitKey2);
     std::copy_n(other.bitKey3, arraySize(bitKey3), bitKey3);
+    onBoardBB = other.onBoardBB;
+    emptyBB   = other.emptyBB;
 
     stateInfos  = std::make_unique<StateInfo[]>(1 + boardCellCount * 2);
     updateCache = std::make_unique<UpdateCache[]>(1 + boardCellCount * 2);
@@ -119,6 +129,8 @@ void Board::newGame()
     std::fill_n(bitKey1, arraySize(bitKey1), 0);
     std::fill_n(bitKey2, arraySize(bitKey2), 0);
     std::fill_n(bitKey3, arraySize(bitKey3), 0);
+    onBoardBB.zero();
+    emptyBB.zero();
 
     // Init board state to empty
     moveCount         = 0;
@@ -134,6 +146,8 @@ void Board::newGame()
         if (cells[i].piece == EMPTY) {
             setBitKey(i, BLACK);
             setBitKey(i, WHITE);
+            onBoardBB.set(i);
+            emptyBB.set(i);
         }
     }
 
@@ -213,6 +227,7 @@ void Board::move(Pos pos)
     cells[pos].piece = currentSide;
     currentZobristKey ^= Hash::zobrist[currentSide][pos];
     flipBitKey(pos, currentSide);
+    emptyBB.clear(pos);
 
     Value deltaValueBlack            = VALUE_ZERO;
     int   f4CountBeforeMove[SIDE_NB] = {p4Count(BLACK, B_FLEX4), p4Count(WHITE, B_FLEX4)};
@@ -297,9 +312,8 @@ void Board::move(Pos pos)
     assert(checkP4(this));
     assert(updateCacheIdx <= std::tuple_size_v<UpdateCache>);
 
-    // Mark the new stone's neighborhood as candidates (undo() decrements the same cells).
-    for (size_t i = 0; i < candidateRangeSize; i++)
-        cells[pos + candidateRange[i]].cand++;
+    // Mark the new stone's candidate neighborhood in the snapshotted candidate bitboard.
+    st.candidates.applyStencil(candStencil, pos);
 
     // If this move is what first created a flex four for a side, remember it as that side's
     // flex-four attack move (used by the four-defence move generator).
@@ -350,6 +364,7 @@ void Board::undo()
     flipBitKey(lastPos, currentSide);
     currentZobristKey ^= Hash::zobrist[currentSide][lastPos];
     cells[lastPos].piece = EMPTY;
+    emptyBB.set(lastPos);
 
     moveCount--;
     const UpdateCache &pc             = updateCache[moveCount];
@@ -396,9 +411,7 @@ void Board::undo()
     assert(checkP4(this));
     assert(updateCacheIdx <= std::tuple_size_v<UpdateCache>);
 
-    // Reverse the candidate-refcount bump that move() applied around this stone.
-    for (size_t i = 0; i < candidateRangeSize; i++)
-        cells[lastPos + candidateRange[i]].cand--;
+    // The candidate bitboard rewinds for free: it lives in the popped StateInfo (moveCount--).
 
     // after undo evaluator update
     if (MT == MoveType::NORMAL && evaluator_)
@@ -509,28 +522,25 @@ Pos Board::getLastActualMoveOfSide(Color side) const
 
 void Board::expandCandArea(Pos pos, int fillDist, int lineDist)
 {
-    CandArea &area = stateInfos[moveCount].candArea;
-    int       x = pos.x(), y = pos.y();
+    StateInfo &st = stateInfos[moveCount];
+    int        x = pos.x(), y = pos.y();
 
-    auto candCondition = [&](Pos p) {
-        return p >= 0 && p < FULL_BOARD_CELL_COUNT && isEmpty(p) && !cell(p).isCandidate();
+    // Grow the bounding box too: FOR_EVERY_CAND_POS masks iteration by candArea, so candidate
+    // bits set outside the box would never be visited.
+    st.candArea.expand(pos, boardSize, std::max(fillDist, lineDist));
+
+    auto markCandidate = [&](Pos p) {
+        if (p >= 0 && p < FULL_BOARD_CELL_COUNT && isEmpty(p))
+            st.candidates.set(p);
     };
 
-    area.expand(pos, boardSize, std::max(fillDist, lineDist));
-
     for (int i = std::max(3, fillDist + 1); i <= lineDist; i++) {
-        for (int dir = 0; dir < 4; dir++) {
-            Pos posi = pos + DIRECTION[dir] * i;
-            if (candCondition(posi))
-                cells[posi].cand++;
-        }
+        for (int dir = 0; dir < 4; dir++)
+            markCandidate(pos + DIRECTION[dir] * i);
     }
     for (int xi = -fillDist; xi <= fillDist; xi++) {
-        for (int yi = -fillDist; yi <= fillDist; yi++) {
-            Pos posi {x + xi, y + yi};
-            if (candCondition(posi))
-                cells[posi].cand++;
-        }
+        for (int yi = -fillDist; yi <= fillDist; yi++)
+            markCandidate(Pos {x + xi, y + yi});
     }
 }
 
@@ -591,7 +601,7 @@ std::string Board::trace() const
         switch (get(pos)) {
         case BLACK: ss << 'X'; break;
         case WHITE: ss << 'O'; break;
-        case EMPTY: ss << (cell(pos).isCandidate() ? '*' : '.'); break;
+        case EMPTY: ss << (isCandidate(pos) ? '*' : '.'); break;
         default: ss << ' '; break;
         }
     };

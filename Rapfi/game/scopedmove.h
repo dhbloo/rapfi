@@ -34,9 +34,9 @@ class ScopedMove
 public:
     ScopedMove(const Board &board, Pos pos) : board(const_cast<Board &>(board))
     {
-        this->board.move<R, MT>(pos);
+        this->board.template move<R, MT>(pos);
     }
-    ~ScopedMove() { board.undo<R, MT>(); }
+    ~ScopedMove() { board.template undo<R, MT>(); }
 
     ScopedMove(const ScopedMove &)            = delete;
     ScopedMove &operator=(const ScopedMove &) = delete;

@@ -246,7 +246,9 @@ set(HEADERS
     eval/simdops.h
     eval/weightloader.h
 
+    game/bitboard.h
     game/board.h
+    game/candarea.h
     game/movegen.h
     game/pattern.h
     game/scopedmove.h

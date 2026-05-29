@@ -662,10 +662,9 @@ ScoredMove *generateNeighbors(const Board     &board,
         return moveList;
 
     for (size_t i = 0; i < numNeighbors; i++) {
-        Pos         pos = center + neighbors[i];
-        const Cell &c   = board.cell(pos);
+        Pos pos = center + neighbors[i];
 
-        if (c.piece == EMPTY && c.isCandidate() && basicPatternFilter<Type>(board, pos, self))
+        if (board.isEmptyCandidate(pos) && basicPatternFilter<Type>(board, pos, self))
             *moveList++ = pos;
     }
 

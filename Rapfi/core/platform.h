@@ -35,6 +35,7 @@
     #include <intrin.h>  // __umulh, _mm_prefetch, __prefetch
 #endif
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -85,6 +86,41 @@ inline int popcount(uint64_t x)
     x = (x + (x >> 4)) & 0x0F0F'0F0F'0F0F'0F0FULL;
     return static_cast<int>((x * 0x0101'0101'0101'0101ULL) >> 56);
 #endif
+}
+
+/// Index of the least-significant set bit (count of trailing zeros). Undefined for x == 0.
+/// Picks the fastest available: `std::countr_zero` (C++20) -> `__builtin_ctzll` (GCC/Clang)
+/// -> `_BitScanForward64` (MSVC x64) -> a de Bruijn fallback.
+inline int lsb(uint64_t x)
+{
+    assert(x != 0);
+#if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
+    return std::countr_zero(x);
+#elif defined(__clang__) || defined(__GNUC__)
+    return __builtin_ctzll(x);
+#elif defined(_MSC_VER) && defined(_M_X64)
+    unsigned long index;
+    _BitScanForward64(&index, x);
+    return static_cast<int>(index);
+#else
+    // De Bruijn sequence multiply-and-lookup: isolate the lowest bit, map its product's top 6
+    // bits to a position via a perfect-hash table. See Knuth TAOCP 4A / Leiserson et al. 1998.
+    static constexpr int Index64[64] = {
+        0,  1,  48, 2,  57, 49, 28, 3,  61, 58, 50, 42, 38, 29, 17, 4,  62, 55, 59, 36, 53,
+        51, 43, 22, 45, 39, 33, 30, 24, 18, 12, 5,  63, 47, 56, 27, 60, 41, 37, 16, 54, 35,
+        52, 21, 44, 32, 23, 11, 46, 26, 40, 15, 34, 20, 31, 10, 25, 14, 19, 9,  13, 8,  7,  6};
+    return Index64[((x & (~x + 1)) * 0x03f79d71b4cb0a89ULL) >> 58];
+#endif
+}
+
+/// Return the index of the least-significant set bit of `b` and clear it from `b`. Undefined for
+/// b == 0. Lets callers iterate set bits without repeating the clear-lowest-bit step at each site.
+inline int pop_lsb(uint64_t &b)
+{
+    assert(b);
+    const int s = lsb(b);
+    b &= b - 1;
+    return s;
 }
 
 /// 64-bit rotate right that also accepts negative shift amounts (which rotate left). Lowered

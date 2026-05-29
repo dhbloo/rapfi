@@ -23,6 +23,8 @@
 #include "../core/platform.h"
 #include "../core/pos.h"
 #include "../core/types.h"
+#include "bitboard.h"
+#include "candarea.h"
 #include "pattern.h"
 
 #include <array>
@@ -36,60 +38,45 @@ namespace Evaluation {
 class Evaluator;
 }
 
-/// Iterate `pos` over every on-board (non-wall) cell.
-#define FOR_EVERY_POSITION(board, pos)                                   \
-    for (Pos pos = (board)->startPos(); pos <= (board)->endPos(); pos++) \
-        if ((board)->get(pos) != WALL)
+/// Iterate `pos` over every on-board (non-wall) cell, in ascending Pos order.
+#define FOR_EVERY_POSITION(board, pos) \
+    for (Bitboard::Cursor _posCur((board)->onBoard()); Pos pos = _posCur.next();)
 
-/// Iterate `pos` over every empty cell.
-#define FOR_EVERY_EMPTY_POS(board, pos)                                  \
-    for (Pos pos = (board)->startPos(); pos <= (board)->endPos(); pos++) \
-        if ((board)->isEmpty(pos))
+/// Iterate `pos` over every empty cell, in ascending Pos order.
+#define FOR_EVERY_EMPTY_POS(board, pos) \
+    for (Bitboard::Cursor _emptyCur((board)->emptyCells()); Pos pos = _emptyCur.next();)
 
-/// Iterate `pos` over every cell of the given candidate-area rectangle (row-major).
-#define FOR_EVERY_CANDAREA_POS(board, pos, candArea) \
-    for (int8_t _y = (candArea).y0,                  \
-                y1 = (candArea).y1,                  \
-                x0 = (candArea).x0,                  \
-                x1 = (candArea).x1,                  \
-                _x = x0;                             \
-         _y <= y1;                                   \
-         _y++, _x = x0)                              \
-        for (Pos pos {_x, _y}; _x <= x1; _x++, pos++)
+/// Iterate `pos` over every cell of the candidate-area rectangle `area` (row-major). Walks each
+/// row as a contiguous `Pos` run, since incrementing a `Pos` steps one cell along the row.
+#define FOR_EVERY_CANDAREA_POS(pos, area)                                                     \
+    for (int8_t _y = (area).y0, _y1 = (area).y1, _x0 = (area).x0, _x1 = (area).x1; _y <= _y1; \
+         _y++)                                                                                \
+        for (Pos pos {_x0, _y}, _rowEnd {_x1, _y}; pos <= _rowEnd; pos++)
 
-/// Iterate `pos` over every empty candidate cell inside the current candidate area.
-#define FOR_EVERY_CAND_POS(board, pos)                                \
-    FOR_EVERY_CANDAREA_POS(board, pos, (board)->stateInfo().candArea) \
-    if ((board)->isEmpty(pos) && (board)->cell(pos).isCandidate())
+/// Iterate `pos` over every empty candidate cell, in ascending Pos order. candidateIterSet()
+/// already excludes occupied cells and cells outside the candidate bounding box, so the body needs
+/// no per-cell filtering. The set is a snapshot, so a probing move/undo in the body is safe.
+#define FOR_EVERY_CAND_POS(board, pos)                                                       \
+    for (Bitboard _candSet = (board)->candidateIterSet(), *_candOnce = &_candSet; _candOnce; \
+         _candOnce = nullptr)                                                                \
+        for (Bitboard::Cursor _candCur(_candSet); Pos pos = _candCur.next();)
 
-/// An axis-aligned bounding rectangle of the cells worth considering as move candidates. Starts
-/// empty (inverted bounds) and only ever grows via expand().
-struct CandArea
-{
-    int8_t x0, y0, x1, y1;
-
-    CandArea() : x0(INT8_MAX), y0(INT8_MAX), x1(INT8_MIN), y1(INT8_MIN) {}
-    CandArea(int8_t x0, int8_t y0, int8_t x1, int8_t y1) : x0(x0), y0(y0), x1(x1), y1(y1) {}
-
-    /// Grow the area to include the square of half-width `dist` centered on `pos`, clamped to the
-    /// board.
-    void expand(Pos pos, int boardSize, int dist)
-    {
-        int x = pos.x(), y = pos.y();
-
-        x0 = std::min((int)x0, std::max(x - dist, 0));
-        y0 = std::min((int)y0, std::max(y - dist, 0));
-        x1 = std::max((int)x1, std::min(x + dist, boardSize - 1));
-        y1 = std::max((int)y1, std::min(y + dist, boardSize - 1));
-    }
-};
+/// Iterate `pos` over every empty candidate cell, in ascending Pos order, WITHOUT the
+/// candidate-area box clip that FOR_EVERY_CAND_POS applies (i.e. the full candidate set intersected
+/// with empty). Like FOR_EVERY_CAND_POS the set is a snapshot, so a probing move/undo in the body
+/// is safe.
+#define FOR_EVERY_EMPTY_CAND_POS(board, pos)                                        \
+    for (Bitboard _ecSet = (board)->emptyCandidates(), *_ecOnce = &_ecSet; _ecOnce; \
+         _ecOnce = nullptr)                                                         \
+        for (Bitboard::Cursor _ecCur(_ecSet); Pos pos = _ecCur.next();)
 
 /// Per-ply snapshot of the incremental board state. One StateInfo exists per move played, so a
 /// move only has to record what changed and undo() can restore the previous ply cheaply.
 struct StateInfo
 {
-    CandArea candArea;  ///< Bounding box of candidate cells at this ply.
-    Pos      lastMove;  ///< The move that produced this ply (Pos::PASS for a pass).
+    Bitboard candidates;  ///< Candidate-move set at this ply (snapshotted per ply).
+    CandArea candArea;    ///< Bounding box of candidate cells at this ply.
+    Pos      lastMove;    ///< The move that produced this ply (Pos::PASS for a pass).
     /// Move that first created a flex four for this side (set only on a 0 -> nonzero transition).
     Pos lastFlex4AttackMove[SIDE_NB];
     /// Most recent empty cell reaching C_BLOCK4_FLEX3 / B_FLEX4 / A_FIVE, per side.
@@ -107,19 +94,16 @@ struct StateInfo
     }
 };
 
-/// All per-cell state the engine maintains: the stone (or EMPTY/WALL), candidate refcount, and the
-/// incrementally-updated patterns, scores and evaluation for both sides.
+/// All per-cell state the engine maintains: the stone (or EMPTY/WALL) and the incrementally-updated
+/// patterns, scores and evaluation for both sides. Candidacy is tracked separately, in the per-ply
+/// candidate bitboard rather than on the cell.
 struct Cell
 {
-    Color     piece;  ///< Stone color, or EMPTY / WALL.
-    uint8_t   cand;   ///< Candidate refcount; nonzero means the cell is currently a move candidate.
+    Color     piece;              ///< Stone color, or EMPTY / WALL.
     Pattern4  pattern4[SIDE_NB];  ///< Aggregate four-direction pattern, per side.
     Score     score[SIDE_NB];     ///< Move-ordering score, per side.
     Value     valueBlack;    ///< This cell's contribution to the classical eval, from black's view.
     Pattern2x pattern2x[4];  ///< Line pattern of both colors, one per direction.
-
-    /// Whether this cell is currently a move candidate (used to prune move generation).
-    bool isCandidate() const { return cand > 0; }
 
     /// The line-level pattern of this cell in direction `dir`, from `c`'s perspective.
     Pattern pattern(Color c, int dir) const
@@ -243,8 +227,48 @@ public:
     /// @pos The pos to query, which is assumed to meet 'pos.valid() == true'.
     bool isEmpty(Pos pos) const { return get(pos) == EMPTY; }
 
-    /// Check if the pos is legal (on an empty cell or is a pass move).
-    bool isLegal(Pos pos) const { return pos.valid() && (isEmpty(pos) || pos == Pos::PASS); }
+    /// Check if the pos is legal (on an empty cell or is a pass move). The PASS check comes first
+    /// so a pass never reaches isEmpty()/get(), which would index out of the cell grid for
+    /// Pos::PASS.
+    bool isLegal(Pos pos) const { return pos.valid() && (pos == Pos::PASS || isEmpty(pos)); }
+
+    /// Whether `pos` is currently a move candidate (some played stone's range covers it). This is
+    /// the raw in-range test (no box / empty filtering), as used by neighbor move generation.
+    bool isCandidate(Pos pos) const { return stateInfo().candidates.test(pos); }
+
+    /// Whether `pos` is an empty candidate cell: in the raw candidate set and currently empty (no
+    /// box clip). Off-board positions read as false, so a neighbor probe needs no range check.
+    bool isEmptyCandidate(Pos pos) const
+    {
+        return emptyBB.test(pos) && stateInfo().candidates.test(pos);
+    }
+
+    /// Bitboard of all on-board (non-wall) cells; constant for the board's lifetime.
+    const Bitboard &onBoard() const { return onBoardBB; }
+
+    /// Bitboard of all currently-empty cells.
+    const Bitboard &emptyCells() const { return emptyBB; }
+
+    /// The set of candidate cells to iterate this ply: in-range AND empty AND inside the candidate
+    /// bounding box. Returned by value as a snapshot, so iteration is unaffected by a probing
+    /// move/undo in the loop body. Used by FOR_EVERY_CAND_POS.
+    Bitboard candidateIterSet() const
+    {
+        Bitboard bb;
+        bb.buildCandSet(stateInfo().candidates, emptyBB, stateInfo().candArea);
+        return bb;
+    }
+
+    /// The candidate cells to iterate ignoring the bounding box: in-range AND empty (`candidates &
+    /// emptyCells`). Like candidateIterSet() but without the candArea clip, so it includes every
+    /// empty candidate the board tracks. Returned by value as a snapshot. Used by
+    /// FOR_EVERY_EMPTY_CAND_POS.
+    Bitboard emptyCandidates() const
+    {
+        Bitboard bb;
+        bb.setIntersect(stateInfo().candidates, emptyBB);
+        return bb;
+    }
 
     /// Check if a pos on board is forbidden point in Renju rule.
     /// @param pos Pos to check forbidden. Should be an empty cell.
@@ -375,8 +399,13 @@ private:
     const Direction *candidateRange;  ///< Offset table defining a move's candidate neighborhood.
     uint32_t         candidateRangeSize;  ///< Number of offsets in `candidateRange`.
     uint32_t         candAreaExpandDist;  ///< Candidate-area expansion distance per move.
-    Evaluation::Evaluator *evaluator_;    ///< External evaluator (may be null).
-    Search::SearchThread  *thisThread_;   ///< Owning search thread (may be null).
+    /// `candidateRange` precomputed as per-row dx-masks, so move() marks a stone's candidate
+    /// neighborhood with a few word-wide ORs instead of a per-offset scatter.
+    Bitboard::Stencil candStencil;
+    Bitboard onBoardBB;  ///< All non-wall cells; built once in newGame (static for the game).
+    Bitboard emptyBB;    ///< All empty cells; one bit flipped per move()/undo().
+    Evaluation::Evaluator *evaluator_;   ///< External evaluator (may be null).
+    Search::SearchThread  *thisThread_;  ///< Owning search thread (may be null).
 
     void setBitKey(Pos pos, Color c);
     void flipBitKey(Pos pos, Color c);

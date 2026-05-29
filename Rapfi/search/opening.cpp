@@ -371,7 +371,7 @@ void OpeningGenerator::putRandomMoves(int numMoves, CandArea area)
 {
     // Collect all candidate moves in the area and shuffle them
     std::vector<Pos> randomMoves;
-    FOR_EVERY_CANDAREA_POS(&board, pos, area)
+    FOR_EVERY_CANDAREA_POS(pos, area)
     {
         randomMoves.push_back(pos);
     }
