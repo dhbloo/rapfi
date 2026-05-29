@@ -67,11 +67,15 @@ struct ScoredMove
          operator float() const = delete;  // Inhibit unwanted implicit conversions
     void operator=(Pos p) { pos = p; }
 
+    // Both comparators break ties by `pos` so the ordering is a strict total order. Without it,
+    // equal scores are ordered arbitrarily by the unstable std::sort/std::partial_sort, and that
+    // arbitrary order differs between standard-library implementations (libstdc++ vs MSVC STL),
+    // which would make the search tree -- and the bench hash -- toolchain-dependent.
     struct ScoreComparator
     {
         bool operator()(const ScoredMove &a, const ScoredMove &b) const
         {
-            return a.score > b.score;
+            return a.score != b.score ? a.score > b.score : a.pos < b.pos;
         }
     };
 
@@ -79,7 +83,7 @@ struct ScoredMove
     {
         bool operator()(const ScoredMove &a, const ScoredMove &b) const
         {
-            return a.policy > b.policy;
+            return a.policy != b.policy ? a.policy > b.policy : a.pos < b.pos;
         }
     };
 };
