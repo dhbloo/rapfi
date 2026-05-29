@@ -2359,10 +2359,10 @@ template <int             OutSize,
           InstructionType Inst        = NativeInstType,
           typename AccType            = int32_t,
           typename InputType          = int8_t>
-AccType *linear(AccType         *output,
-                const InputType *input,
-                const InputType  weight[OutSize * InSize],
-                const AccType    bias[OutSize])
+FORCE_INLINE AccType *linear(AccType         *output,
+                             const InputType *input,
+                             const InputType  weight[OutSize * InSize],
+                             const AccType    bias[OutSize])
 {
     static_assert(std::is_same_v<AccType, int32_t>, "Only int32_t accumulator is supported");
     static_assert(std::is_same_v<InputType, int8_t> || std::is_same_v<InputType, int16_t>,
@@ -2387,7 +2387,7 @@ template <int             Size,
           bool            NoReLU    = false,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType>
-int8_t *crelu(int8_t output[Size], const int32_t input[Size])
+FORCE_INLINE int8_t *crelu(int8_t output[Size], const int32_t input[Size])
 {
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
@@ -2447,7 +2447,7 @@ template <int             Size,
           bool            NoReLU    = false,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType>
-int16_t *crelu(int16_t output[Size], const int32_t input[Size])
+FORCE_INLINE int16_t *crelu(int16_t output[Size], const int32_t input[Size])
 {
     static_assert(isAlignSizeOK(Alignment));
     assert(isPtrAligned<Alignment>(output));
@@ -2499,7 +2499,7 @@ template <int             OutSize,
           int             Divisor,
           int             Alignment = NativeAlignment,
           InstructionType Inst      = NativeInstType>
-int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_i8[OutSize * 2])
+FORCE_INLINE int8_t *dot2(int8_t output[OutSize], int8_t input_u7[OutSize * 2], int8_t input_i8[OutSize * 2])
 {
     static_assert(isPowerOfTwo(Divisor), "divisor must be a power of two");
     constexpr int Log2Divisor = floorLog2(Divisor);

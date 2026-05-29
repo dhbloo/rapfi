@@ -513,11 +513,9 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
         }
     }
 
-    // Init value sum accumulator
-    I32Op::R vSumGlobal[VSumB::NumBatch];
+    // Init value sum accumulator. Only per-group sums are accumulated here; the global sum is the
+    // invariant total of the 9 groups and is computed from them once at the end of the move.
     I32Op::R vSumGroup[ValueSumType::NGroup][ValueSumType::NGroup][VSumB::NumBatch];
-    for (int b = 0; b < VSumB::NumBatch; b++)
-        vSumGlobal[b] = I32Op::setzero();
     for (int i = 0; i < ValueSumType::NGroup; i++)
         for (int j = 0; j < ValueSumType::NGroup; j++)
             for (int b = 0; b < VSumB::NumBatch; b++)
@@ -584,12 +582,10 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
             auto deltaF             = I16Op::sub(newFeats[b], oldFeats[b]);
             auto [deltaF0, deltaF1] = Convert<int16_t, int32_t>::convert(deltaF);
 
-            const int offset       = 2 * b;
-            vSumGlobal[offset + 0] = I32Op::add(vSumGlobal[offset + 0], deltaF0);
-            vSumGlobal[offset + 1] = I32Op::add(vSumGlobal[offset + 1], deltaF1);
-            auto &vGroup           = vSumGroup[groupIndex[c.y]][groupIndex[c.x]];
-            vGroup[offset + 0]     = I32Op::add(vGroup[offset + 0], deltaF0);
-            vGroup[offset + 1]     = I32Op::add(vGroup[offset + 1], deltaF1);
+            const int offset   = 2 * b;
+            auto     &vGroup   = vSumGroup[groupIndex[c.y]][groupIndex[c.x]];
+            vGroup[offset + 0] = I32Op::add(vGroup[offset + 0], deltaF0);
+            vGroup[offset + 1] = I32Op::add(vGroup[offset + 1], deltaF1);
         }
     }
 
@@ -613,8 +609,6 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
                 auto [v0, v1] = Convert<int16_t, int32_t>::convert(deltaF);
 
                 const int offset            = 2 * b;
-                vSumGlobal[offset + 0]      = I32Op::add(vSumGlobal[offset + 0], v0);
-                vSumGlobal[offset + 1]      = I32Op::add(vSumGlobal[offset + 1], v1);
                 vSumGroup[i][j][offset + 0] = I32Op::add(vSumGroup[i][j][offset + 0], v0);
                 vSumGroup[i][j][offset + 1] = I32Op::add(vSumGroup[i][j][offset + 1], v1);
             }
@@ -626,14 +620,11 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
     currentVersion++;
     versionChangeNumTable[currentVersion] = {uint16_t(newMapIdx), uint16_t(newMapConvIdx)};
 
-    // Store value sum
+    // Store value sum: first the per-group sums, then set the global sum to their total. The global
+    // sum is the invariant sum of the 9 groups, so deriving it here once is bit-identical to (and
+    // cheaper than) propagating a separate global accumulator per changed cell above.
     auto &valueSumOld = valueSumTable[currentVersion - 1];
     auto &valueSumNew = valueSumTable[currentVersion];
-    for (int b = 0; b < VSumB::NumBatch; b++) {
-        auto vOld = I32LS::load(valueSumOld.global.data() + b * VSumB::RegWidth);
-        auto vNew = I32Op::add(vOld, vSumGlobal[b]);
-        I32LS::store(valueSumNew.global.data() + b * VSumB::RegWidth, vNew);
-    }
     for (int i = 0; i < ValueSumType::NGroup; i++)
         for (int j = 0; j < ValueSumType::NGroup; j++)
             for (int b = 0; b < VSumB::NumBatch; b++) {
@@ -641,6 +632,14 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
                 auto vNew = I32Op::add(vOld, vSumGroup[i][j][b]);
                 I32LS::store(valueSumNew.group[i][j].data() + b * VSumB::RegWidth, vNew);
             }
+    for (int b = 0; b < VSumB::NumBatch; b++) {
+        auto acc = I32Op::setzero();
+        for (int i = 0; i < ValueSumType::NGroup; i++)
+            for (int j = 0; j < ValueSumType::NGroup; j++)
+                acc = I32Op::add(acc,
+                                 I32LS::load(valueSumNew.group[i][j].data() + b * VSumB::RegWidth));
+        I32LS::store(valueSumNew.global.data() + b * VSumB::RegWidth, acc);
+    }
 }
 
 std::tuple<float, float, float> Accumulator::evaluateValue(const Weight &w)
