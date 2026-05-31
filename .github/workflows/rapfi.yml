@@ -134,8 +134,18 @@ jobs:
 
       - name: Extract the bench hash from the commit history
         run: |
-          git log HEAD | grep "\b[Bb]ench\s*([Mm]ac[Oo][Ss])\s*[a-f0-9]\{8\}" | head -n 1 | sed "s/.*[Bb]ench[[:space:]]*(\([Mm]ac[Oo][Ss]\))[[:space:]]*\([a-f0-9]\{8\}\).*/\2/" > git_sig
-          [ -s git_sig ] && echo "commit_bench=$(cat git_sig)" >> $GITHUB_ENV && echo "Reference bench:" $(cat git_sig) || echo "No bench found"
+          # Use the latest commit that records a bench signature; prefer a macOS-specific
+          # "bench (macos) <hash>" override when present, otherwise fall back to the shared
+          # "bench <hash>". Scoping to a single commit keeps a stale override from lingering
+          # once macOS converges back to the shared hash. POSIX classes keep this BSD-grep safe.
+          # The runner shell is `bash -e -o pipefail`, so a grep that finds no match (exit 1)
+          # in a command substitution would abort the step. The trailing `|| true` keeps a
+          # missing override (or a head-induced SIGPIPE) non-fatal so we fall through cleanly.
+          msg=$(git log HEAD -E --grep='[Bb]ench[[:space:]]*(\([Mm]ac[Oo][Ss]\)[[:space:]]*)?[a-f0-9]{8}' -n 1 --format=%B)
+          macos_sig=$(printf '%s\n' "$msg" | grep -E '[Bb]ench[[:space:]]*\([Mm]ac[Oo][Ss]\)[[:space:]]*[a-f0-9]{8}' | head -n 1 | sed -E 's/.*[Bb]ench[[:space:]]*\([Mm]ac[Oo][Ss]\)[[:space:]]*([a-f0-9]{8}).*/\1/' || true)
+          shared_sig=$(printf '%s\n' "$msg" | grep -E '[Bb]ench[[:space:]]*[a-f0-9]{8}' | head -n 1 | sed -E 's/.*[Bb]ench[[:space:]]*([a-f0-9]{8}).*/\1/' || true)
+          commit_bench="${macos_sig:-$shared_sig}"
+          [ -n "$commit_bench" ] && echo "commit_bench=$commit_bench" >> $GITHUB_ENV && echo "Reference bench (macos override: ${macos_sig:-none}, shared: ${shared_sig:-none}):" "$commit_bench" || echo "No bench found"
 
       - name: Build
         run: |

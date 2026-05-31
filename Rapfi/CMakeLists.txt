@@ -462,6 +462,8 @@ if(MSVC)
         # matters for RelWithDebInfo since it has no LTO to re-optimize at link time.
         string(APPEND CMAKE_CXX_FLAGS_RELEASE        " /clang:-O3")
         string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " /clang:-O3")
+        # Match the GNU/Clang branch: no FP contraction, so the bench hash is toolchain-independent.
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /clang:-ffp-contract=off")
     else()
         message(STATUS "Setting up build for MSVC.")
         string(REGEX REPLACE "/O2" "/Ox" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
@@ -522,6 +524,13 @@ if(MSVC)
 
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     message(STATUS "Setting up build for GNU or Clang.")
+
+    # Disable floating-point contraction (a*b+c -> fma) so eval/bench is bit-identical across
+    # compilers. GCC defaults to -ffp-contract=fast and fuses such expressions across statements;
+    # Clang does not. The NNUE value/policy head finishes in float, so the extra fused rounding
+    # flips an occasional search decision and changes the bench hash (gcc 4e28a66d vs clang
+    # e240ab16). Forcing it off makes GCC match Clang without altering the Clang baseline.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ffp-contract=off")
 
 	if(USE_AVX512)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512bw")
