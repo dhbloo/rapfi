@@ -31,7 +31,7 @@ Value evaluate(const Board &board, Rule rule);
 
 class ValueType;
 ValueType computeEvaluatorValue(const Board &board);
-Value     computeClassicalValue(Rule rule, Value rawValue);
+Value     computeClassicalValue(Rule rule, Color self, Value rawValue);
 
 /// EvalInfo struct contains all information needed to evaluate a position.
 struct EvalInfo

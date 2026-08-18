@@ -95,7 +95,13 @@ extern Eval          EVALS[RULE_NB + 1][PCODE_NB];
 extern Eval          EVALS_THREAT[RULE_NB + 1][THREAT_NB];
 extern MoveScorePair P4SCORES[RULE_NB + 1][PCODE_NB];
 
-/// Optional low-dimensional post-processing for the freestyle classical value.
+/// Get table index for rule and color.
+constexpr int tableIndex(Rule r, Color c)
+{
+    return r + (r == Rule::RENJU ? c : 0);
+}
+
+/// Optional low-dimensional post-processing for a rule's classical value.
 /// The readout is an odd monotone piecewise-linear map over normalized value,
 /// with fixed x knots {0, 0.5, 1, 2, 4, 8}. The knots live in config.toml so
 /// the underlying model artifact remains independently reproducible.
@@ -107,20 +113,14 @@ struct ClassicalValueReadout
     std::array<double, KnotCount> knots {};
 };
 
-extern ClassicalValueReadout CLASSICAL_VALUE_READOUT;
+extern std::array<ClassicalValueReadout, RULE_NB + 1> CLASSICAL_VALUE_READOUTS;
 
-void  refreshClassicalValueReadoutCache();
-Value mapClassicalValue(Value rawValue);
+void  refreshClassicalValueReadoutCaches();
+Value mapClassicalValue(Rule rule, Color self, Value rawValue);
 
-inline bool isClassicalValueReadoutActive(Rule rule)
+inline bool isClassicalValueReadoutActive(Rule rule, Color self)
 {
-    return rule == FREESTYLE && CLASSICAL_VALUE_READOUT.knotsActive;
-}
-
-/// Get table index for rule and color.
-constexpr int tableIndex(Rule r, Color c)
-{
-    return r + (r == Rule::RENJU ? c : 0);
+    return CLASSICAL_VALUE_READOUTS[tableIndex(rule, self)].knotsActive;
 }
 
 /// Lookup eval table with color and pcode of rule R.

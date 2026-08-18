@@ -90,41 +90,49 @@ float ScalingFactor = 200.0f;
 // Classical evaluation and score tables
 // Note that Renju has asymmetry eval and score
 
-Eval                                                   EVALS[RULE_NB + 1][PCODE_NB];
-Eval                                                   EVALS_THREAT[RULE_NB + 1][THREAT_NB];
-MoveScorePair                                          P4SCORES[RULE_NB + 1][PCODE_NB];
-ClassicalValueReadout                                  CLASSICAL_VALUE_READOUT;
-std::array<Value, VALUE_EVAL_MAX - VALUE_EVAL_MIN + 1> CLASSICAL_VALUE_READOUT_CACHE {};
-void refreshClassicalValueReadoutCache()
+Eval                                           EVALS[RULE_NB + 1][PCODE_NB];
+Eval                                           EVALS_THREAT[RULE_NB + 1][THREAT_NB];
+MoveScorePair                                  P4SCORES[RULE_NB + 1][PCODE_NB];
+std::array<ClassicalValueReadout, RULE_NB + 1> CLASSICAL_VALUE_READOUTS;
+std::array<std::array<Value, VALUE_EVAL_MAX - VALUE_EVAL_MIN + 1>, RULE_NB + 1>
+     CLASSICAL_VALUE_READOUT_CACHES {};
+void refreshClassicalValueReadoutCaches()
 {
     static constexpr std::array<double, ClassicalValueReadout::KnotCount> XKnots =
         {0.0, 0.5, 1.0, 2.0, 4.0, 8.0};
-    const auto  &yKnots = CLASSICAL_VALUE_READOUT.knots;
-    const double scale  = ScalingFactor;
+    const double scale = ScalingFactor;
 
-    for (int raw = VALUE_EVAL_MIN; raw <= VALUE_EVAL_MAX; raw++) {
-        double x = std::abs(double(raw)) / scale;
-        double y;
-        if (x >= XKnots.back())
-            y = yKnots.back() + x - XKnots.back();
-        else {
-            size_t hi = 1;
-            while (x > XKnots[hi])
-                hi++;
-            size_t lo = hi - 1;
-            double t  = (x - XKnots[lo]) / (XKnots[hi] - XKnots[lo]);
-            y         = yKnots[lo] + t * (yKnots[hi] - yKnots[lo]);
+    for (size_t readoutIndex = 0; readoutIndex < CLASSICAL_VALUE_READOUTS.size();
+         readoutIndex++) {
+        if (!CLASSICAL_VALUE_READOUTS[readoutIndex].knotsActive)
+            continue;
+        const auto &yKnots = CLASSICAL_VALUE_READOUTS[readoutIndex].knots;
+        auto       &cache  = CLASSICAL_VALUE_READOUT_CACHES[readoutIndex];
+        for (int raw = VALUE_EVAL_MIN; raw <= VALUE_EVAL_MAX; raw++) {
+            double x = std::abs(double(raw)) / scale;
+            double y;
+            if (x >= XKnots.back())
+                y = yKnots.back() + x - XKnots.back();
+            else {
+                size_t hi = 1;
+                while (x > XKnots[hi])
+                    hi++;
+                size_t lo = hi - 1;
+                double t  = (x - XKnots[lo]) / (XKnots[hi] - XKnots[lo]);
+                y         = yKnots[lo] + t * (yKnots[hi] - yKnots[lo]);
+            }
+            double mapped = std::copysign(y * scale, double(raw));
+            cache[raw - VALUE_EVAL_MIN] =
+                Value(std::clamp<long long>(std::llround(mapped), VALUE_EVAL_MIN, VALUE_EVAL_MAX));
         }
-        double mapped = std::copysign(y * scale, double(raw));
-        CLASSICAL_VALUE_READOUT_CACHE[raw - VALUE_EVAL_MIN] =
-            Value(std::clamp<long long>(std::llround(mapped), VALUE_EVAL_MIN, VALUE_EVAL_MAX));
     }
 }
 
-Value mapClassicalValue(Value rawValue)
+Value mapClassicalValue(Rule rule, Color self, Value rawValue)
 {
     assert(VALUE_EVAL_MIN <= rawValue && rawValue <= VALUE_EVAL_MAX);
-    return CLASSICAL_VALUE_READOUT_CACHE[int(rawValue) - VALUE_EVAL_MIN];
+    return CLASSICAL_VALUE_READOUT_CACHES[tableIndex(rule, self)]
+                                         [int(rawValue) - VALUE_EVAL_MIN];
 }
 
 }  // namespace Evaluation
@@ -145,12 +153,13 @@ GeneralConfig GeneralCfg;
 /// Nothing is published until loadConfig's commit step.
 struct PendingConfig
 {
-    GeneralConfig                     general      = GeneralCfg;
-    Search::SearchConfig              search       = Search::SearchCfg;
-    Search::TimeConfig                time         = Search::TimeCfg;
-    Database::DatabaseConfig          database     = Database::DatabaseCfg;
-    Evaluation::EvaluatorConfig       eval         = Evaluation::EvalCfg;
-    Evaluation::ClassicalValueReadout valueReadout = Evaluation::CLASSICAL_VALUE_READOUT;
+    GeneralConfig                                          general  = GeneralCfg;
+    Search::SearchConfig                                   search   = Search::SearchCfg;
+    Search::TimeConfig                                     time     = Search::TimeCfg;
+    Database::DatabaseConfig                               database = Database::DatabaseCfg;
+    Evaluation::EvaluatorConfig                            eval     = Evaluation::EvalCfg;
+    std::array<Evaluation::ClassicalValueReadout, RULE_NB + 1> valueReadouts =
+        Evaluation::CLASSICAL_VALUE_READOUTS;
 
     /// "[search] default_searcher" was present: switch the searcher at commit.
     std::optional<std::string> searcherName;
@@ -230,14 +239,16 @@ bool Config::loadConfig(std::istream &configStream)
     }
 
     // Commit: publish the parsed structs, then apply the engine effects.
-    GeneralCfg                          = pending.general;
-    Search::SearchCfg                   = pending.search;
-    Search::TimeCfg                     = pending.time;
-    Database::DatabaseCfg               = pending.database;
-    Evaluation::EvalCfg                 = pending.eval;
-    Evaluation::CLASSICAL_VALUE_READOUT = pending.valueReadout;
-    if (Evaluation::CLASSICAL_VALUE_READOUT.knotsActive)
-        Evaluation::refreshClassicalValueReadoutCache();
+    GeneralCfg                           = pending.general;
+    Search::SearchCfg                    = pending.search;
+    Search::TimeCfg                      = pending.time;
+    Database::DatabaseCfg                = pending.database;
+    Evaluation::EvalCfg                  = pending.eval;
+    Evaluation::CLASSICAL_VALUE_READOUTS = pending.valueReadouts;
+    if (std::any_of(Evaluation::CLASSICAL_VALUE_READOUTS.begin(),
+                    Evaluation::CLASSICAL_VALUE_READOUTS.end(),
+                    [](const auto &readout) { return readout.knotsActive; }))
+        Evaluation::refreshClassicalValueReadoutCaches();
 
     // The searcher switch precedes the TT resize: setupSearcher carries the
     // old searcher's memory limit onto the new one, and the resize then
@@ -456,7 +467,7 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
     const Rule  Rules[]    = {FREESTYLE, STANDARD, RENJU};
     const char *RuleName[] = {"freestyle", "standard", "renju"};
 
-    pending.valueReadout = {};
+    pending.valueReadouts = {};
 
     std::string modelPath = t.get_as<std::string>("binary_file").value_or("");
     if (!modelPath.empty()) {
@@ -554,23 +565,34 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
     double configuredScalingFactor =
         t.get_as<double>("scaling_factor").value_or(Evaluation::ScalingFactor);
     float runtimeScalingFactor = static_cast<float>(configuredScalingFactor);
-    auto  readoutKnots         = t.get_array_of<double>("value_readout_knots");
-    if (readoutKnots) {
+    auto  readReadoutKnots     = [&](const char *key, size_t readoutIndex) {
+        auto readoutKnots = t.get_array_of<double>(key);
+        if (!readoutKnots)
+            return;
         if (readoutKnots->size() != Evaluation::ClassicalValueReadout::KnotCount)
-            throw std::runtime_error("value_readout_knots must contain 6 values");
+            throw std::runtime_error(std::string(key) + " must contain 6 values");
         for (size_t i = 0; i < readoutKnots->size(); i++) {
             double value = (*readoutKnots)[i];
             if (!std::isfinite(value) || value < 0.0 || value > 64.0 || (i == 0 && value != 0.0)
                 || (i != 0 && value < (*readoutKnots)[i - 1]))
-                throw std::runtime_error("value_readout_knots must be finite, monotone, start at "
-                                         "zero, and not exceed 64");
-            pending.valueReadout.knots[i] = value;
+                throw std::runtime_error(std::string(key)
+                                         + " must be finite, monotone, start at zero, and not "
+                                                "exceed 64");
+            pending.valueReadouts[readoutIndex].knots[i] = value;
         }
-        pending.valueReadout.knotsActive = true;
-    }
+        pending.valueReadouts[readoutIndex].knotsActive = true;
+    };
+    readReadoutKnots("value_readout_knots", FREESTYLE);
+    readReadoutKnots("value_readout_knots_standard", STANDARD);
+    readReadoutKnots("value_readout_knots_renju", Evaluation::tableIndex(RENJU, BLACK));
+    readReadoutKnots("value_readout_knots_renju", Evaluation::tableIndex(RENJU, WHITE));
+    readReadoutKnots("value_readout_knots_renju_black", Evaluation::tableIndex(RENJU, BLACK));
+    readReadoutKnots("value_readout_knots_renju_white", Evaluation::tableIndex(RENJU, WHITE));
 
-    if (pending.valueReadout.knotsActive
-        && (!std::isfinite(runtimeScalingFactor) || runtimeScalingFactor <= 0.0f))
+    bool anyReadoutActive = std::any_of(pending.valueReadouts.begin(),
+                                        pending.valueReadouts.end(),
+                                        [](const auto &readout) { return readout.knotsActive; });
+    if (anyReadoutActive && (!std::isfinite(runtimeScalingFactor) || runtimeScalingFactor <= 0.0f))
         throw std::runtime_error(
             "classical value readout requires a finite positive scaling_factor");
     Evaluation::ScalingFactor = runtimeScalingFactor;

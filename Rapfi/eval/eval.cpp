@@ -106,7 +106,7 @@ Value evaluate(const Board &board, Value alpha, Value beta)
     Value basicEval     = (evaluateBasic(st0, self) + evaluateBasic(st1, self)) / 2;
     Value threatEval    = evaluateThreat<R>(st0, self);
     Value eval          = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
-    Value classicalEval = computeClassicalValue(R, eval);
+    Value classicalEval = computeClassicalValue(R, self, eval);
 
     if (board.evaluator()) {
         // Use evaluator eval if classical eval are in alpha-beta window margin
@@ -148,13 +148,14 @@ Value evaluate(const Board &board, Rule rule)
         }
 
         Value eval = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
-        return computeClassicalValue(rule, eval);
+        return computeClassicalValue(rule, self, eval);
     }
 }
 
-Value computeClassicalValue(Rule rule, Value rawValue)
+Value computeClassicalValue(Rule rule, Color self, Value rawValue)
 {
-    return isClassicalValueReadoutActive(rule) ? mapClassicalValue(rawValue) : rawValue;
+    return isClassicalValueReadoutActive(rule, self) ? mapClassicalValue(rule, self, rawValue)
+                                                     : rawValue;
 }
 
 ValueType computeEvaluatorValue(const Board &board)
