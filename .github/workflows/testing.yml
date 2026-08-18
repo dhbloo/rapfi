@@ -15,6 +15,7 @@ jobs:
     env:
       CC: clang
       CXX: clang++
+      FISHTEST_URL: https://test.pikafish.org/api
     defaults:
       run:
         working-directory: Rapfi
@@ -30,35 +31,158 @@ jobs:
           cmake --build . -j2 && strip pbrain-rapfi*
           mv -v pbrain-rapfi rapfi-linux-avx2
 
-      - name: Upload to fishtest (freestyle-20)
-        if: ${{ contains(github.event.head_commit.message, 'f20') }}
+      - name: Pre-upload engine to fishtest
+        id: fishtest_upload
+        if: ${{ github.event_name == 'push' }}
+        env:
+          FISHTEST_PASSWORD: ${{ secrets.NOTHING }}
         run: |
-          COMMIT_TITLE=$(echo "${{github.event.head_commit.message}}" | head -n 1)
-          curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_freestyle20 -F "task_name=[f20] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "visible=0"
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 30 --max-time 900 \
+            --retry 3 --retry-all-errors --retry-delay 5 \
+            "$FISHTEST_URL/pre_upload" \
+            -F file=@build/rapfi-linux-avx2 \
+            -F file_type=engine \
+            -F "password=$FISHTEST_PASSWORD")
+
+          ARTIFACT_KEY=$(jq -er '
+            if .code == 0 and (.url | type == "string") and (.url | length) > 0
+            then .url
+            else error(.msg // "Fishtest pre-upload failed")
+            end
+          ' <<<"$RESPONSE")
+          ENGINE_MD5=$(md5sum build/rapfi-linux-avx2 | cut -d' ' -f1)
+
+          echo "artifact_key=$ARTIFACT_KEY" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg artifact_key "$ARTIFACT_KEY" \
+            --arg md5 "$ENGINE_MD5" \
+            '{commit: $commit, artifact_key: $artifact_key, md5: $md5}' \
+            > build/fishtest-upload.json
+
+          {
+            echo "### Fishtest pre-upload"
+            echo
+            echo "- Artifact key: \`$ARTIFACT_KEY\`"
+            echo "- Engine MD5: \`$ENGINE_MD5\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to fishtest (freestyle-20)
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'f20') }}
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          ENGINE_ARTIFACT_KEY: ${{ steps.fishtest_upload.outputs.artifact_key }}
+          FISHTEST_PASSWORD: ${{ secrets.NOTHING }}
+        run: |
+          COMMIT_TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
+          TASK_MARKER="[ci:${GITHUB_SHA:0:12}:f20]"
+          TASK_NAME="[f20] $TASK_MARKER $COMMIT_TITLE"
+          LOOKUP_RESPONSE=$(curl --fail-with-body --silent --show-error --get "$FISHTEST_URL/task_list" --data-urlencode "page=1" --data-urlencode "page_size=100" --data-urlencode "variant=gomoku_freestyle20" --data-urlencode "keyword=$TASK_MARKER" --data-urlencode "password=$FISHTEST_PASSWORD")
+          TASK_ID=$(jq -r 'if .code == 0 then (.data[0].task_id // "") else error(.msg // "Task lookup failed") end' <<<"$LOOKUP_RESPONSE")
+          if [[ -n "$TASK_ID" ]]; then
+            EXISTING_ENGINE=$(jq -r '.data[0].engine_url' <<<"$LOOKUP_RESPONSE")
+            [[ "$EXISTING_ENGINE" == "$ENGINE_ARTIFACT_KEY" ]] || { echo "::error::Task marker $TASK_MARKER exists with engine $EXISTING_ENGINE, expected $ENGINE_ARTIFACT_KEY"; exit 1; }
+            TASK_ACTION="reused"
+          else
+            if TASK_RESPONSE=$(curl --fail-with-body --silent --show-error "$FISHTEST_URL/add_task" -F "engine_file_name=$ENGINE_ARTIFACT_KEY" -F variant=gomoku_freestyle20 -F "task_name=$TASK_NAME" -F "password=$FISHTEST_PASSWORD" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "max_games=25000" -F "adjudication=1" -F "visible=0"); then
+              TASK_ID=$(jq -er 'if .code == 0 and .task_id then .task_id else error(.msg // "Task submission failed") end' <<<"$TASK_RESPONSE")
+              TASK_ACTION="created"
+            else
+              echo "::error::Ambiguous add_task outcome for $TASK_MARKER. Do not retry blindly; rerun the workflow so it reconciles this marker first."
+              exit 1
+            fi
+          fi
+          echo "- f20 task: \`$TASK_ID\` ($TASK_ACTION)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload to fishtest (freestyle-15)
-        if: ${{ contains(github.event.head_commit.message, 'f15') }}
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'f15') }}
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          ENGINE_ARTIFACT_KEY: ${{ steps.fishtest_upload.outputs.artifact_key }}
+          FISHTEST_PASSWORD: ${{ secrets.NOTHING }}
         run: |
-          COMMIT_TITLE=$(echo "${{github.event.head_commit.message}}" | head -n 1)
+          COMMIT_TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
           sleep 10
-          curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_freestyle15 -F "task_name=[f15] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "visible=0"
+          TASK_MARKER="[ci:${GITHUB_SHA:0:12}:f15]"
+          TASK_NAME="[f15] $TASK_MARKER $COMMIT_TITLE"
+          LOOKUP_RESPONSE=$(curl --fail-with-body --silent --show-error --get "$FISHTEST_URL/task_list" --data-urlencode "page=1" --data-urlencode "page_size=100" --data-urlencode "variant=gomoku_freestyle15" --data-urlencode "keyword=$TASK_MARKER" --data-urlencode "password=$FISHTEST_PASSWORD")
+          TASK_ID=$(jq -r 'if .code == 0 then (.data[0].task_id // "") else error(.msg // "Task lookup failed") end' <<<"$LOOKUP_RESPONSE")
+          if [[ -n "$TASK_ID" ]]; then
+            EXISTING_ENGINE=$(jq -r '.data[0].engine_url' <<<"$LOOKUP_RESPONSE")
+            [[ "$EXISTING_ENGINE" == "$ENGINE_ARTIFACT_KEY" ]] || { echo "::error::Task marker $TASK_MARKER exists with engine $EXISTING_ENGINE, expected $ENGINE_ARTIFACT_KEY"; exit 1; }
+            TASK_ACTION="reused"
+          else
+            if TASK_RESPONSE=$(curl --fail-with-body --silent --show-error "$FISHTEST_URL/add_task" -F "engine_file_name=$ENGINE_ARTIFACT_KEY" -F variant=gomoku_freestyle15 -F "task_name=$TASK_NAME" -F "password=$FISHTEST_PASSWORD" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "max_games=25000" -F "adjudication=1" -F "visible=0"); then
+              TASK_ID=$(jq -er 'if .code == 0 and .task_id then .task_id else error(.msg // "Task submission failed") end' <<<"$TASK_RESPONSE")
+              TASK_ACTION="created"
+            else
+              echo "::error::Ambiguous add_task outcome for $TASK_MARKER. Do not retry blindly; rerun the workflow so it reconciles this marker first."
+              exit 1
+            fi
+          fi
+          echo "- f15 task: \`$TASK_ID\` ($TASK_ACTION)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload to fishtest (standard-15)
-        if: ${{ contains(github.event.head_commit.message, 's15') }}
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 's15') }}
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          ENGINE_ARTIFACT_KEY: ${{ steps.fishtest_upload.outputs.artifact_key }}
+          FISHTEST_PASSWORD: ${{ secrets.NOTHING }}
         run: |
-          COMMIT_TITLE=$(echo "${{github.event.head_commit.message}}" | head -n 1)
+          COMMIT_TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
           sleep 10
-          curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_standard15 -F "task_name=[s15] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "visible=0"
+          TASK_MARKER="[ci:${GITHUB_SHA:0:12}:s15]"
+          TASK_NAME="[s15] $TASK_MARKER $COMMIT_TITLE"
+          LOOKUP_RESPONSE=$(curl --fail-with-body --silent --show-error --get "$FISHTEST_URL/task_list" --data-urlencode "page=1" --data-urlencode "page_size=100" --data-urlencode "variant=gomoku_standard15" --data-urlencode "keyword=$TASK_MARKER" --data-urlencode "password=$FISHTEST_PASSWORD")
+          TASK_ID=$(jq -r 'if .code == 0 then (.data[0].task_id // "") else error(.msg // "Task lookup failed") end' <<<"$LOOKUP_RESPONSE")
+          if [[ -n "$TASK_ID" ]]; then
+            EXISTING_ENGINE=$(jq -r '.data[0].engine_url' <<<"$LOOKUP_RESPONSE")
+            [[ "$EXISTING_ENGINE" == "$ENGINE_ARTIFACT_KEY" ]] || { echo "::error::Task marker $TASK_MARKER exists with engine $EXISTING_ENGINE, expected $ENGINE_ARTIFACT_KEY"; exit 1; }
+            TASK_ACTION="reused"
+          else
+            if TASK_RESPONSE=$(curl --fail-with-body --silent --show-error "$FISHTEST_URL/add_task" -F "engine_file_name=$ENGINE_ARTIFACT_KEY" -F variant=gomoku_standard15 -F "task_name=$TASK_NAME" -F "password=$FISHTEST_PASSWORD" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "max_games=25000" -F "adjudication=1" -F "visible=0"); then
+              TASK_ID=$(jq -er 'if .code == 0 and .task_id then .task_id else error(.msg // "Task submission failed") end' <<<"$TASK_RESPONSE")
+              TASK_ACTION="created"
+            else
+              echo "::error::Ambiguous add_task outcome for $TASK_MARKER. Do not retry blindly; rerun the workflow so it reconciles this marker first."
+              exit 1
+            fi
+          fi
+          echo "- s15 task: \`$TASK_ID\` ($TASK_ACTION)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload to fishtest (renju-15)
-        if: ${{ contains(github.event.head_commit.message, 'r15') }}
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'r15') }}
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          ENGINE_ARTIFACT_KEY: ${{ steps.fishtest_upload.outputs.artifact_key }}
+          FISHTEST_PASSWORD: ${{ secrets.NOTHING }}
         run: |
-          COMMIT_TITLE=$(echo "${{github.event.head_commit.message}}" | head -n 1)
+          COMMIT_TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
           sleep 10
-          curl http://test.pikafish.org/api/add_task -F engine=@build/rapfi-linux-avx2 -F variant=gomoku_renju15 -F "task_name=[r15] $COMMIT_TITLE" -F "password=${{secrets.NOTHING}}" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "visible=0"
+          TASK_MARKER="[ci:${GITHUB_SHA:0:12}:r15]"
+          TASK_NAME="[r15] $TASK_MARKER $COMMIT_TITLE"
+          LOOKUP_RESPONSE=$(curl --fail-with-body --silent --show-error --get "$FISHTEST_URL/task_list" --data-urlencode "page=1" --data-urlencode "page_size=100" --data-urlencode "variant=gomoku_renju15" --data-urlencode "keyword=$TASK_MARKER" --data-urlencode "password=$FISHTEST_PASSWORD")
+          TASK_ID=$(jq -r 'if .code == 0 then (.data[0].task_id // "") else error(.msg // "Task lookup failed") end' <<<"$LOOKUP_RESPONSE")
+          if [[ -n "$TASK_ID" ]]; then
+            EXISTING_ENGINE=$(jq -r '.data[0].engine_url' <<<"$LOOKUP_RESPONSE")
+            [[ "$EXISTING_ENGINE" == "$ENGINE_ARTIFACT_KEY" ]] || { echo "::error::Task marker $TASK_MARKER exists with engine $EXISTING_ENGINE, expected $ENGINE_ARTIFACT_KEY"; exit 1; }
+            TASK_ACTION="reused"
+          else
+            if TASK_RESPONSE=$(curl --fail-with-body --silent --show-error "$FISHTEST_URL/add_task" -F "engine_file_name=$ENGINE_ARTIFACT_KEY" -F variant=gomoku_renju15 -F "task_name=$TASK_NAME" -F "password=$FISHTEST_PASSWORD" -F "game_time=10" -F "inc_time=0.1" -F "depth=-1" -F "nodes=-1" -F "elo0=0" -F "elo1=5" -F "alpha=0.05" -F "beta=0.05" -F "max_games=25000" -F "adjudication=1" -F "visible=0"); then
+              TASK_ID=$(jq -er 'if .code == 0 and .task_id then .task_id else error(.msg // "Task submission failed") end' <<<"$TASK_RESPONSE")
+              TASK_ACTION="created"
+            else
+              echo "::error::Ambiguous add_task outcome for $TASK_MARKER. Do not retry blindly; rerun the workflow so it reconciles this marker first."
+              exit 1
+            fi
+          fi
+          echo "- r15 task: \`$TASK_ID\` ($TASK_ACTION)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: Fishtest
-          path: Rapfi/build/rapfi-linux-avx2
+          path: |
+            Rapfi/build/rapfi-linux-avx2
+            Rapfi/build/fishtest-upload.json
