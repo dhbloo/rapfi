@@ -342,8 +342,11 @@ bool OpeningGenerator::next()
         if (Config::GeneralCfg.messageMode != MsgMode::NONE)
             MESSAGEL("Searching balanced1 for opening " << board.positionString());
         if (putBalance1Move()) {
-            board.move(rule, Search::Engine.main()->rootMoves[0].pv[0]);
-            return true;
+            Pos move = Search::Engine.main()->rootMoves[0].pv[0];
+            if (!isRuleLegalMove(move))
+                return false;
+            board.move(rule, move);
+            return board.ply() == numMoves;
         }
     }
 
@@ -353,13 +356,27 @@ bool OpeningGenerator::next()
         if (Config::GeneralCfg.messageMode != MsgMode::NONE)
             MESSAGEL("Searching balanced2 for opening " << board.positionString());
         if (putBalance2Move()) {
-            board.move(rule, Search::Engine.main()->rootMoves[0].pv[0]);
-            board.move(rule, Search::Engine.main()->rootMoves[0].pv[1]);
-            return true;
+            const auto &pv = Search::Engine.main()->rootMoves[0].pv;
+            if (pv.size() < 2 || !isRuleLegalMove(pv[0]))
+                return false;
+            board.move(rule, pv[0]);
+            if (!isRuleLegalMove(pv[1])) {
+                board.undo(rule);
+                return false;
+            }
+            board.move(rule, pv[1]);
+            return board.ply() == numMoves;
         }
     }
 
     return false;
+}
+
+bool OpeningGenerator::isRuleLegalMove(Pos pos) const
+{
+    if (!board.isInBoard(pos) || !board.isEmpty(pos))
+        return false;
+    return rule != RENJU || board.sideToMove() != BLACK || !board.checkForbiddenPoint(pos);
 }
 
 /// Put random moves in the given area on board.
@@ -379,6 +396,8 @@ void OpeningGenerator::putRandomMoves(int numMoves, CandArea area)
 
     int count = 0;
     for (Pos pos : randomMoves) {
+        if (!isRuleLegalMove(pos))
+            continue;
         board.move(rule, pos);
 
         // Make sure we do not accidentally put a winning move

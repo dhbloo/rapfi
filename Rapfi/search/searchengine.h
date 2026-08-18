@@ -38,6 +38,11 @@ enum class OverwriteRule;  // forward declaration (opaque)
 namespace Evaluation {
 class Evaluator;  // forward declaration
 }
+#ifdef POLICY_TRAINING
+namespace Tuning {
+class PolicyTraceSession;
+}
+#endif
 
 namespace Search {
 
@@ -151,6 +156,9 @@ private:
     EvaluatorMaker                             evaluatorMaker;
     std::unique_ptr<Searcher>                  searcherPtr;
     std::unique_ptr<Database::DBStorage>       dbStoragePtr;
+#ifdef POLICY_TRAINING
+    Tuning::PolicyTraceSession *policyTraceSessionPtr = nullptr;
+#endif
 
 public:
     /// The per-search context of this engine, reset at each startThinking.
@@ -212,6 +220,15 @@ public:
     Searcher            *searcher() const { return searcherPtr.get(); }
     Database::DBStorage *dbStorage() const { return dbStoragePtr.get(); }
     bool                 isTerminating() const { return terminate.load(std::memory_order_relaxed); }
+#ifdef POLICY_TRAINING
+    void setPolicyTraceSession(Tuning::PolicyTraceSession *session)
+    {
+        waitForIdle();
+        policyTraceSessionPtr = session;
+    }
+    Tuning::PolicyTraceSession *policyTraceSession() const { return policyTraceSessionPtr; }
+    bool                        hasEvaluatorMaker() const { return bool(evaluatorMaker); }
+#endif
     /// Sum of nodes searched by all threads. (Defined in searchthread.h, which
     /// completes the SearchThread type.)
     uint64_t nodesSearched() const;

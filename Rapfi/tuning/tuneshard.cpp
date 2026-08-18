@@ -23,11 +23,12 @@ namespace Tuning {
 namespace {
 
     constexpr std::array<uint8_t, 8> Magic            = {'R', 'F', 'T', 'U', 'N', 'E', '0', '1'};
-    constexpr uint32_t               FormatVersion    = 3;
-    constexpr size_t                 SectionCount     = 7;
+    constexpr uint32_t               FormatVersion    = 11;
+    constexpr size_t                 SectionCount     = 10;
     constexpr size_t                 FingerprintBytes = 32;
 
     enum Section : size_t {
+        BoardSizes,
         Results,
         StaticEvals,
         BestCandidates,
@@ -35,6 +36,8 @@ namespace {
         EvalTerms,
         PolicyOffsets,
         PolicyCandidates,
+        PolicyTargetOffsets,
+        PolicyTargets,
     };
 
     struct SectionMeta
@@ -280,10 +283,17 @@ namespace {
     {
         if (corpus.size() > std::numeric_limits<uint32_t>::max()
             || corpus.evalTerms().size() > std::numeric_limits<uint32_t>::max()
-            || corpus.policyCandidates().size() > std::numeric_limits<uint32_t>::max())
+            || corpus.policyCandidates().size() > std::numeric_limits<uint32_t>::max()
+            || corpus.policyTargets().size() > std::numeric_limits<uint32_t>::max())
             throw std::length_error("prepared shard count exceeds 32-bit format capacity");
 
         std::array<SectionMeta, SectionCount> metadata;
+        metadata[BoardSizes].byteSize =
+            checkedByteSize(corpus.boardSizes().size(), 1, "board size");
+        metadata[BoardSizes].crc32 = sectionCrc([&](Crc32 &crc) {
+            for (uint8_t value : corpus.boardSizes())
+                crc.addByte(value);
+        });
         metadata[Results].byteSize = checkedByteSize(corpus.results().size(), 1, "result");
         metadata[Results].crc32    = sectionCrc([&](Crc32 &crc) {
             for (uint8_t value : corpus.results())
@@ -316,16 +326,30 @@ namespace {
         });
         metadata[PolicyOffsets].byteSize =
             checkedByteSize(corpus.policyOffsets().size(), 4, "policy offset");
-        metadata[PolicyOffsets].crc32 = sectionCrc([&](Crc32 &crc) {
+        metadata[PolicyOffsets].crc32       = sectionCrc([&](Crc32 &crc) {
             for (uint32_t value : corpus.policyOffsets())
                 crc.addLittleEndian(value);
         });
-        metadata[PolicyCandidates].byteSize =
-            checkedByteSize(corpus.policyCandidates().size(), 4, "policy candidate");
-        metadata[PolicyCandidates].crc32 = sectionCrc([&](Crc32 &crc) {
-            for (const PolicyCandidate &candidate : corpus.policyCandidates()) {
-                crc.addLittleEndian(candidate.indices[0]);
-                crc.addLittleEndian(candidate.indices[1]);
+        metadata[PolicyCandidates].byteSize = checkedByteSize(corpus.policyCandidates().size(),
+                                                              sizeof(PolicyCandidate),
+                                                              "policy candidate");
+        metadata[PolicyCandidates].crc32    = sectionCrc([&](Crc32 &crc) {
+            for (const PolicyCandidate &candidate : corpus.policyCandidates())
+                for (ParameterId index : candidate.indices)
+                    crc.addLittleEndian(index);
+        });
+        metadata[PolicyTargetOffsets].byteSize =
+            checkedByteSize(corpus.policyTargetOffsets().size(), 4, "policy target offset");
+        metadata[PolicyTargetOffsets].crc32 = sectionCrc([&](Crc32 &crc) {
+            for (uint32_t value : corpus.policyTargetOffsets())
+                crc.addLittleEndian(value);
+        });
+        metadata[PolicyTargets].byteSize =
+            checkedByteSize(corpus.policyTargets().size(), 4, "policy target");
+        metadata[PolicyTargets].crc32 = sectionCrc([&](Crc32 &crc) {
+            for (const PolicyTargetTerm &target : corpus.policyTargets()) {
+                crc.addLittleEndian(target.candidate);
+                crc.addLittleEndian(target.weight);
             }
         });
         return metadata;
@@ -334,16 +358,20 @@ namespace {
     void validateSectionSizes(const std::array<SectionMeta, SectionCount> &metadata,
                               uint32_t                                     sampleCount,
                               uint32_t                                     evalTermCount,
-                              uint32_t                                     policyCandidateCount)
+                              uint32_t                                     policyCandidateCount,
+                              uint32_t                                     policyTargetCount)
     {
         std::array<uint64_t, SectionCount> expected = {
+            checkedByteSize(sampleCount, 1, "board size"),
             checkedByteSize(sampleCount, 1, "result"),
             checkedByteSize(sampleCount, 2, "static eval"),
             checkedByteSize(sampleCount, 2, "best candidate"),
             checkedByteSize(uint64_t(sampleCount) + 1, 4, "value offset"),
             checkedByteSize(evalTermCount, 4, "value term"),
             checkedByteSize(uint64_t(sampleCount) + 1, 4, "policy offset"),
-            checkedByteSize(policyCandidateCount, 4, "policy candidate"),
+            checkedByteSize(policyCandidateCount, sizeof(PolicyCandidate), "policy candidate"),
+            checkedByteSize(uint64_t(sampleCount) + 1, 4, "policy target offset"),
+            checkedByteSize(policyTargetCount, 4, "policy target"),
         };
         for (size_t i = 0; i < SectionCount; i++)
             if (metadata[i].byteSize != expected[i])
@@ -377,11 +405,13 @@ void writePreparedShard(const std::filesystem::path &path,
             writer.byte(byte);
         writeLittleEndian(writer, FormatVersion);
         uint32_t flags = (!corpus.evalTerms().empty() ? 1U : 0U)
-                         | (!corpus.policyCandidates().empty() ? 2U : 0U);
+                         | (!corpus.policyCandidates().empty() ? 2U : 0U)
+                         | (!corpus.policyTargets().empty() ? 4U : 0U);
         writeLittleEndian(writer, flags);
         writeLittleEndian(writer, static_cast<uint32_t>(corpus.size()));
         writeLittleEndian(writer, static_cast<uint32_t>(corpus.evalTerms().size()));
         writeLittleEndian(writer, static_cast<uint32_t>(corpus.policyCandidates().size()));
+        writeLittleEndian(writer, static_cast<uint32_t>(corpus.policyTargets().size()));
         writeLittleEndian(writer, shardOrdinal);
         for (uint8_t byte : fingerprintBytes)
             writer.byte(byte);
@@ -390,6 +420,8 @@ void writePreparedShard(const std::filesystem::path &path,
             writeLittleEndian(writer, section.crc32);
         }
 
+        for (uint8_t value : corpus.boardSizes())
+            writer.byte(value);
         for (uint8_t value : corpus.results())
             writer.byte(value);
         for (int16_t value : corpus.staticEvals())
@@ -404,11 +436,15 @@ void writePreparedShard(const std::filesystem::path &path,
         }
         for (uint32_t value : corpus.policyOffsets())
             writeLittleEndian(writer, value);
-        for (const PolicyCandidate &candidate : corpus.policyCandidates()) {
-            writeLittleEndian(writer, candidate.indices[0]);
-            writeLittleEndian(writer, candidate.indices[1]);
+        for (const PolicyCandidate &candidate : corpus.policyCandidates())
+            for (ParameterId index : candidate.indices)
+                writeLittleEndian(writer, index);
+        for (uint32_t value : corpus.policyTargetOffsets())
+            writeLittleEndian(writer, value);
+        for (const PolicyTargetTerm &target : corpus.policyTargets()) {
+            writeLittleEndian(writer, target.candidate);
+            writeLittleEndian(writer, target.weight);
         }
-
         writer.flush();
         out.flush();
         if (!out)
@@ -446,13 +482,15 @@ PreparedCorpus readPreparedShard(const std::filesystem::path &path,
     if (version != FormatVersion)
         throw std::runtime_error("prepared shard version is unsupported");
     uint32_t flags = readLittleEndian<uint32_t>(in);
-    if (flags & ~3U)
+    if (flags & ~7U)
         throw std::runtime_error("prepared shard flags are invalid");
     uint32_t sampleCount          = readLittleEndian<uint32_t>(in);
     uint32_t evalTermCount        = readLittleEndian<uint32_t>(in);
     uint32_t policyCandidateCount = readLittleEndian<uint32_t>(in);
+    uint32_t policyTargetCount    = readLittleEndian<uint32_t>(in);
     uint64_t shardOrdinal         = readLittleEndian<uint64_t>(in);
-    if (bool(flags & 1U) != bool(evalTermCount) || bool(flags & 2U) != bool(policyCandidateCount))
+    if (bool(flags & 1U) != bool(evalTermCount) || bool(flags & 2U) != bool(policyCandidateCount)
+        || bool(flags & 4U) != bool(policyTargetCount))
         throw std::runtime_error("prepared shard objective flags do not match section counts");
     if (shardOrdinal != expectedShardOrdinal)
         throw std::runtime_error("prepared shard ordinal does not match its manifest position");
@@ -463,16 +501,21 @@ PreparedCorpus readPreparedShard(const std::filesystem::path &path,
     if (!expectedFingerprint.empty() && fingerprintBytes != decodeFingerprint(expectedFingerprint))
         throw std::runtime_error("prepared shard fingerprint does not match the cache manifest");
 
-    std::array<SectionMeta, SectionCount> metadata;
-    for (SectionMeta &section : metadata) {
-        section.byteSize = readLittleEndian<uint64_t>(in);
-        section.crc32    = readLittleEndian<uint32_t>(in);
+    std::array<SectionMeta, SectionCount> metadata {};
+    for (size_t i = 0; i < SectionCount; i++) {
+        metadata[i].byteSize = readLittleEndian<uint64_t>(in);
+        metadata[i].crc32    = readLittleEndian<uint32_t>(in);
     }
-    validateSectionSizes(metadata, sampleCount, evalTermCount, policyCandidateCount);
+    validateSectionSizes(metadata,
+                         sampleCount,
+                         evalTermCount,
+                         policyCandidateCount,
+                         policyTargetCount);
 
     uint64_t encodedSize     = static_cast<uint64_t>(in.tellg());
     uint64_t allocationBytes = 0;
-    for (const SectionMeta &section : metadata) {
+    for (size_t i = 0; i < SectionCount; i++) {
+        const SectionMeta &section = metadata[i];
         if (section.byteSize > std::numeric_limits<uint64_t>::max() - encodedSize
             || section.byteSize > std::numeric_limits<uint64_t>::max() - allocationBytes)
             throw std::runtime_error("prepared shard encoded size overflows");
@@ -486,15 +529,23 @@ PreparedCorpus readPreparedShard(const std::filesystem::path &path,
     if (allocationBytes > maxAllocationBytes)
         throw std::runtime_error("prepared shard exceeds the configured allocation limit");
 
-    std::vector<uint8_t>         results(sampleCount);
-    std::vector<int16_t>         staticEvals(sampleCount);
-    std::vector<uint16_t>        bestCandidates(sampleCount);
-    std::vector<uint32_t>        evalOffsets(size_t(sampleCount) + 1);
-    std::vector<TuneCoeff>       evalTerms(evalTermCount);
-    std::vector<uint32_t>        policyOffsets(size_t(sampleCount) + 1);
-    std::vector<PolicyCandidate> policyCandidates(policyCandidateCount);
-    bool                         nativeLittleEndian = isLittleEndianHost();
+    std::vector<uint8_t>          boardSizes(sampleCount);
+    std::vector<uint8_t>          results(sampleCount);
+    std::vector<int16_t>          staticEvals(sampleCount);
+    std::vector<uint16_t>         bestCandidates(sampleCount);
+    std::vector<uint32_t>         evalOffsets(size_t(sampleCount) + 1);
+    std::vector<TuneCoeff>        evalTerms(evalTermCount);
+    std::vector<uint32_t>         policyOffsets(size_t(sampleCount) + 1);
+    std::vector<PolicyCandidate>  policyCandidates(policyCandidateCount);
+    std::vector<uint32_t>         policyTargetOffsets(size_t(sampleCount) + 1);
+    std::vector<PolicyTargetTerm> policyTargets(policyTargetCount);
+    bool                          nativeLittleEndian = isLittleEndianHost();
 
+    {
+        CheckedSectionReader reader(in, metadata[BoardSizes], verifyChecksum);
+        reader.raw(boardSizes.data(), boardSizes.size());
+        reader.finish("board size");
+    }
     {
         CheckedSectionReader reader(in, metadata[Results], verifyChecksum);
         reader.raw(results.data(), results.size());
@@ -553,23 +604,45 @@ PreparedCorpus readPreparedShard(const std::filesystem::path &path,
             reader.raw(policyCandidates.data(),
                        policyCandidates.size() * sizeof(policyCandidates[0]));
         else
-            for (PolicyCandidate &candidate : policyCandidates) {
-                candidate.indices[0] = reader.littleEndian<uint16_t>();
-                candidate.indices[1] = reader.littleEndian<uint16_t>();
-            }
+            for (PolicyCandidate &candidate : policyCandidates)
+                for (ParameterId &index : candidate.indices)
+                    index = reader.littleEndian<uint16_t>();
         reader.finish("policy candidate");
     }
-
+    {
+        CheckedSectionReader reader(in, metadata[PolicyTargetOffsets], verifyChecksum);
+        if (nativeLittleEndian)
+            reader.raw(policyTargetOffsets.data(),
+                       policyTargetOffsets.size() * sizeof(policyTargetOffsets[0]));
+        else
+            for (uint32_t &value : policyTargetOffsets)
+                value = reader.littleEndian<uint32_t>();
+        reader.finish("policy target offset");
+    }
+    {
+        CheckedSectionReader reader(in, metadata[PolicyTargets], verifyChecksum);
+        if (nativeLittleEndian)
+            reader.raw(policyTargets.data(), policyTargets.size() * sizeof(policyTargets[0]));
+        else
+            for (PolicyTargetTerm &target : policyTargets) {
+                target.candidate = reader.littleEndian<uint16_t>();
+                target.weight    = reader.littleEndian<uint16_t>();
+            }
+        reader.finish("policy target");
+    }
     if (in.peek() != std::ios::traits_type::eof())
         throw std::runtime_error("prepared shard contains trailing data");
 
-    return PreparedCorpus::fromSections(std::move(results),
+    return PreparedCorpus::fromSections(std::move(boardSizes),
+                                        std::move(results),
                                         std::move(staticEvals),
                                         std::move(bestCandidates),
                                         std::move(evalOffsets),
                                         std::move(evalTerms),
                                         std::move(policyOffsets),
-                                        std::move(policyCandidates));
+                                        std::move(policyCandidates),
+                                        std::move(policyTargetOffsets),
+                                        std::move(policyTargets));
 }
 
 }  // namespace Tuning

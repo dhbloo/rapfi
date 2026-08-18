@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cassert>
+#include <filesystem>
 #include <fstream>
 #include <iosfwd>
 #include <memory>
@@ -45,6 +46,7 @@ public:
     /// Validate all dataset paths and open the first file. The list must not be empty.
     /// @throws std::runtime_error when a file cannot be opened.
     explicit MultiFileInputStream(const std::vector<std::string> &filenames);
+    explicit MultiFileInputStream(const std::vector<std::filesystem::path> &filenames);
     ~MultiFileInputStream();
 
     /// Advance to the next file in the list and open its stream.
@@ -68,7 +70,7 @@ public:
     void reset();
 
 private:
-    std::vector<std::string>    filenames_;
+    std::vector<std::filesystem::path> filenames_;
     std::ifstream               file_;
     size_t                      nextFileIdx_;
     std::unique_ptr<Compressor> compressor_;

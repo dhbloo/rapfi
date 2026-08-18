@@ -21,6 +21,10 @@
 #include "../game/movegen.h"
 #include "history.h"
 
+#ifdef POLICY_TRAINING
+    #include "../tuning/policytrace.h"
+#endif
+
 namespace Search {
 
 /// MovePicker class is used to pick one legal move at a time from the current
@@ -56,6 +60,12 @@ public:
     float curMoveNormalizePolicy() const { return curPolicy; }
     /// Get adjusted score of current move.
     Score curMoveScore() const { return curScore; }
+#ifdef POLICY_TRAINING
+    Tuning::PolicyTraceEvent     *policyTraceEvent() { return traceEvent.get(); }
+    Tuning::PolicyTraceCandidate *policyTraceCandidate(Pos move);
+    void                          commitPolicyTrace();
+    void                          discardPolicyTrace() { traceEvent.reset(); }
+#endif
 
 private:
     enum PickType { Next, Best };
@@ -74,7 +84,11 @@ private:
     /// normalized policy is enabled, otherwise by classical scores plus the extra
     /// heuristic terms in `ExtraFlags`.
     template <ScoreType ExtraFlags>
-    void        scoreAndSortMoves();
+    void scoreAndSortMoves();
+#ifdef POLICY_TRAINING
+    void beginPolicyTrace(uint8_t context, bool p3Active);
+    void capturePolicyTraceOrder();
+#endif
     ScoredMove *begin() { return curMove; }
     ScoredMove *end() { return endMove; }
 
@@ -94,6 +108,11 @@ private:
     float       curPolicy;
     ScoredMove *curMove, *endMove;
     ScoredMove  moves[MAX_MOVES];
+#ifdef POLICY_TRAINING
+    bool                                      traceEligible;
+    uint16_t                                  tracePolicyOrdinal = 0;
+    std::unique_ptr<Tuning::PolicyTraceEvent> traceEvent;
+#endif
 };
 
 template <>

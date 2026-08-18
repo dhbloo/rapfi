@@ -36,9 +36,11 @@
 #include "searchstack.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <random>
 #include <tuple>
@@ -49,6 +51,164 @@ using namespace Search::AB;
 namespace {
 
 enum NodeType { Root, PV, NonPV };
+
+#ifdef POLICY_TRAINING
+struct DeferredPolicyTrace
+{
+    Pos                            move             = Pos::NONE;
+    Tuning::PolicyTraceFilter      filter           = Tuning::PolicyTraceFilter::None;
+    Tuning::PolicyTraceDisposition disposition      = Tuning::PolicyTraceDisposition::Pending;
+    int32_t                        alphaBefore      = 0;
+    uint16_t                       moveCount        = 0;
+    Depth                          plannedReduction = 0;
+    std::array<Depth, 4>            searchDepths {};
+    uint8_t                        searchCount      = 0;
+    int32_t                        value            = VALUE_NONE;
+    Bound                          bound            = BOUND_NONE;
+    uint64_t                       nodes            = 0;
+    bool                           alphaChanged     = false;
+    bool                           valid            = false;
+};
+
+void recordPolicyTraceSearch(DeferredPolicyTrace &trace, Depth depth)
+{
+    if (trace.searchCount >= trace.searchDepths.size())
+        throw std::logic_error("policy trace candidate exceeded search-depth capacity");
+    trace.searchDepths[trace.searchCount++] = depth;
+}
+
+void applyDeferredPolicyTrace(Tuning::PolicyTraceCandidate &candidate,
+                              const DeferredPolicyTrace    &deferred)
+{
+    candidate.filter           = deferred.filter;
+    candidate.disposition      = deferred.disposition;
+    candidate.alphaBefore      = deferred.alphaBefore;
+    candidate.moveCount        = deferred.moveCount;
+    candidate.plannedReduction = deferred.plannedReduction;
+    candidate.searchDepths     = deferred.searchDepths;
+    candidate.searchCount      = deferred.searchCount;
+    candidate.value            = deferred.value;
+    candidate.bound            = deferred.bound;
+    candidate.nodes            = deferred.nodes;
+    candidate.alphaChanged     = deferred.alphaChanged;
+}
+
+template <NodeType NT>
+void initializePolicyTraceEvent(MovePicker          &mp,
+                                SearchStack         *ss,
+                                Value                alpha,
+                                Value                beta,
+                                Depth                depth,
+                                bool                 cutNode,
+                                DeferredPolicyTrace &deferred,
+                                bool                &initialized)
+{
+    Tuning::PolicyTraceEvent *event = mp.policyTraceEvent();
+    if (!event || initialized)
+        return;
+    event->nodeType = NT == Root ? Tuning::PolicyTraceNodeType::Root
+                      : NT == PV ? Tuning::PolicyTraceNodeType::Pv
+                                 : Tuning::PolicyTraceNodeType::NonPv;
+    event->cutNode  = cutNode;
+    event->ply      = static_cast<int16_t>(ss->ply);
+    event->depth    = depth;
+    event->alpha    = alpha;
+    event->beta     = beta;
+    event->singularExcludedMove = ss->skipMove;
+    initialized     = true;
+
+    if (deferred.valid)
+        if (Tuning::PolicyTraceCandidate *candidate = mp.policyTraceCandidate(deferred.move))
+            applyDeferredPolicyTrace(*candidate, deferred);
+    if (ss->skipMove)
+        if (Tuning::PolicyTraceCandidate *candidate = mp.policyTraceCandidate(ss->skipMove)) {
+            candidate->filter      = Tuning::PolicyTraceFilter::SingularExcluded;
+            candidate->disposition = Tuning::PolicyTraceDisposition::SingularExcluded;
+        }
+}
+
+void finishPolicyTraceEvent(MovePicker   &mp,
+                            SearchThread &thread,
+                            uint64_t      nodeStart,
+                            Time          eventStart,
+                            Value         bestValue,
+                            Value         beta,
+                            Pos           bestMove,
+                            Bound         bound)
+{
+    Tuning::PolicyTraceEvent *event = mp.policyTraceEvent();
+    if (!event)
+        return;
+    while (mp()) {}
+    std::vector<bool> usedSelectionOrdinals(event->candidates.size());
+    for (Tuning::PolicyTraceCandidate &candidate : event->candidates) {
+        if (candidate.selectionOrdinal < event->candidates.size()
+            && !usedSelectionOrdinals[candidate.selectionOrdinal])
+            usedSelectionOrdinals[candidate.selectionOrdinal] = true;
+        else
+            candidate.selectionOrdinal = std::numeric_limits<uint16_t>::max();
+    }
+    size_t nextSelectionOrdinal = 0;
+    for (Tuning::PolicyTraceCandidate &candidate : event->candidates) {
+        if (candidate.selectionOrdinal != std::numeric_limits<uint16_t>::max())
+            continue;
+        while (usedSelectionOrdinals[nextSelectionOrdinal])
+            nextSelectionOrdinal++;
+        candidate.selectionOrdinal = static_cast<uint16_t>(nextSelectionOrdinal);
+        usedSelectionOrdinals[nextSelectionOrdinal] = true;
+    }
+    if (event->nodeType == Tuning::PolicyTraceNodeType::Root) {
+        event->rootEligibleMoves.reserve(thread.rootMoves.size());
+        for (const RootMove &rootMove : thread.rootMoves)
+            event->rootEligibleMoves.push_back(rootMove.pv[0]);
+        for (Tuning::PolicyTraceCandidate &candidate : event->candidates)
+            if (!std::count(thread.rootMoves.begin(), thread.rootMoves.end(), candidate.move)) {
+                candidate.filter      = Tuning::PolicyTraceFilter::RootExcluded;
+                candidate.disposition = Tuning::PolicyTraceDisposition::Filtered;
+            }
+    }
+    const bool observedCutoff =
+        std::any_of(event->candidates.begin(),
+                    event->candidates.end(),
+                    [](const Tuning::PolicyTraceCandidate &candidate) {
+                        return candidate.disposition
+                               == Tuning::PolicyTraceDisposition::SearchedCutoff;
+                    });
+    for (Tuning::PolicyTraceCandidate &candidate : event->candidates) {
+        if (candidate.disposition != Tuning::PolicyTraceDisposition::Pending)
+            continue;
+        if (!observedCutoff) {
+            mp.discardPolicyTrace();
+            return;
+        }
+        candidate.disposition = Tuning::PolicyTraceDisposition::PostCutoffCensored;
+    }
+    std::vector<Tuning::PolicyTraceCandidate *> eligibleCandidates;
+    for (Tuning::PolicyTraceCandidate &candidate : event->candidates) {
+        if (candidate.filter == Tuning::PolicyTraceFilter::None)
+            eligibleCandidates.push_back(&candidate);
+        else
+            candidate.policyOrdinal = std::numeric_limits<uint16_t>::max();
+    }
+    std::sort(eligibleCandidates.begin(),
+              eligibleCandidates.end(),
+              [](const auto *lhs, const auto *rhs) {
+                  return lhs->policyOrdinal < rhs->policyOrdinal;
+              });
+    if (!eligibleCandidates.empty()
+        && eligibleCandidates.back()->policyOrdinal == std::numeric_limits<uint16_t>::max())
+        throw std::logic_error("policy trace contains an eligible unreturned candidate");
+    for (size_t ordinal = 0; ordinal < eligibleCandidates.size(); ordinal++)
+        eligibleCandidates[ordinal]->policyOrdinal = static_cast<uint16_t>(ordinal);
+    event->totalNodes   = thread.numNodes.load(std::memory_order_relaxed) - nodeStart;
+    event->elapsedTicks = static_cast<uint64_t>(now() - eventStart);
+    event->bestMove     = bestMove;
+    event->bestValue    = bestValue;
+    event->bestBound    = bound;
+    event->completion   = Tuning::PolicyTraceCompletion::Complete;
+    mp.commitPolicyTrace();
+}
+#endif
 
 /// Stable-sort root moves [begin, end) best-first: by distance to the balanced
 /// eval (with `balanceBias`) in balance mode, by value otherwise. Stable sorting
@@ -192,17 +352,17 @@ const RootMove *ABSearcher::searchMain(SearchThread &th)
 
 void ABSearcher::search(SearchThread &th)
 {
-    ABSearchData     &sd        = *th.searchDataAs<ABSearchData>();
-    SearchContext    &ctx       = th.engine.ctx;
-    SearchOptions    &options   = th.options();
-    Value             initValue = Evaluation::evaluate(*th.board, options.rule);
-    StackArray        stackArray(MAX_PLY, initValue);
-    Value             bestValue           = -VALUE_INFINITE;
-    Pos               lastBestMove        = Pos::NONE;
-    int               lastMoveChangeDepth = 0;
-    float             timeReduction = 1.0f, totalBestMoveChanges = 0.0f;
-    int               firstMateDepth = 0, firstSingularDepth = 0;
-    SearchThread     *mainThread = (&th == th.engine.main() ? th.engine.main() : nullptr);
+    ABSearchData  &sd        = *th.searchDataAs<ABSearchData>();
+    SearchContext &ctx       = th.engine.ctx;
+    SearchOptions &options   = th.options();
+    Value          initValue = Evaluation::evaluate(*th.board, options.rule);
+    StackArray     stackArray(MAX_PLY, initValue);
+    Value          bestValue           = -VALUE_INFINITE;
+    Pos            lastBestMove        = Pos::NONE;
+    int            lastMoveChangeDepth = 0;
+    float          timeReduction = 1.0f, totalBestMoveChanges = 0.0f;
+    int            firstMateDepth = 0, firstSingularDepth = 0;
+    SearchThread  *mainThread = (&th == th.engine.main() ? th.engine.main() : nullptr);
 
     // Init search depth range
     int maxDepth   = std::min(options.maxDepth, std::clamp(SearchCfg.maxSearchDepth, 2, MAX_DEPTH));
@@ -249,8 +409,11 @@ void ABSearcher::search(SearchThread &th)
 
             // Send out various information to GUI
             if (mainThread)
-                ctx.printer
-                    .printPvCompletes(*mainThread, ctx.timectl, sd.rootDepth, sd.pvIdx, sd.multiPv);
+                ctx.printer.printPvCompletes(*mainThread,
+                                             ctx.timectl,
+                                             sd.rootDepth,
+                                             sd.pvIdx,
+                                             sd.multiPv);
 
             // Sort the PV lines searched so far. When we are in balance move mode,
             // sort according to negative absolute value rather than its original value.
@@ -572,12 +735,12 @@ Value search(Rule         rule,
 /// best-value adjust).
 struct DBProbeState
 {
-    Database::DBRecord record;      // valid only when hit
-    bool  hit        = false;
-    bool  checkChild = false;       // child records may exist: disables shallow pruning
-    Bound labelBound = BOUND_NONE;  // bound implied by a WIN/LOSE/DRAW label
-    Bound bound      = BOUND_NONE;  // bound from the record's depth-bound field
-    Value value      = VALUE_NONE;  // record value converted to a search value
+    Database::DBRecord record;  // valid only when hit
+    bool               hit        = false;
+    bool               checkChild = false;  // child records may exist: disables shallow pruning
+    Bound              labelBound = BOUND_NONE;  // bound implied by a WIN/LOSE/DRAW label
+    Bound              bound      = BOUND_NONE;  // bound from the record's depth-bound field
+    Value              value      = VALUE_NONE;  // record value converted to a search value
 };
 
 /// Step 5 of search<Rule,NT>: query the database and try a database cut.
@@ -604,10 +767,10 @@ std::optional<Value> probeDatabaseAtNode(Board        &board,
     SearchOptions              &options    = thisThread->options();
     const DatabaseSearchParams &dbParams   = thisThread->engine.ctx.dbParams;
 
-    Database::DBClient &dbClient          = *thisThread->dbClient;
-    int                 queryPlyIncrement = searchData->rootDepth
-                            / (PvNode ? dbParams.queryPVIterPerPlyIncrement
-                                      : dbParams.queryNonPVIterPerPlyIncrement);
+    Database::DBClient &dbClient = *thisThread->dbClient;
+    int                 queryPlyIncrement =
+        searchData->rootDepth
+        / (PvNode ? dbParams.queryPVIterPerPlyIncrement : dbParams.queryNonPVIterPerPlyIncrement);
     int queryPly = dbParams.queryPly + queryPlyIncrement;
 
     if (ss->skipMove           // Skip query in singular extension
@@ -650,10 +813,9 @@ std::optional<Value> probeDatabaseAtNode(Board        &board,
         int  dbDepth = db.record.depth() + dbParams.queryResultDepthBoundBias;
         bool dbCut   = dbDepth > depth
                      && (db.value >= beta ? (db.bound & BOUND_LOWER) : (db.bound & BOUND_UPPER));
-        if (!PvNode && dbCut
-            || db.labelBound == BOUND_LOWER && db.value >= beta   // Win-score-cut
-            || db.labelBound == BOUND_UPPER && db.value <= alpha  // Loss-score-cut
-            || db.labelBound == BOUND_EXACT                       // Draw-score-cut
+        if (!PvNode && dbCut || db.labelBound == BOUND_LOWER && db.value >= beta  // Win-score-cut
+            || db.labelBound == BOUND_UPPER && db.value <= alpha                  // Loss-score-cut
+            || db.labelBound == BOUND_EXACT                                       // Draw-score-cut
         ) {
             TT.store(posKey,
                      db.value,
@@ -693,8 +855,7 @@ void writeDatabaseRecord(Board              &board,
     const DatabaseSearchParams &dbParams   = thisThread->engine.ctx.dbParams;
     Pos                         skipMove   = ss->skipMove;
 
-    if (thisThread->dbClient
-        && !dbParams.readonlyMode             // Never write in database readonly mode
+    if (thisThread->dbClient && !dbParams.readonlyMode  // Never write in database readonly mode
         && !options.balanceMode               // Never write when we are doing balanced search
         && (!skipMove || ss->dbChildWritten)  // Never write when in singular extension
         && ss->numNullMoves == 0              // Never write when in null move search
@@ -707,24 +868,23 @@ void writeDatabaseRecord(Board              &board,
         if (isWin || isLoss) {
             if (ss->ply <= dbParams.mateWritePly
                 && mate_step(bestValue, ss->ply) >= dbParams.mateWriteMinStep) {
-                writePly   = dbParams.mateWritePly;
-                writeDepth = exact ? dbParams.mateWriteMinDepthExact
-                                   : dbParams.mateWriteMinDepthNonExact;
+                writePly = dbParams.mateWritePly;
+                writeDepth =
+                    exact ? dbParams.mateWriteMinDepthExact : dbParams.mateWriteMinDepthNonExact;
             }
             else
                 writePly = -1, writeDepth = MAX_DEPTH;
         }
         else {
-            writePly   = exact ? dbParams.pvWritePly : dbParams.nonPVWritePly;
-            writeDepth = exact ? (std::abs(bestValue) <= dbParams.writeValueRange
-                                      ? dbParams.pvWriteMinDepth
-                                      : MAX_DEPTH)
-                         : bound == BOUND_UPPER ? (bestValue <= dbParams.writeValueRange
-                                                       ? dbParams.nonPVWriteMinDepth
-                                                       : MAX_DEPTH)
-                                                : (-bestValue >= dbParams.writeValueRange
-                                                       ? dbParams.nonPVWriteMinDepth
-                                                       : MAX_DEPTH);
+            writePly = exact ? dbParams.pvWritePly : dbParams.nonPVWritePly;
+            writeDepth =
+                exact ? (std::abs(bestValue) <= dbParams.writeValueRange ? dbParams.pvWriteMinDepth
+                                                                         : MAX_DEPTH)
+                : bound == BOUND_UPPER
+                    ? (bestValue <= dbParams.writeValueRange ? dbParams.nonPVWriteMinDepth
+                                                             : MAX_DEPTH)
+                    : (-bestValue >= dbParams.writeValueRange ? dbParams.nonPVWriteMinDepth
+                                                              : MAX_DEPTH);
         }
 
         if (RootNode
@@ -735,8 +895,8 @@ void writeDatabaseRecord(Board              &board,
                    && (db.hit || depth >= writeDepth + isWin)
             || db.hit && (isWin || isLoss)  // Always try overwrite existing record with W/L record
             || PvNode && db.hit             // Try overwrite existing winrate with newer winrate
-                   && ss->ply <= (exact ? dbParams.exactOverwritePly
-                                        : dbParams.nonExactOverwritePly)) {
+                   && ss->ply
+                          <= (exact ? dbParams.exactOverwritePly : dbParams.nonExactOverwritePly)) {
             // Assume we have already read record from the database
             Database::DBRecord newRecord;
 
@@ -752,8 +912,7 @@ void writeDatabaseRecord(Board              &board,
             newRecord.setDepthBound((int)depth, bound);
 
             // Write if there is no db hit, or the new record satisfy the overwrite rule
-            if (!db.hit
-                || Database::checkOverwrite(db.record, newRecord, dbParams.overwriteRule)) {
+            if (!db.hit || Database::checkOverwrite(db.record, newRecord, dbParams.overwriteRule)) {
                 thisThread->dbClient->save(board,
                                            Rule,
                                            newRecord,
@@ -947,9 +1106,10 @@ Value updateRootMove(Board       &board,
     const bool balance2  = options.balanceMode == SearchOptions::BALANCE_TWO;
     Value      moveValue = value;
     RootMove  &rm =
-        balance2 ? thisThread->rootMoves
-                       [thisThread->balance2Moves[Balance2Move {board.getLastMove(), move}]]
-                 : *std::find(thisThread->rootMoves.begin(), thisThread->rootMoves.end(), move);
+        balance2
+             ? thisThread
+                  ->rootMoves[thisThread->balance2Moves[Balance2Move {board.getLastMove(), move}]]
+             : *std::find(thisThread->rootMoves.begin(), thisThread->rootMoves.end(), move);
 
     // If we are in balance move mode, map the original move value to its negative
     // absolute value, which makes best move and PV selection based on how balanced
@@ -1008,6 +1168,11 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     SearchThread  *thisThread = board.thisThread();
     ABSearchData  *searchData = thisThread->searchDataAs<ABSearchData>();
     SearchOptions &options    = thisThread->options();
+#ifdef POLICY_TRAINING
+    const bool     policyTraceEnabled    = thisThread->engine.policyTraceSession() != nullptr;
+    const uint64_t policyTraceNodeStart  = thisThread->numNodes.load(std::memory_order_relaxed);
+    const Time     policyTraceEventStart = policyTraceEnabled ? now() : Time(0);
+#endif
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
     Color    self = board.sideToMove(), oppo = ~self;
@@ -1117,16 +1282,8 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
             goto moves_loop;
     }
     else if (!RootNode) {
-        std::tie(eval, improvement) = computeStaticEval<Rule>(board,
-                                                              ss,
-                                                              alpha,
-                                                              beta,
-                                                              posKey,
-                                                              skipMove,
-                                                              ttHit,
-                                                              ttValue,
-                                                              ttEval,
-                                                              ttBound);
+        std::tie(eval, improvement) = computeStaticEval<
+            Rule>(board, ss, alpha, beta, posKey, skipMove, ttHit, ttValue, ttEval, ttBound);
     }
 
     // Step 7. Razoring with VCF (~68 elo)
@@ -1213,6 +1370,13 @@ moves_loop:
     // Indicate cutNode that will probably fail high if current eval is far above beta
     bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
 
+#ifdef POLICY_TRAINING
+    const Value         policyTraceAlpha = alpha;
+    const Value         policyTraceBeta  = beta;
+    const Depth         policyTraceDepth = depth;
+    DeferredPolicyTrace deferredPolicyTrace;
+    bool                policyTraceInitialized = false;
+#endif
     MovePicker mp(Rule,
                   board,
                   MovePicker::ExtraArgs<MovePicker::MAIN> {
@@ -1226,25 +1390,81 @@ moves_loop:
     // Step 11. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
     while (Pos move = mp()) {
+#ifdef POLICY_TRAINING
+        initializePolicyTraceEvent<NT>(mp,
+                                       ss,
+                                       policyTraceAlpha,
+                                       policyTraceBeta,
+                                       policyTraceDepth,
+                                       cutNode,
+                                       deferredPolicyTrace,
+                                       policyTraceInitialized);
+        Tuning::PolicyTraceCandidate *policyTraceCandidate = mp.policyTraceCandidate(move);
+#endif
         assert(board.isLegal(move));
 
         // Skip excluded move when in Singular extension search
-        if (!RootNode && move == skipMove)
+        if (!RootNode && move == skipMove) {
+#ifdef POLICY_TRAINING
+            if (policyTraceCandidate) {
+                policyTraceCandidate->filter = Tuning::PolicyTraceFilter::SingularExcluded;
+                policyTraceCandidate->disposition =
+                    Tuning::PolicyTraceDisposition::SingularExcluded;
+            }
+            else if (move == ttMove) {
+                deferredPolicyTrace.move        = move;
+                deferredPolicyTrace.filter      = Tuning::PolicyTraceFilter::SingularExcluded;
+                deferredPolicyTrace.disposition =
+                    Tuning::PolicyTraceDisposition::SingularExcluded;
+                deferredPolicyTrace.valid = true;
+            }
+#endif
             continue;
+        }
 
         if (RootNode) {
             if (options.balanceMode == SearchOptions::BALANCE_TWO) {
                 Balance2Move b2move {board.getLastMove(), move};
 
                 // Skip balance move pair not listed in Root Move List
-                if (thisThread->balance2Moves.find(b2move) == thisThread->balance2Moves.end())
+                if (thisThread->balance2Moves.find(b2move) == thisThread->balance2Moves.end()) {
+#ifdef POLICY_TRAINING
+                    if (policyTraceCandidate) {
+                        policyTraceCandidate->filter = Tuning::PolicyTraceFilter::RootExcluded;
+                        policyTraceCandidate->disposition =
+                            Tuning::PolicyTraceDisposition::Filtered;
+                    }
+                    else if (move == ttMove) {
+                        deferredPolicyTrace.move        = move;
+                        deferredPolicyTrace.filter      = Tuning::PolicyTraceFilter::RootExcluded;
+                        deferredPolicyTrace.disposition =
+                            Tuning::PolicyTraceDisposition::Filtered;
+                        deferredPolicyTrace.valid = true;
+                    }
+#endif
                     continue;
+                }
 
                 // Skip moves not in root move list and PV moves that have been already searched
                 if (std::count(thisThread->rootMoves.begin(),
                                thisThread->rootMoves.begin() + searchData->pvIdx,
-                               b2move))
+                               b2move)) {
+#ifdef POLICY_TRAINING
+                    if (policyTraceCandidate) {
+                        policyTraceCandidate->filter = Tuning::PolicyTraceFilter::RootExcluded;
+                        policyTraceCandidate->disposition =
+                            Tuning::PolicyTraceDisposition::Filtered;
+                    }
+                    else if (move == ttMove) {
+                        deferredPolicyTrace.move        = move;
+                        deferredPolicyTrace.filter      = Tuning::PolicyTraceFilter::RootExcluded;
+                        deferredPolicyTrace.disposition =
+                            Tuning::PolicyTraceDisposition::Filtered;
+                        deferredPolicyTrace.valid = true;
+                    }
+#endif
                     continue;
+                }
 
                 // Restore previous movecount from stack
                 if (!moveCount)
@@ -1256,8 +1476,22 @@ moves_loop:
             // Skip moves not in root move list and PV moves that have been already searched
             else if (!std::count(thisThread->rootMoves.begin() + searchData->pvIdx,
                                  thisThread->rootMoves.end(),
-                                 move))
+                                 move)) {
+#ifdef POLICY_TRAINING
+                if (policyTraceCandidate) {
+                    policyTraceCandidate->filter      = Tuning::PolicyTraceFilter::RootExcluded;
+                    policyTraceCandidate->disposition = Tuning::PolicyTraceDisposition::Filtered;
+                }
+                else if (move == ttMove) {
+                    deferredPolicyTrace.move        = move;
+                    deferredPolicyTrace.filter      = Tuning::PolicyTraceFilter::RootExcluded;
+                    deferredPolicyTrace.disposition =
+                        Tuning::PolicyTraceDisposition::Filtered;
+                    deferredPolicyTrace.valid = true;
+                }
+#endif
                 continue;
+            }
 
             curNumNodes = thisThread->numNodes.load(std::memory_order_relaxed);
         }
@@ -1273,6 +1507,18 @@ moves_loop:
         ss->moveCount     = ++moveCount;
         ss->moveP4[BLACK] = board.pattern4(move, BLACK);
         ss->moveP4[WHITE] = board.pattern4(move, WHITE);
+#ifdef POLICY_TRAINING
+        DeferredPolicyTrace currentPolicyTrace;
+        currentPolicyTrace.move        = move;
+        currentPolicyTrace.filter      =
+            move == ttMove ? Tuning::PolicyTraceFilter::TtMove
+                           : Tuning::PolicyTraceFilter::None;
+        currentPolicyTrace.alphaBefore = alpha;
+        currentPolicyTrace.moveCount   = static_cast<uint16_t>(moveCount);
+        currentPolicyTrace.valid       = true;
+        if (!policyTraceCandidate && move == ttMove)
+            deferredPolicyTrace = currentPolicyTrace;
+#endif
 
         const MoveTraits mt = classifyMove<Rule>(ss, move, self, oppo);
 
@@ -1281,20 +1527,53 @@ moves_loop:
         // Also skip pruning if there might be a child database record we want to read.
         if (!RootNode && !db.checkChild && bestValue > VALUE_MATED_IN_MAX_PLY) {
             // Move count pruning: skip move if movecount is above threshold (~107 elo)
-            if (moveCount >= futilityMoveCount(depth, improvement > 0))
+            if (moveCount >= futilityMoveCount(depth, improvement > 0)) {
+#ifdef POLICY_TRAINING
+                currentPolicyTrace.disposition = Tuning::PolicyTraceDisposition::MoveCountPruned;
+                if (policyTraceCandidate)
+                    applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+                else
+                    deferredPolicyTrace = currentPolicyTrace;
+#endif
                 continue;
+            }
 
             // Skip trivial moves at lower depth (~2 elo at LTC)
-            if (mt.trivial && depth < TRIVIAL_PRUN_DEPTH)
+            if (mt.trivial && depth < TRIVIAL_PRUN_DEPTH) {
+#ifdef POLICY_TRAINING
+                currentPolicyTrace.disposition = Tuning::PolicyTraceDisposition::TrivialPruned;
+                if (policyTraceCandidate)
+                    applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+                else
+                    deferredPolicyTrace = currentPolicyTrace;
+#endif
                 continue;
+            }
 
             // Policy based pruning (~10 elo)
-            if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth))
+            if (mp.hasPolicyScore() && mp.curMoveScore() < policyPruningScore<Rule>(depth)) {
+#ifdef POLICY_TRAINING
+                currentPolicyTrace.disposition = Tuning::PolicyTraceDisposition::PolicyPruned;
+                if (policyTraceCandidate)
+                    applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+                else
+                    deferredPolicyTrace = currentPolicyTrace;
+#endif
                 continue;
+            }
 
             // Prun distract defence move which is likely to delay a winning (~2 elo)
-            if (oppo4 && depth < TRIVIAL_PRUN_DEPTH && ss->moveP4[oppo] < E_BLOCK4 && mt.distract)
+            if (oppo4 && depth < TRIVIAL_PRUN_DEPTH && ss->moveP4[oppo] < E_BLOCK4 && mt.distract) {
+#ifdef POLICY_TRAINING
+                currentPolicyTrace.disposition =
+                    Tuning::PolicyTraceDisposition::DistractDefensePruned;
+                if (policyTraceCandidate)
+                    applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+                else
+                    deferredPolicyTrace = currentPolicyTrace;
+#endif
                 continue;
+            }
         }
 
         // Step 13. Extensions
@@ -1368,6 +1647,10 @@ moves_loop:
         Depth newDepth     = depth - 1.0f + extension;
         ss->currentMove    = move;
         ss->extraExtension = (ss - 1)->extraExtension + std::max(extension - 1.0f, 0.0f);
+#ifdef POLICY_TRAINING
+        const uint64_t policyTraceMoveStart = thisThread->numNodes.load(std::memory_order_relaxed);
+        currentPolicyTrace.plannedReduction = 0;
+#endif
 
         // Step 14. Make the move
         // Prefetch the child's TT line before the board update, so the memory access
@@ -1400,6 +1683,10 @@ moves_loop:
             // Allow LMR to do deeper search in some circumstances
             // Clamp the LMR depth to newDepth (no depth less than one)
             Depth d = std::max(std::min(newDepth - r, newDepth + 1), 1.0f);
+#ifdef POLICY_TRAINING
+            currentPolicyTrace.plannedReduction = r;
+            recordPolicyTraceSearch(currentPolicyTrace, d);
+#endif
 
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, d, true);
 
@@ -1413,26 +1700,37 @@ moves_loop:
                     ss->extraExtension += std::max(ext - 1.0f, 0.0f);
                 newDepth += ext;
 
-                if (d < newDepth)
+                if (d < newDepth) {
+#ifdef POLICY_TRAINING
+                    recordPolicyTraceSearch(currentPolicyTrace, newDepth);
+#endif
                     value = -search<Rule, NonPV>(board,
                                                  ss + 1,
                                                  -(alpha + 1),
                                                  -alpha,
                                                  newDepth,
                                                  !cutNode);
+                }
             }
         }
 
         // Step 16. Full depth search when LMR is skipped or fails high
         else if (!PvNode || moveCount > 1) {
             // If expected reduction is high, we reduce search depth by 1 here
+#ifdef POLICY_TRAINING
+            recordPolicyTraceSearch(currentPolicyTrace, newDepth);
+#endif
             value = -search<Rule, NonPV>(board, ss + 1, -(alpha + 1), -alpha, newDepth, !cutNode);
         }
 
         // For balance move mode, we also check if a move can trigger beta cut
         // (which is too good to be balanced), so we can safely discard this move.
-        if (RootNode && options.balanceMode && moveCount > 1 && value > alpha)
+        if (RootNode && options.balanceMode && moveCount > 1 && value > alpha) {
+#ifdef POLICY_TRAINING
+            recordPolicyTraceSearch(currentPolicyTrace, newDepth);
+#endif
             value = -search<Rule, NonPV>(board, ss + 1, -beta, -(beta - 1), newDepth, !cutNode);
+        }
 
         // For PV nodes only, do a full PV search on the first move or after a fail
         // high (in the latter case search only if value < beta), otherwise let the
@@ -1442,6 +1740,9 @@ moves_loop:
                 || (RootNode && options.balanceMode
                         ? balancedValue(value, options.balanceBias) > alpha
                         : value > alpha && (RootNode || value < beta)))) {
+#ifdef POLICY_TRAINING
+            recordPolicyTraceSearch(currentPolicyTrace, newDepth);
+#endif
             (ss + 1)->pv[0]        = Pos::NONE;
             (ss + 1)->dbValueDepth = INT16_MIN;  // Clear database value depth of next move
             value = -search<Rule, PV>(board, ss + 1, -beta, -alpha, newDepth, false);
@@ -1473,13 +1774,49 @@ moves_loop:
             return VALUE_NONE;
         }
         // This move is blocked from database record
-        if (value == VALUE_BLOCKED)
+        if (value == VALUE_BLOCKED) {
+#ifdef POLICY_TRAINING
+            currentPolicyTrace.disposition = Tuning::PolicyTraceDisposition::DatabaseBlocked;
+            currentPolicyTrace.nodes =
+                thisThread->numNodes.load(std::memory_order_relaxed) - policyTraceMoveStart;
+            if (policyTraceCandidate)
+                applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+            else
+                deferredPolicyTrace = currentPolicyTrace;
+#endif
             continue;
+        }
 
         assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
 
         if (RootNode)
-            value = updateRootMove(board, ss, move, value, alpha, moveCount, curNumNodes, nonMatedCount);
+            value = updateRootMove(board,
+                                   ss,
+                                   move,
+                                   value,
+                                   alpha,
+                                   moveCount,
+                                   curNumNodes,
+                                   nonMatedCount);
+
+#ifdef POLICY_TRAINING
+        currentPolicyTrace.value = value;
+        currentPolicyTrace.bound = value >= beta                             ? BOUND_LOWER
+                                   : value <= currentPolicyTrace.alphaBefore ? BOUND_UPPER
+                                                                             : BOUND_EXACT;
+        currentPolicyTrace.nodes =
+            thisThread->numNodes.load(std::memory_order_relaxed) - policyTraceMoveStart;
+        currentPolicyTrace.alphaChanged = value > currentPolicyTrace.alphaBefore;
+        currentPolicyTrace.disposition =
+            value >= beta ? Tuning::PolicyTraceDisposition::SearchedCutoff
+            : value > currentPolicyTrace.alphaBefore
+                ? Tuning::PolicyTraceDisposition::SearchedAlphaImprovement
+                : Tuning::PolicyTraceDisposition::SearchedFailLow;
+        if (policyTraceCandidate)
+            applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+        else
+            deferredPolicyTrace = currentPolicyTrace;
+#endif
 
         // Update best value, best move and PV.
         if (value > bestValue) {
@@ -1583,6 +1920,25 @@ moves_loop:
             bestValue = db.value, bound = db.bound, ss->dbValueDepth = dbDepth;
     }
 
+#ifdef POLICY_TRAINING
+    initializePolicyTraceEvent<NT>(mp,
+                                   ss,
+                                   policyTraceAlpha,
+                                   policyTraceBeta,
+                                   policyTraceDepth,
+                                   cutNode,
+                                   deferredPolicyTrace,
+                                   policyTraceInitialized);
+    finishPolicyTraceEvent(mp,
+                           *thisThread,
+                           policyTraceNodeStart,
+                           policyTraceEventStart,
+                           bestValue,
+                           beta,
+                           bestMove,
+                           bound);
+#endif
+
     // Step 21. Save TT entry for this position
     // If no good move is found and the previous position was ttPv, then the previous
     // opponent move is probably good and the new position is added to the search tree.
@@ -1617,9 +1973,14 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
 
     // Step 1. Initialize node
     SearchThread *thisThread = board.thisThread();
+#ifdef POLICY_TRAINING
+    const bool     policyTraceEnabled    = thisThread->engine.policyTraceSession() != nullptr;
+    const uint64_t policyTraceNodeStart  = thisThread->numNodes.load(std::memory_order_relaxed);
+    const Time     policyTraceEventStart = policyTraceEnabled ? now() : Time(0);
+#endif
     thisThread->numNodes.fetch_add(1, std::memory_order_relaxed);
 
-    Color self = board.sideToMove();
+    Color self      = board.sideToMove();
     int   moveCount = 0;
     Value bestValue = -VALUE_INFINITE, value;
     Value oldAlpha  = alpha;  // Flag BOUND_EXACT when value above alpha in PVNode
@@ -1733,6 +2094,13 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     }
 
     // Step 7. Loop through the moves until no moves remain or a beta cutoff occurs.
+#ifdef POLICY_TRAINING
+    const Value         policyTraceAlpha = alpha;
+    const Value         policyTraceBeta  = beta;
+    const Depth         policyTraceDepth = depth;
+    DeferredPolicyTrace deferredPolicyTrace;
+    bool                policyTraceInitialized = false;
+#endif
     MovePicker mp(
         Rule,
         board,
@@ -1741,6 +2109,27 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
                                                  {(ss - 2)->moveP4[self], (ss - 4)->moveP4[self]}});
 
     while (Pos move = mp()) {
+#ifdef POLICY_TRAINING
+        initializePolicyTraceEvent<NT>(mp,
+                                       ss,
+                                       policyTraceAlpha,
+                                       policyTraceBeta,
+                                       policyTraceDepth,
+                                       false,
+                                       deferredPolicyTrace,
+                                       policyTraceInitialized);
+        Tuning::PolicyTraceCandidate *policyTraceCandidate = mp.policyTraceCandidate(move);
+        DeferredPolicyTrace           currentPolicyTrace;
+        currentPolicyTrace.move             = move;
+        currentPolicyTrace.filter =
+            move == ttMove ? Tuning::PolicyTraceFilter::TtMove
+                           : Tuning::PolicyTraceFilter::None;
+        currentPolicyTrace.alphaBefore      = alpha;
+        currentPolicyTrace.moveCount        = static_cast<uint16_t>(moveCount + 1);
+        currentPolicyTrace.valid            = true;
+        const uint64_t policyTraceMoveStart = thisThread->numNodes.load(std::memory_order_relaxed);
+        recordPolicyTraceSearch(currentPolicyTrace, depth - 1);
+#endif
         assert(board.isLegal(move));
 
         ss->currentMove   = move;
@@ -1762,6 +2151,25 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
         if (thisThread->engine.isTerminating())
             return VALUE_NONE;
 
+#ifdef POLICY_TRAINING
+        currentPolicyTrace.value = value;
+        currentPolicyTrace.bound = value >= beta                             ? BOUND_LOWER
+                                   : value <= currentPolicyTrace.alphaBefore ? BOUND_UPPER
+                                                                             : BOUND_EXACT;
+        currentPolicyTrace.nodes =
+            thisThread->numNodes.load(std::memory_order_relaxed) - policyTraceMoveStart;
+        currentPolicyTrace.alphaChanged = value > currentPolicyTrace.alphaBefore;
+        currentPolicyTrace.disposition =
+            value >= beta ? Tuning::PolicyTraceDisposition::SearchedCutoff
+            : value > currentPolicyTrace.alphaBefore
+                ? Tuning::PolicyTraceDisposition::SearchedAlphaImprovement
+                : Tuning::PolicyTraceDisposition::SearchedFailLow;
+        if (policyTraceCandidate)
+            applyDeferredPolicyTrace(*policyTraceCandidate, currentPolicyTrace);
+        else
+            deferredPolicyTrace = currentPolicyTrace;
+#endif
+
         // Step 9. Check for a new best move
         if (value > bestValue) {
             bestValue = value;
@@ -1781,13 +2189,32 @@ Value vcfsearch(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
     }
 
     // Step 10. Save TT entry for this position
+    Bound bound = bestValue >= beta                ? BOUND_LOWER
+                  : PvNode && bestValue > oldAlpha ? BOUND_EXACT
+                                                   : BOUND_UPPER;
+#ifdef POLICY_TRAINING
+    initializePolicyTraceEvent<NT>(mp,
+                                   ss,
+                                   policyTraceAlpha,
+                                   policyTraceBeta,
+                                   policyTraceDepth,
+                                   false,
+                                   deferredPolicyTrace,
+                                   policyTraceInitialized);
+    finishPolicyTraceEvent(mp,
+                           *thisThread,
+                           policyTraceNodeStart,
+                           policyTraceEventStart,
+                           bestValue,
+                           beta,
+                           bestMove,
+                           bound);
+#endif
     TT.store(posKey,
              bestValue,
              ss->staticEval,
              PvNode,
-             bestValue >= beta                ? BOUND_LOWER
-             : PvNode && bestValue > oldAlpha ? BOUND_EXACT
-                                              : BOUND_UPPER,
+             bound,
              bestMove,
              (int)std::max(depth, DEPTH_QVCF),
              ss->ply);
@@ -1863,8 +2290,7 @@ Value vcfdefend(Board &board, SearchStack *ss, Value alpha, Value beta, Depth de
             ss->updatePv(move);
     }
 
-    assert(value > -VALUE_INFINITE && value < VALUE_INFINITE
-           || thisThread->engine.isTerminating());
+    assert(value > -VALUE_INFINITE && value < VALUE_INFINITE || thisThread->engine.isTerminating());
     return value;
 }
 

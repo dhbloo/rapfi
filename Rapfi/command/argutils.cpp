@@ -208,6 +208,13 @@ void Command::parseSubcommandArguments(
     const std::function<void(const cxxopts::ParseResult &)> &extract)
 {
     try {
+        // Re-parse the global syntax so subcommands can share the original argv
+        // without deleting tokens that may also be legitimate option values.
+        options.add_options("global")  //
+            ("mode", "Run mode", cxxopts::value<std::string>())  //
+            ("config", "Path to the specified config file", cxxopts::value<std::string>())  //
+            ("force-utf8", "Force UTF-8 console input and output");
+        options.parse_positional("mode");
         auto args = options.parse(argc, argv);
 
         if (args.count("help")) {

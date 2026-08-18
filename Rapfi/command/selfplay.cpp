@@ -17,12 +17,18 @@
  */
 
 #include "../config.h"
+#include "../core/filesystem.h"
 #include "../core/iohelper.h"
 #include "../core/utils.h"
 #include "../search/hashtable.h"
 #include "../search/searchconfig.h"
 #include "../search/searchthread.h"
 #include "../tuning/datawriter.h"
+#ifdef POLICY_TRAINING
+    #include "../search/ab/searcher.h"
+    #include "../search/movepick.h"
+    #include "../tuning/policytrace.h"
+#endif
 #include "argutils.h"
 #include "command.h"
 
@@ -61,6 +67,36 @@ static void                     setupSignalHandler(std::function<void(int)> hand
     std::signal(SIGQUIT, signalHandler);
 #endif
 }
+
+static void resetSignalHandler()
+{
+    signalFunc = nullptr;
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+    std::signal(SIGSEGV, SIG_DFL);
+    std::signal(SIGILL, SIG_DFL);
+    std::signal(SIGABRT, SIG_DFL);
+    std::signal(SIGFPE, SIG_DFL);
+#ifdef SIGHUP
+    std::signal(SIGHUP, SIG_DFL);
+#endif
+#ifdef SIGQUIT
+    std::signal(SIGQUIT, SIG_DFL);
+#endif
+}
+
+class SignalHandlerScope
+{
+public:
+    explicit SignalHandlerScope(std::function<void(int)> handler)
+    {
+        setupSignalHandler(std::move(handler));
+    }
+    ~SignalHandlerScope() { resetSignalHandler(); }
+
+    SignalHandlerScope(const SignalHandlerScope &)            = delete;
+    SignalHandlerScope &operator=(const SignalHandlerScope &) = delete;
+};
 
 using namespace Tuning;
 
@@ -283,13 +319,46 @@ struct SelfplayConfig
     Opening::OpeningGenConfig     opengenCfg;
     Command::DataWriterType       dataWriterType;
     std::string                   outputPath;
+#ifdef POLICY_TRAINING
+    std::filesystem::path policyTracePath;
+    std::filesystem::path policyModelPath;
+    uint64_t              policySplitSalt          = 0;
+    uint16_t              policyValidationPermille = 200;
+#endif
 };
+
+void validateOpeningBook(const std::vector<std::vector<Pos>> &openings,
+                         int                                  boardSize,
+                         Rule                                 rule)
+{
+    Board board(boardSize);
+    for (size_t openingIndex = 0; openingIndex < openings.size(); openingIndex++) {
+        board.newGame(rule);
+        for (size_t ply = 0; ply < openings[openingIndex].size(); ply++) {
+            Pos move = openings[openingIndex][ply];
+            if (!board.isInBoard(move) || !board.isEmpty(move)
+                || (rule == RENJU && board.sideToMove() == BLACK
+                    && board.checkForbiddenPoint(move)))
+                throw std::invalid_argument("illegal opening move at opening "
+                                            + std::to_string(openingIndex + 1) + ", ply "
+                                            + std::to_string(ply + 1));
+            board.move(rule, move);
+        }
+    }
+}
 
 /// Put an opening on the fresh `board`: either an auto-generated (balanced) opening,
 /// or a random book opening under a random symmetry transform. No-op when neither
 /// source is configured (game starts from the empty board).
-void applyOpening(Board &board, const SelfplayConfig &cfg, PRNG &prng)
+void applyOpening(Board &board,
+                  const SelfplayConfig &cfg,
+                  PRNG &prng,
+                  uint64_t *openingFamily)
 {
+#ifdef POLICY_TRAINING
+    if (openingFamily)
+        *openingFamily = policyOpeningFamily({});
+#endif
     if (cfg.generateOpening) {
         Opening::OpeningGenerator og(board.size(), cfg.rule, cfg.opengenCfg, prng);
 
@@ -309,6 +378,15 @@ void applyOpening(Board &board, const SelfplayConfig &cfg, PRNG &prng)
         for (int i = 0; i < og.getBoard().ply(); i++) {
             board.move(cfg.rule, og.getBoard().getHistoryMove(i));
         }
+#ifdef POLICY_TRAINING
+        if (openingFamily) {
+            std::vector<Pos> opening;
+            opening.reserve(og.getBoard().ply());
+            for (int i = 0; i < og.getBoard().ply(); i++)
+                opening.push_back(og.getBoard().getHistoryMove(i));
+            *openingFamily = policyOpeningFamily(opening);
+        }
+#endif
 
         if (!cfg.silence)
             MESSAGEL("Put generated opening " << og.positionString());
@@ -318,6 +396,10 @@ void applyOpening(Board &board, const SelfplayConfig &cfg, PRNG &prng)
         std::uniform_int_distribution<int>    transformDis(0, TRANS_NB - 1);
         size_t                                openingIdx = openingDis(prng);
         TransformType                         transform  = TransformType(transformDis(prng));
+#ifdef POLICY_TRAINING
+        if (openingFamily)
+            *openingFamily = policyOpeningFamily(cfg.openings[openingIdx]);
+#endif
 
         // Apply opening pos
         for (Pos pos : cfg.openings[openingIdx]) {
@@ -332,7 +414,12 @@ void applyOpening(Board &board, const SelfplayConfig &cfg, PRNG &prng)
 GameEntry playOneGame(Board                &board,
                       const SelfplayConfig &cfg,
                       PRNG                 &budgetPrng,
-                      SearchBudgetSampler  &budgetSampler)
+                      SearchBudgetSampler  &budgetSampler
+#ifdef POLICY_TRAINING
+                      ,
+                      PolicyTraceSession *policyTraceSession
+#endif
+)
 {
     // Set search options and init
     Search::SearchOptions options;
@@ -352,6 +439,9 @@ GameEntry playOneGame(Board                &board,
     // Selfplay loop
     Value searchValue = VALUE_ZERO;
     int   drawCnt     = 0;
+#ifdef POLICY_TRAINING
+    uint64_t rootSearchId = 0;
+#endif
     while (board.movesLeft() > 0) {
         // Stop self-play game if force draw or board is full
         if ((cfg.forceDrawPly && board.ply() >= cfg.forceDrawPly)
@@ -377,8 +467,16 @@ GameEntry playOneGame(Board                &board,
             options.multiPV = std::max(1, options.multiPV - 1);
 
         // Start thinking and wait for finish
+#ifdef POLICY_TRAINING
+        if (policyTraceSession)
+            policyTraceSession->beginRootSearch(++rootSearchId);
+#endif
         Search::Engine.startThinking(board, options);
         Search::Engine.waitForIdle();
+#ifdef POLICY_TRAINING
+        if (policyTraceSession)
+            policyTraceSession->rethrowFailure();
+#endif
         auto mainThread = Search::Engine.main();
 
         // We might have no legal move in Renju mode, which is regarded as loss
@@ -536,6 +634,17 @@ SelfplayConfig parseSelfplayArguments(int argc, char *argv[])
          "Time (ms) between two progress report message",
          cxxopts::value<Time>()->default_value("60000"))  //
         ("h,help", "Print selfplay usage");
+#ifdef POLICY_TRAINING
+    options.add_options()  //
+        ("policy-trace", "Write a natural alpha-beta policy trace", cxxopts::value<std::string>())  //
+        ("policy-model",
+         "Explicit collection/teacher classical model for policy tracing",
+         cxxopts::value<std::string>())  //
+        ("policy-split-salt", "Nonzero opening split salt", cxxopts::value<uint64_t>())  //
+        ("policy-validation-permille",
+         "Validation opening families per 1000",
+         cxxopts::value<uint16_t>()->default_value("200"));
+#endif
     addPlayOptions(options);
     addOpengenOptions(options, cfg.opengenCfg);
 
@@ -584,6 +693,8 @@ SelfplayConfig parseSelfplayArguments(int argc, char *argv[])
 
             cfg.numGames          = args["number"].as<size_t>();
             cfg.rule              = parseRule(args["rule"].as<std::string>());
+            if (!cfg.openings.empty())
+                validateOpeningBook(cfg.openings, cfg.boardSizeMin, cfg.rule);
             cfg.numThreads        = std::max<size_t>(args["thread"].as<size_t>(), 1);
             cfg.hashSizeMb        = std::max<size_t>(args["hashsize"].as<size_t>(), 1);
             cfg.multipv           = std::max(args["multipv"].as<int>(), 1);
@@ -748,6 +859,41 @@ SelfplayConfig parseSelfplayArguments(int argc, char *argv[])
             cfg.reportInterval = args["report-interval"].as<Time>();
             cfg.silence        = args.count("no-search-message");
 
+#ifdef POLICY_TRAINING
+            if (args.count("policy-trace")) {
+                if (!args.count("policy-model") || !args.count("policy-split-salt"))
+                    throw std::invalid_argument(
+                        "policy tracing requires --policy-model and --policy-split-salt");
+                cfg.policyTracePath = args["policy-trace"].as<std::string>();
+                cfg.policyModelPath = args["policy-model"].as<std::string>();
+                cfg.policySplitSalt = args["policy-split-salt"].as<uint64_t>();
+                cfg.policyValidationPermille =
+                    args["policy-validation-permille"].as<uint16_t>();
+
+                if (cfg.policyTracePath.empty() || cfg.policySplitSalt == 0
+                    || cfg.policyValidationPermille == 0
+                    || cfg.policyValidationPermille >= 1000)
+                    throw std::invalid_argument("invalid policy trace settings");
+                if (cfg.generateOpening)
+                    throw std::invalid_argument(
+                        "policy tracing requires an explicit immutable opening file");
+                if ((cfg.boardSizeMin != 15 && cfg.boardSizeMin != 20)
+                    || cfg.boardSizeMin != cfg.boardSizeMax)
+                    throw std::invalid_argument(
+                        "policy tracing currently supports f15 or f20 per run");
+                if (cfg.numThreads != 1 || cfg.multipv != 1)
+                    throw std::invalid_argument(
+                        "policy tracing currently requires one search thread and MultiPV 1");
+                if (!cfg.randomSeed)
+                    throw std::invalid_argument("policy tracing requires an explicit seed");
+                if (cfg.searchBudget.unit != BudgetUnit::NODES
+                    || cfg.searchBudget.distribution != BudgetDistribution::FIXED
+                    || cfg.searchBudget.decayFactor != 1.0)
+                    throw std::invalid_argument(
+                        "policy tracing currently requires a fixed non-decaying node budget");
+            }
+#endif
+
             if (cfg.matePly < 1)
                 throw std::invalid_argument("mate-ply must be at least 1");
             if (cfg.matePly >= MAX_MOVES)
@@ -768,10 +914,13 @@ SelfplayConfig parseSelfplayArguments(int argc, char *argv[])
 
 }  // namespace
 
-void Command::selfplay(int argc, char *argv[])
+void Command::selfplay(int argc, char *argv[]) try
 {
     SelfplayConfig              cfg = parseSelfplayArguments(argc, argv);
     std::unique_ptr<DataWriter> dataWriter;
+#ifdef POLICY_TRAINING
+    std::unique_ptr<PolicyTraceSession> policyTraceSession;
+#endif
 
     if (!cfg.outputPath.empty()) {
         // Create data writer
@@ -782,16 +931,36 @@ void Command::selfplay(int argc, char *argv[])
         dataWriter = Tuning::makeDataWriter(cfg.dataWriterType, cfg.outputPath);
     }
 
+#ifdef POLICY_TRAINING
+    if (!cfg.policyTracePath.empty()) {
+        if (!dynamic_cast<Search::AB::ABSearcher *>(Search::Engine.searcher()))
+            throw std::runtime_error("policy tracing requires the alpha-beta searcher");
+        if (Search::Engine.hasEvaluatorMaker())
+            throw std::runtime_error("policy tracing requires classical fallback without evaluator");
+        cfg.policyTracePath =
+            std::filesystem::absolute(pathFromConsoleString(cfg.policyTracePath.string()));
+        cfg.policyModelPath = getModelFullPath(cfg.policyModelPath);
+        if (!loadModelFromFile(cfg.policyModelPath))
+            throw std::runtime_error("unable to load policy trace model");
+
+        if (!cfg.policyTracePath.parent_path().empty())
+            ensureDir(cfg.policyTracePath.parent_path().string());
+        policyTraceSession = std::make_unique<PolicyTraceSession>(cfg.policyTracePath);
+    }
+#endif
+
     // Setup signal handler to close dataset file when receiving signal. Termination
     // requests exit cleanly; fault signals (SIGSEGV etc.) still flush the writer but
     // must report the crash and exit nonzero instead of masquerading as success.
-    setupSignalHandler([&](int signal) {
+    SignalHandlerScope signalHandler([&](int signal) {
         bool requested = signal == SIGINT || signal == SIGTERM;
         if (requested)
             MESSAGEL("Gracefully exiting...");
         else
             ERRORL("Terminated by signal " << signal << ", flushing dataset...");
         dataWriter.reset();
+        // Do not destroy the trace session here: a search worker may still reference it.
+        // Process exit cannot publish its staged corpus, so the partial trace remains invalid.
         std::exit(requested ? 0 : EXIT_FAILURE);
     });
 
@@ -812,6 +981,10 @@ void Command::selfplay(int argc, char *argv[])
     // Set num threads and TT size
     Search::Engine.setNumThreads(cfg.numThreads);
     Search::Engine.searcher()->setMemoryLimit(cfg.hashSizeMb * 1024);
+#ifdef POLICY_TRAINING
+    if (policyTraceSession)
+        Search::Engine.setPolicyTraceSession(policyTraceSession.get());
+#endif
 
     PRNG  prng       = cfg.randomSeed ? PRNG(*cfg.randomSeed) : PRNG::nondeterministic();
     PRNG  budgetPrng = cfg.randomSeed ? PRNG(domainSeed(*cfg.randomSeed, 0x7365617263682d62ULL))
@@ -830,9 +1003,29 @@ void Command::selfplay(int argc, char *argv[])
             MESSAGEL("Start game " << i << ", boardsize = " << board.size()
                                    << ", rule = " << cfg.rule);
 
-        applyOpening(board, cfg, prng);
+#ifdef POLICY_TRAINING
+        uint64_t openingFamily = 0;
+        applyOpening(board, cfg, prng, policyTraceSession ? &openingFamily : nullptr);
+        if (policyTraceSession)
+            policyTraceSession->beginGame(
+                i + 1,
+                openingFamily,
+                assignPolicyTraceSplit(
+                    openingFamily, cfg.policySplitSalt, cfg.policyValidationPermille));
+#else
+        applyOpening(board, cfg, prng, nullptr);
+#endif
 
-        GameEntry gameEntry = playOneGame(board, cfg, activeBudgetPrng, budgetSampler);
+        GameEntry gameEntry =
+            playOneGame(board,
+                        cfg,
+                        activeBudgetPrng,
+                        budgetSampler
+#ifdef POLICY_TRAINING
+                        ,
+                        policyTraceSession.get()
+#endif
+            );
         if (dataWriter)
             dataWriter->writeGame(gameEntry);
 
@@ -847,5 +1040,31 @@ void Command::selfplay(int argc, char *argv[])
         }
     }
 
+#ifdef POLICY_TRAINING
+    if (policyTraceSession) {
+        Search::Engine.setPolicyTraceSession(nullptr);
+        Search::Engine.setNumThreads(0);
+        const PolicyTraceSummary written = policyTraceSession->finalize();
+        if (written.events == 0)
+            throw std::runtime_error("policy trace contains no events");
+        policyTraceSession->publish();
+        MESSAGEL("Policy trace PASS: " << written.events << " events, "
+                                       << written.candidates << " candidates.");
+    }
+#endif
+
+    // Release rule-specific worker state while the command's signal callback and
+    // writer are still alive. This avoids deferring evaluator/thread destruction to
+    // static shutdown, after the callback's captured locals no longer exist.
+    Search::Engine.setNumThreads(0);
+    dataWriter.reset();
+
     MESSAGEL("Completed playing " << cfg.numGames << " games.");
+}
+catch (const std::exception &e) {
+#ifdef POLICY_TRAINING
+    Search::Engine.setPolicyTraceSession(nullptr);
+#endif
+    ERRORL("selfplay failed: " << e.what());
+    std::exit(EXIT_FAILURE);
 }

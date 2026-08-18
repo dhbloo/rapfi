@@ -59,20 +59,25 @@ constexpr uint32_t I(uint32_t y, uint32_t x)
 
 constexpr std::array<char, 8> ClassicalModelExtensionMagic =
     {'R', 'F', 'C', 'L', 'M', 'O', 'D', '1'};
-constexpr uint32_t ClassicalModelCompactP3Version = 7;
-constexpr uint32_t ModelPolicyTableCount          = 1;
-constexpr uint32_t ModelPolicyContextCount        = Evaluation::PolicyStoredContextCount;
-constexpr uint32_t ModelBlendComponentCount       = 0;
-constexpr uint32_t PolicyCrossPatternCount        = Evaluation::PolicyStoredPatternCount;
-constexpr uint32_t PolicyCrossPayloadBytes =
+constexpr uint32_t ClassicalModelCompactP3LegacyVersion = 7;
+constexpr uint32_t ClassicalModelCompactP3Version       = 8;
+constexpr uint32_t LegacyModelPolicyTableCount          = 1;
+constexpr uint32_t ModelPolicyTableCount                = RULE_NB + 1;
+constexpr uint32_t ModelPolicyContextCount              = Evaluation::PolicyStoredContextCount;
+constexpr uint32_t ModelBlendComponentCount             = 0;
+constexpr uint32_t PolicyCrossPatternCount              = Evaluation::PolicyStoredPatternCount;
+constexpr uint32_t PolicyCrossTableBytes =
     ModelPolicyContextCount * PolicyCrossPatternCount * PolicyCrossPatternCount * sizeof(Score);
-constexpr uint32_t ClassicalModelCompactP3PayloadBytes = PolicyCrossPayloadBytes;
+constexpr uint32_t ClassicalModelCompactP3PayloadBytes =
+    ModelPolicyTableCount * PolicyCrossTableBytes;
 static_assert(ModelPolicyContextCount == Evaluation::QUIET);
 static_assert(Evaluation::QUIET + 1 == Evaluation::POLICY_CONTEXT_NB);
 static_assert(ModelPolicyContextCount < Evaluation::PolicyContextCount);
 
 using StoredPolicyCross =
     Score[ModelPolicyContextCount][PolicyCrossPatternCount][PolicyCrossPatternCount];
+using StoredPolicyCrossTables = Score[ModelPolicyTableCount][ModelPolicyContextCount]
+                                     [PolicyCrossPatternCount][PolicyCrossPatternCount];
 
 }  // namespace
 
@@ -892,15 +897,22 @@ bool Config::loadModel(std::istream &inStream)
     in->read(reinterpret_cast<char *>(&contextCount), sizeof(contextCount));
     in->read(reinterpret_cast<char *>(&componentCount), sizeof(componentCount));
     in->read(reinterpret_cast<char *>(&patternCount), sizeof(patternCount));
-    if (!*in || magic != ClassicalModelExtensionMagic || version != ClassicalModelCompactP3Version
-        || tableCount != ModelPolicyTableCount || contextCount != ModelPolicyContextCount
-        || patternCount != PolicyCrossPatternCount
-        || payloadBytes != ClassicalModelCompactP3PayloadBytes
+    const bool legacyExtension = version == ClassicalModelCompactP3LegacyVersion
+                                 && tableCount == LegacyModelPolicyTableCount
+                                 && payloadBytes == PolicyCrossTableBytes;
+    const bool currentExtension = version == ClassicalModelCompactP3Version
+                                  && tableCount == ModelPolicyTableCount
+                                  && payloadBytes == ClassicalModelCompactP3PayloadBytes;
+    if (!*in || magic != ClassicalModelExtensionMagic || !(legacyExtension || currentExtension)
+        || contextCount != ModelPolicyContextCount || patternCount != PolicyCrossPatternCount
         || componentCount != ModelBlendComponentCount)
         return false;
 
-    StoredPolicyCross policyCross;
-    in->read(reinterpret_cast<char *>(policyCross), sizeof(policyCross));
+    StoredPolicyCrossTables policyCross {};
+    if (legacyExtension)
+        in->read(reinterpret_cast<char *>(policyCross[FREESTYLE]), sizeof(StoredPolicyCross));
+    else
+        in->read(reinterpret_cast<char *>(policyCross), sizeof(policyCross));
     if (!*in)
         return false;
 
@@ -908,13 +920,14 @@ bool Config::loadModel(std::istream &inStream)
         return false;
     publishBaseTables();
     Evaluation::resetPolicyCross();
-    for (size_t context = 0; context < ModelPolicyContextCount; context++)
-        for (size_t self = 0; self < PolicyCrossPatternCount; self++)
-            for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
-                Evaluation::POLICY_CROSS[FREESTYLE][context]
-                                        [Evaluation::policyPatternFromStorageIndex(self)]
-                                        [Evaluation::policyPatternFromStorageIndex(opponent)] =
-                                            policyCross[context][self][opponent];
+    for (size_t table = 0; table < ModelPolicyTableCount; table++)
+        for (size_t context = 0; context < ModelPolicyContextCount; context++)
+            for (size_t self = 0; self < PolicyCrossPatternCount; self++)
+                for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
+                    Evaluation::POLICY_CROSS[table][context]
+                                            [Evaluation::policyPatternFromStorageIndex(self)]
+                                            [Evaluation::policyPatternFromStorageIndex(opponent)] =
+                                                policyCross[table][context][self][opponent];
     Evaluation::activatePolicyCross();
     return true;
 }
@@ -960,13 +973,15 @@ void Config::exportModel(std::ostream &outStream)
     out->write(reinterpret_cast<const char *>(&componentCount), sizeof(componentCount));
     out->write(reinterpret_cast<const char *>(&patternCount), sizeof(patternCount));
 
-    StoredPolicyCross policyCross;
-    for (size_t context = 0; context < ModelPolicyContextCount; context++)
-        for (size_t self = 0; self < PolicyCrossPatternCount; self++)
-            for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
-                policyCross[context][self][opponent] =
-                    Evaluation::POLICY_CROSS[FREESTYLE][context]
-                                            [Evaluation::policyPatternFromStorageIndex(self)]
-                                            [Evaluation::policyPatternFromStorageIndex(opponent)];
+    StoredPolicyCrossTables policyCross;
+    for (size_t table = 0; table < ModelPolicyTableCount; table++)
+        for (size_t context = 0; context < ModelPolicyContextCount; context++)
+            for (size_t self = 0; self < PolicyCrossPatternCount; self++)
+                for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
+                    policyCross[table][context][self][opponent] =
+                        Evaluation::POLICY_CROSS[table][context]
+                                                [Evaluation::policyPatternFromStorageIndex(self)]
+                                                [Evaluation::policyPatternFromStorageIndex(
+                                                    opponent)];
     out->write(reinterpret_cast<const char *>(policyCross), sizeof(policyCross));
 }

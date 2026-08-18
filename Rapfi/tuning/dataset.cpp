@@ -94,6 +94,10 @@ SimpleBinaryDataset::SimpleBinaryDataset(const std::vector<std::string> &filenam
     : dataStream(std::make_unique<MultiFileInputStream>(filenames))
 {}
 
+SimpleBinaryDataset::SimpleBinaryDataset(const std::vector<std::filesystem::path> &filenames)
+    : dataStream(std::make_unique<MultiFileInputStream>(filenames))
+{}
+
 SimpleBinaryDataset::~SimpleBinaryDataset() {}
 
 bool SimpleBinaryDataset::next(DataEntry *entry)
@@ -118,7 +122,9 @@ void SimpleBinaryDataset::reset()
 class PackedBinaryDataset::DataSource
 {
 public:
-    DataSource(const std::vector<std::string> &filenames) : stream(filenames), nextMoveIdx(0) {}
+    template <typename Path>
+    DataSource(const std::vector<Path> &filenames) : stream(filenames), nextMoveIdx(0)
+    {}
 
     /// Goto the next file in the file list.
     /// @return False when the file list is exhausted, otherwise true.
@@ -200,6 +206,10 @@ private:
 };
 
 PackedBinaryDataset::PackedBinaryDataset(const std::vector<std::string> &filenames)
+    : dataSource(std::make_unique<DataSource>(filenames))
+{}
+
+PackedBinaryDataset::PackedBinaryDataset(const std::vector<std::filesystem::path> &filenames)
     : dataSource(std::make_unique<DataSource>(filenames))
 {}
 
