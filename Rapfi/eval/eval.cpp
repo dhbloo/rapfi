@@ -95,10 +95,10 @@ inline int classicalEvalMargin(Value bound)
 namespace Evaluation {
 
 const int ClassicalValueBlendWeights[RULE_NB + 1][ClassicalValueBlend::COMPONENT_NB] = {
-    {128, 128, 256},
-    {128, 128, 256},
-    {128, 128, 256},
-    {128, 128, 256},
+    {149, 106, 267},
+    {155, 116, 268},
+    {137, 122, 263},
+    {138, 125, 261},
 };
 
 Value composeClassicalValue(Rule  rule,

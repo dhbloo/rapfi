@@ -30,13 +30,13 @@ namespace {
 /// History and stats update bonus, based on depth
 constexpr int statBonus(Rule rule, Depth d)
 {
-    constexpr int StatBonusQuadratic[RULE_NB] = {25, 25, 25};
-    return std::min(static_cast<int>(StatBonusQuadratic[rule] * d * d + 105 * d - 157), 8927);
+    constexpr int StatBonusQuadratic[RULE_NB] = {29, 24, 23};
+    return std::min(static_cast<int>(StatBonusQuadratic[rule] * d * d + 99 * d - 164), 8927);
 }
 
-constexpr int MainHistoryAttackWeight[RULE_NB + 1] = {510, 512, 512, 512};
-constexpr int MainHistoryQuietWeight[RULE_NB + 1]  = {257, 256, 256, 256};
-constexpr int CounterMoveBonus[RULE_NB + 1]        = {21, 21, 21, 21};
+constexpr int MainHistoryAttackWeight[RULE_NB + 1] = {492, 531, 511, 520};
+constexpr int MainHistoryQuietWeight[RULE_NB + 1]  = {265, 270, 270, 268};
+constexpr int CounterMoveBonus[RULE_NB + 1]        = {38, 33, 31, 33};
 
 constexpr int historyTableIndex(Rule rule, Color sideToMove)
 {

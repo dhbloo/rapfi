@@ -101,10 +101,10 @@ struct ClassicalPolicyBlend
 
 inline constexpr int ClassicalPolicyBlendWeights[RULE_NB + 1][ClassicalPolicyBlend::COMPONENT_NB] =
     {
-        {230, 264, -20, 119},
-        {256, 256, 0, 0},
-        {256, 256, 0, 0},
-        {256, 256, 0, 0},
+        {235, 264, -25, 121},
+        {292, 265, 14, 16},
+        {271, 247, 17, 6},
+        {289, 272, 16, 40},
 };
 
 inline const int *classicalPolicyBlendWeights(Rule rule, Color sideToMove)
