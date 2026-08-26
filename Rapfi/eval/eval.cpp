@@ -80,12 +80,13 @@ inline Value evaluateBasic(const StateInfo &st, Color self)
 
 /// Finds a margin for switching to classical evaluation if
 /// it falls outside alpha-beta window with this margin.
+template <Rule R>
 inline int classicalEvalMargin(Value bound)
 {
     float winLossRate = 2 * (Evaluation::valueToWinRate(bound) - 0.5f);
-    float x           = EvalCfg.marginWinLossScale * winLossRate;
+    float x           = EvalCfg.marginWinLossScale[R] * winLossRate;
     float x2          = x * x;
-    return (int)(EvalCfg.marginScale * ::expf(-::powf(x2, EvalCfg.marginWinLossExponent)));
+    return (int)(EvalCfg.marginScale[R] * ::expf(-::powf(x2, EvalCfg.marginWinLossExponent[R])));
 }
 
 }  // namespace
@@ -110,7 +111,7 @@ Value evaluate(const Board &board, Value alpha, Value beta)
 
     if (board.evaluator()) {
         // Use evaluator eval if classical eval are in alpha-beta window margin
-        int margin = classicalEvalMargin(classicalEval);
+        int margin = classicalEvalMargin<R>(classicalEval);
         if (classicalEval >= alpha - margin && classicalEval <= beta + margin)
             return computeEvaluatorValue(board).value();
     }

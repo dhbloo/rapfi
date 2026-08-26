@@ -583,6 +583,8 @@ namespace {
 /// of a fail high/low, re-search with a bigger window until we don't fail high/low anymore.
 void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue, Depth depth)
 {
+    assert(rule < RULE_NB);
+
     Value          delta, alpha, beta;
     SearchThread  *thisThread  = board.thisThread();
     ABSearchData  *searchData  = thisThread->searchDataAs<ABSearchData>();
@@ -593,7 +595,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
     // we are not in balance move mode. (no aspiration window for balance move mode).
     if (depth >= ASPIRATION_DEPTH && SearchCfg.aspirationWindow
         && !thisThread->options().balanceMode) {
-        delta = nextAspirationWindowDelta(prevValue);
+        delta = nextAspirationWindowDelta(rule, prevValue);
         alpha = std::max(prevValue - delta, -VALUE_INFINITE);
         beta  = std::min(prevValue + delta, VALUE_INFINITE);
     }
@@ -653,7 +655,7 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
         else
             break;
 
-        delta = nextAspirationWindowDelta(value, delta);
+        delta = nextAspirationWindowDelta(rule, value, delta);
         assert(alpha >= -VALUE_INFINITE && beta <= VALUE_INFINITE);
     }
 }
@@ -1051,15 +1053,15 @@ Depth computeLmrReduction(Board            &board,
 
     // Decrease reduction if position is or has been on the PV (~10 elo)
     if (ss->ttPv)
-        r -= TTPV_NEG_REDUCTION;
+        r -= LMRTtPvSubtract[Rule];
 
     // Increase reduction for nodes that does not improve root alpha (~0 elo)
     if (!RootNode && (ss->ply & 1) && bestValue >= -searchData->rootAlpha)
-        r += NO_ALPHA_IMPROVING_REDUCTION;
+        r += LMRNoAlphaAdd[Rule];
 
     // Increase reduction for cut nodes if is not killer moves (~5 elo)
     if (cutNode && !(!oppo4 && ss->isKiller(move) && ss->moveP4[self] < H_FLEX3))
-        r += NOKILLER_CUTNODE_REDUCTION;
+        r += LMRNoKillerCutNodeAdd[Rule];
 
     // Increase reduction for useless defend move (~6 elo)
     if (oppo4 && ss->moveP4[oppo] < E_BLOCK4) {
@@ -1082,7 +1084,7 @@ Depth computeLmrReduction(Board            &board,
     ss->statScore = statScore(searchData->mainHistory, self, move);
 
     // Decrease/increase reduction for moves with a good/bad history (~9 elo)
-    r -= extensionFromStatScore(ss->statScore, depth);
+    r -= extensionFromStatScore<Rule>(ss->statScore, depth);
 
     return r;
 }
@@ -1332,11 +1334,13 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Step 10. Internal iterative reduction (~3 elo)
     if (!RootNode && PvNode && !ttMove)
-        depth -= IIR_REDUCTION_PV;
+        depth -= IIR_REDUCTION_PV[Rule];
 
     // Reduce for pv ttMove that has not been chosen for a few iterations (~32 elo)
     if (PvNode && depth > 1 && ttMove)
-        depth -= std::clamp((depth - ttDepth) * IIR_REDUCTION_TT, 0.0f, IIR_REDUCTION_TT_MAX);
+        depth -= std::clamp((depth - ttDepth) * IIR_REDUCTION_TT[Rule],
+                            0.0f,
+                            IIR_REDUCTION_TT_MAX[Rule]);
 
     // Drop to vcfsearch if depth is below zero
     if (depth <= 0)
@@ -1344,7 +1348,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
 
     // Internal iterative deepening on higher depth (~1 elo)
     if (depth >= IID_DEPTH && !ttMove) {
-        depth -= IIR_REDUCTION;
+        depth -= IIR_REDUCTION[Rule];
 
         // We only need best move from the iid search, so we just discard its result
         search<Rule, NT>(board, ss, alpha, beta, depth - iidDepthReduction<Rule>(depth), cutNode);
@@ -1368,7 +1372,7 @@ moves_loop:
 
     // Fail-High reduction (~50 elo)
     // Indicate cutNode that will probably fail high if current eval is far above beta
-    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin(depth, oppo4);
+    bool likelyFailHigh = !PvNode && cutNode && eval >= beta + failHighMargin<Rule>(depth, oppo4);
 
 #ifdef POLICY_TRAINING
     const Value         policyTraceAlpha = alpha;
@@ -1589,7 +1593,7 @@ moves_loop:
                  && !skipMove                                  // No recursive singular search
                  && std::abs(ttValue) < VALUE_MATE_IN_MAX_PLY  // ttmove value is not a mate
                  && (ttBound & BOUND_LOWER)                    // ttMove failed high last time
-                 && ttDepth >= depth - SE_TTE_DEPTH            // ttEntry has enough depth to trust
+                 && ttDepth >= depth - SE_TTE_DEPTH[Rule]      // ttEntry has enough depth to trust
         ) {
             bool  formerPv = !PvNode && ss->ttPv;
             Value singularBeta =
@@ -1608,7 +1612,7 @@ moves_loop:
             // Extend if only the ttMove fails high, while other moves fails low.
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
-                if (!PvNode && value < singularBeta - doubleSEMargin(depth)
+                if (!PvNode && value < singularBeta - doubleSEMargin<Rule>(depth)
                     && ss->extraExtension < SE_EXTRA_MAX_DEPTH)
                     extension = 2.0f;
                 else
@@ -1625,7 +1629,7 @@ moves_loop:
         // Extension for ttmove without singular extension (~12 elo)
         else if (move == ttMove) {
             // Extension for ttmove
-            extension = PvNode ? TTM_EXT_PV : TTM_EXT_NONPV;
+            extension = PvNode ? TTM_EXT_PV[Rule] : TTM_EXT_NONPV[Rule];
 
             // Additional extension for near B4 ttmove
             if (ss->moveP4[self] >= E_BLOCK4 && mt.distSelf <= 6)

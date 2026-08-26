@@ -635,11 +635,15 @@ void Config::readEvaluator(const cpptoml::table &t, PendingConfig &pending)
 
     // Read classical/evaluator switching margin
     auto &evalCfg = pending.eval;
-    evalCfg.marginWinLossScale =
-        (float)t.get_as<double>("margin_winloss_scale").value_or(evalCfg.marginWinLossScale);
-    evalCfg.marginWinLossExponent =
-        (float)t.get_as<double>("margin_winloss_exp").value_or(evalCfg.marginWinLossExponent);
-    evalCfg.marginScale = (float)t.get_as<double>("margin_scale").value_or(evalCfg.marginScale);
+    if (auto value = t.get_as<double>("margin_winloss_scale"))
+        for (float &slot : evalCfg.marginWinLossScale)
+            slot = (float)*value;
+    if (auto value = t.get_as<double>("margin_winloss_exp"))
+        for (float &slot : evalCfg.marginWinLossExponent)
+            slot = (float)*value;
+    if (auto value = t.get_as<double>("margin_scale"))
+        for (float &slot : evalCfg.marginScale)
+            slot = (float)*value;
     evalCfg.drawBlackWinRate =
         (float)t.get_as<double>("draw_black_winrate").value_or(evalCfg.drawBlackWinRate);
     evalCfg.drawRatio        = (float)t.get_as<double>("draw_ratio").value_or(evalCfg.drawRatio);

@@ -28,9 +28,10 @@
 namespace {
 
 /// History and stats update bonus, based on depth
-constexpr int statBonus(Depth d)
+constexpr int statBonus(Rule rule, Depth d)
 {
-    return std::min(static_cast<int>(25 * d * d + 105 * d - 157), 8927);
+    constexpr int StatBonusQuadratic[RULE_NB] = {25, 25, 25};
+    return std::min(static_cast<int>(StatBonusQuadratic[rule] * d * d + 105 * d - 157), 8927);
 }
 
 constexpr int MainHistoryAttackWeight[RULE_NB + 1] = {510, 512, 512, 512};
@@ -81,7 +82,7 @@ void HistoryTracker::updateBestmoveStats(Depth depth, Pos bestMove, Value bestVa
     bool     oppo5  = board.p4Count(oppo, A_FIVE);
     bool     oppo4  = oppo5 || board.p4Count(oppo, B_FLEX4);
     Pattern4 selfP4 = board.pattern4(bestMove, self);
-    int      bonus  = statBonus(depth);
+    int      bonus  = statBonus(board.thisThread()->options().rule, depth);
 
     if (selfP4 >= H_FLEX3) {
         searchData->mainHistory[self][bestMove][HIST_ATTACK] << bonus;
@@ -116,7 +117,7 @@ void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, V
     bool     oppo5  = board.p4Count(oppo, A_FIVE);
     bool     oppo4  = oppo5 || board.p4Count(oppo, B_FLEX4);
     Pattern4 selfP4 = board.pattern4(ttMove, self);
-    int      bonus  = statBonus(depth);
+    int      bonus  = statBonus(board.thisThread()->options().rule, depth);
 
     if (!oppo4 && selfP4 < H_FLEX3) {
         // Bonus for a quiet ttMove that fails high
