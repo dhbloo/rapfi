@@ -33,6 +33,26 @@ class ValueType;
 ValueType computeEvaluatorValue(const Board &board);
 Value     computeClassicalValue(Rule rule, Color self, Value rawValue);
 
+struct ClassicalValueBlend
+{
+    static constexpr int Scale = 256;
+
+    enum Component {
+        CURRENT_BASIC,
+        PREVIOUS_BASIC,
+        CURRENT_THREAT,
+        COMPONENT_NB,
+    };
+};
+
+extern const int ClassicalValueBlendWeights[RULE_NB + 1][ClassicalValueBlend::COMPONENT_NB];
+
+Value composeClassicalValue(Rule  rule,
+                            Color self,
+                            Value currentBasic,
+                            Value previousBasic,
+                            Value currentThreat);
+
 /// EvalInfo struct contains all information needed to evaluate a position.
 struct EvalInfo
 {

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 using Evaluation::EvalCfg;
 
@@ -93,6 +94,28 @@ inline int classicalEvalMargin(Value bound)
 
 namespace Evaluation {
 
+const int ClassicalValueBlendWeights[RULE_NB + 1][ClassicalValueBlend::COMPONENT_NB] = {
+    {128, 128, 256},
+    {128, 128, 256},
+    {128, 128, 256},
+    {128, 128, 256},
+};
+
+Value composeClassicalValue(Rule  rule,
+                            Color self,
+                            Value currentBasic,
+                            Value previousBasic,
+                            Value currentThreat)
+{
+    const int *weights = ClassicalValueBlendWeights[tableIndex(rule, self)];
+
+    int64_t weightedValue =
+        int64_t(weights[ClassicalValueBlend::CURRENT_BASIC]) * int64_t(currentBasic)
+        + int64_t(weights[ClassicalValueBlend::PREVIOUS_BASIC]) * int64_t(previousBasic)
+        + int64_t(weights[ClassicalValueBlend::CURRENT_THREAT]) * int64_t(currentThreat);
+    return Value(weightedValue / ClassicalValueBlend::Scale);
+}
+
 /// Calculates the final evaluation of a board.
 /// @note Board must have at least one stone placed (`ply() > 0`).
 template <Rule R>
@@ -104,9 +127,13 @@ Value evaluate(const Board &board, Value alpha, Value beta)
     const StateInfo &st0 = board.stateInfo();
     const StateInfo &st1 = board.stateInfo(1);
 
-    Value basicEval     = (evaluateBasic(st0, self) + evaluateBasic(st1, self)) / 2;
-    Value threatEval    = evaluateThreat<R>(st0, self);
-    Value eval          = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+    Value currentBasic  = evaluateBasic(st0, self);
+    Value previousBasic = evaluateBasic(st1, self);
+    Value currentThreat = evaluateThreat<R>(st0, self);
+    Value eval =
+        std::clamp(composeClassicalValue(R, self, currentBasic, previousBasic, currentThreat),
+                   VALUE_EVAL_MIN,
+                   VALUE_EVAL_MAX);
     Value classicalEval = computeClassicalValue(R, self, eval);
 
     if (board.evaluator()) {
@@ -139,16 +166,19 @@ Value evaluate(const Board &board, Rule rule)
         Color            self = board.sideToMove();
         const StateInfo &st   = board.stateInfo();
 
-        Value basicEval  = evaluateBasic(st, self);
-        Value threatEval = VALUE_ZERO;
+        Value currentBasic  = evaluateBasic(st, self);
+        Value currentThreat = VALUE_ZERO;
         switch (rule) {
         default:
-        case Rule::FREESTYLE: threatEval = evaluateThreat<Rule::FREESTYLE>(st, self); break;
-        case Rule::STANDARD: threatEval = evaluateThreat<Rule::STANDARD>(st, self); break;
-        case Rule::RENJU: threatEval = evaluateThreat<Rule::RENJU>(st, self); break;
+        case Rule::FREESTYLE: currentThreat = evaluateThreat<Rule::FREESTYLE>(st, self); break;
+        case Rule::STANDARD: currentThreat = evaluateThreat<Rule::STANDARD>(st, self); break;
+        case Rule::RENJU: currentThreat = evaluateThreat<Rule::RENJU>(st, self); break;
         }
 
-        Value eval = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+        Value eval =
+            std::clamp(composeClassicalValue(rule, self, currentBasic, currentBasic, currentThreat),
+                       VALUE_EVAL_MIN,
+                       VALUE_EVAL_MAX);
         return computeClassicalValue(rule, self, eval);
     }
 }
