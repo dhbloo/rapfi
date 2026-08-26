@@ -111,4 +111,17 @@ typedef HistTable<int16_t, 10692, SIDE_NB, FULL_BOARD_CELL_COUNT, MAIN_HIST_TYPE
 /// It is indexed by color of the previous move, previous move's position and current move's type.
 typedef HistTable<std::pair<Pos, Pattern4>, 0, SIDE_NB, MAX_MOVES> CounterMoveHistory;
 
+/// Optional dynamic move-ordering information supplied by a searcher to the shared MovePicker.
+/// Alpha-beta owns and populates these tables; other searchers leave this view empty.
+struct MoveHistoryScoring
+{
+    static constexpr int WeightScale = 256 * 256;
+
+    const MainHistory        *mainHistory        = nullptr;
+    const CounterMoveHistory *counterMoveHistory = nullptr;
+    int                       attackWeight       = 0;
+    int                       quietWeight        = 0;
+    int                       counterMoveBonus   = 0;
+};
+
 }  // namespace Search

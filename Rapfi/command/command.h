@@ -18,14 +18,19 @@
 
 #pragma once
 
+#include "../core/types.h"
+
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace Command {
 
 namespace CommandLine {
     /// Path to the binary executable directory.
     extern std::filesystem::path binaryDirectory;
+    /// Absolute path to the running executable.
+    extern std::filesystem::path executablePath;
 
     /// Initialize the command line module with the startup arguments.
     void init(int argc, char *argv[]);
@@ -51,6 +56,9 @@ extern bool allowInternalConfig;
 ///    the executable when the program is built with it.
 bool loadConfig();
 
+/// Returns the resolved external config path, or an empty path for the internal config.
+std::filesystem::path getConfigFullPath();
+
 /// getModelFullPath() trys to resolve the correct path for the model file.
 /// Model file is determined by this order:
 ///    - If model path is an absolute path, it will be returned directly.
@@ -65,6 +73,18 @@ bool loadModelFromFile(std::filesystem::path modelPath);
 
 // -------------------------------------------------
 // Command modules entry
+
+/// One position of the built-in benchmark suite: rule, board size, and the
+/// opening moves in the position-string format of parsePositionString().
+struct BenchPosition
+{
+    Rule        rule;
+    int         boardSize;
+    std::string position;
+};
+
+/// The built-in benchmark position set backing benchmark().
+const std::vector<BenchPosition> &benchPositions();
 
 void gomocupLoop();
 void benchmark();

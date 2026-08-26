@@ -74,10 +74,14 @@ extern GeneralConfig GeneralCfg;
 bool loadConfig(std::istream &configStream);
 
 /// Load a LZ4 compressed classical evaluation model from a binary stream.
+/// Legacy payloads use the compiled move-score blend rows; newer payloads may
+/// append the versioned compact context-policy extension.
 /// @return Returns true if loaded successfully, otherwise returns false.
 bool loadModel(std::istream &inStream);
 
-/// Exports current classic evaluation model to a binary stream.
+/// Exports the current classical evaluation model to a binary stream. A
+/// versioned extension is appended when context-policy rows differ from their
+/// legacy defaults.
 void exportModel(std::ostream &outStream);
 
 }  // namespace Config

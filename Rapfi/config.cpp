@@ -22,6 +22,7 @@
 #include "core/compressor.h"
 #include "core/iohelper.h"
 #include "database/dbconfig.h"
+#include "eval/classicalpolicy.h"
 #include "eval/evalconfig.h"
 #include "eval/scoretables.h"
 #include "game/pattern.h"
@@ -30,7 +31,12 @@
 #include "search/searcher.h"
 #include "search/searchthread.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cpptoml.h>
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -51,6 +57,23 @@ constexpr uint32_t I(uint32_t y, uint32_t x)
     return y * N + x - combineNumber(y, 2);
 }
 
+constexpr std::array<char, 8> ClassicalModelExtensionMagic =
+    {'R', 'F', 'C', 'L', 'M', 'O', 'D', '1'};
+constexpr uint32_t ClassicalModelCompactP3Version = 7;
+constexpr uint32_t ModelPolicyTableCount          = 1;
+constexpr uint32_t ModelPolicyContextCount        = Evaluation::PolicyStoredContextCount;
+constexpr uint32_t ModelBlendComponentCount       = 0;
+constexpr uint32_t PolicyCrossPatternCount        = Evaluation::PolicyStoredPatternCount;
+constexpr uint32_t PolicyCrossPayloadBytes =
+    ModelPolicyContextCount * PolicyCrossPatternCount * PolicyCrossPatternCount * sizeof(Score);
+constexpr uint32_t ClassicalModelCompactP3PayloadBytes = PolicyCrossPayloadBytes;
+static_assert(ModelPolicyContextCount == Evaluation::QUIET);
+static_assert(Evaluation::QUIET + 1 == Evaluation::POLICY_CONTEXT_NB);
+static_assert(ModelPolicyContextCount < Evaluation::PolicyContextCount);
+
+using StoredPolicyCross =
+    Score[ModelPolicyContextCount][PolicyCrossPatternCount][PolicyCrossPatternCount];
+
 }  // namespace
 
 namespace Evaluation {
@@ -62,9 +85,42 @@ float ScalingFactor = 200.0f;
 // Classical evaluation and score tables
 // Note that Renju has asymmetry eval and score
 
-Eval          EVALS[RULE_NB + 1][PCODE_NB];
-Eval          EVALS_THREAT[RULE_NB + 1][THREAT_NB];
-MoveScorePair P4SCORES[RULE_NB + 1][PCODE_NB];
+Eval                                                   EVALS[RULE_NB + 1][PCODE_NB];
+Eval                                                   EVALS_THREAT[RULE_NB + 1][THREAT_NB];
+MoveScorePair                                          P4SCORES[RULE_NB + 1][PCODE_NB];
+ClassicalValueReadout                                  CLASSICAL_VALUE_READOUT;
+std::array<Value, VALUE_EVAL_MAX - VALUE_EVAL_MIN + 1> CLASSICAL_VALUE_READOUT_CACHE {};
+void refreshClassicalValueReadoutCache()
+{
+    static constexpr std::array<double, ClassicalValueReadout::KnotCount> XKnots =
+        {0.0, 0.5, 1.0, 2.0, 4.0, 8.0};
+    const auto  &yKnots = CLASSICAL_VALUE_READOUT.knots;
+    const double scale  = ScalingFactor;
+
+    for (int raw = VALUE_EVAL_MIN; raw <= VALUE_EVAL_MAX; raw++) {
+        double x = std::abs(double(raw)) / scale;
+        double y;
+        if (x >= XKnots.back())
+            y = yKnots.back() + x - XKnots.back();
+        else {
+            size_t hi = 1;
+            while (x > XKnots[hi])
+                hi++;
+            size_t lo = hi - 1;
+            double t  = (x - XKnots[lo]) / (XKnots[hi] - XKnots[lo]);
+            y         = yKnots[lo] + t * (yKnots[hi] - yKnots[lo]);
+        }
+        double mapped = std::copysign(y * scale, double(raw));
+        CLASSICAL_VALUE_READOUT_CACHE[raw - VALUE_EVAL_MIN] =
+            Value(std::clamp<long long>(std::llround(mapped), VALUE_EVAL_MIN, VALUE_EVAL_MAX));
+    }
+}
+
+Value mapClassicalValue(Value rawValue)
+{
+    assert(VALUE_EVAL_MIN <= rawValue && rawValue <= VALUE_EVAL_MAX);
+    return CLASSICAL_VALUE_READOUT_CACHE[int(rawValue) - VALUE_EVAL_MIN];
+}
 
 }  // namespace Evaluation
 
@@ -84,11 +140,12 @@ GeneralConfig GeneralCfg;
 /// Nothing is published until loadConfig's commit step.
 struct PendingConfig
 {
-    GeneralConfig               general  = GeneralCfg;
-    Search::SearchConfig        search   = Search::SearchCfg;
-    Search::TimeConfig          time     = Search::TimeCfg;
-    Database::DatabaseConfig    database = Database::DatabaseCfg;
-    Evaluation::EvaluatorConfig eval     = Evaluation::EvalCfg;
+    GeneralConfig                     general      = GeneralCfg;
+    Search::SearchConfig              search       = Search::SearchCfg;
+    Search::TimeConfig                time         = Search::TimeCfg;
+    Database::DatabaseConfig          database     = Database::DatabaseCfg;
+    Evaluation::EvaluatorConfig       eval         = Evaluation::EvalCfg;
+    Evaluation::ClassicalValueReadout valueReadout = Evaluation::CLASSICAL_VALUE_READOUT;
 
     /// "[search] default_searcher" was present: switch the searcher at commit.
     std::optional<std::string> searcherName;
@@ -168,11 +225,14 @@ bool Config::loadConfig(std::istream &configStream)
     }
 
     // Commit: publish the parsed structs, then apply the engine effects.
-    GeneralCfg            = pending.general;
-    Search::SearchCfg     = pending.search;
-    Search::TimeCfg       = pending.time;
-    Database::DatabaseCfg = pending.database;
-    Evaluation::EvalCfg   = pending.eval;
+    GeneralCfg                          = pending.general;
+    Search::SearchCfg                   = pending.search;
+    Search::TimeCfg                     = pending.time;
+    Database::DatabaseCfg               = pending.database;
+    Evaluation::EvalCfg                 = pending.eval;
+    Evaluation::CLASSICAL_VALUE_READOUT = pending.valueReadout;
+    if (Evaluation::CLASSICAL_VALUE_READOUT.knotsActive)
+        Evaluation::refreshClassicalValueReadoutCache();
 
     // The searcher switch precedes the TT resize: setupSearcher carries the
     // old searcher's memory limit onto the new one, and the resize then
@@ -375,21 +435,23 @@ void Config::readSearch(const cpptoml::table &t, PendingConfig &pending)
         timeCfg.fallingFactorBias =
             tm->get_as<double>("falling_factor_bias").value_or(timeCfg.fallingFactorBias);
 
-        timeCfg.bestmoveStableReductionScale =
-            tm->get_as<double>("bestmove_stable_reduction_scale")
-                .value_or(timeCfg.bestmoveStableReductionScale);
+        timeCfg.bestmoveStableReductionScale = tm->get_as<double>("bestmove_stable_reduction_scale")
+                                                   .value_or(timeCfg.bestmoveStableReductionScale);
         timeCfg.bestmoveStablePrevReductionPow =
             tm->get_as<double>("bestmove_stable_prev_reduction_pow")
                 .value_or(timeCfg.bestmoveStablePrevReductionPow);
     }
 }
 
-/// Read model table of all rules in the config. The classical model tables
-/// (EVALS / P4SCORES / ScalingFactor) are written in place, not staged.
+/// Read model table of all rules in the config. The classical model values
+/// (EVALS / P4SCORES / ScalingFactor and optional binary context-policy rows)
+/// are written in place, not staged.
 void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
 {
     const Rule  Rules[]    = {FREESTYLE, STANDARD, RENJU};
     const char *RuleName[] = {"freestyle", "standard", "renju"};
+
+    pending.valueReadout = {};
 
     std::string modelPath = t.get_as<std::string>("binary_file").value_or("");
     if (!modelPath.empty()) {
@@ -397,11 +459,16 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
             throw std::runtime_error("failed to load classic model file");
     }
     else {
+        // Inline/legacy TOML models carry neither threat tables nor optional
+        // binary extensions. Reset both before applying inline values.
+        Evaluation::resetPolicyCross();
+        std::memset(Evaluation::EVALS_THREAT, 0, sizeof(Evaluation::EVALS_THREAT));
+
         // Read Eval & Score
         if (auto eval = t.get_table("eval")) {
             for (Rule r : Rules) {
                 bool hasAsymmetryRenjuEval = false;
-                auto setEvalBlack = [r](PatternCode pcode, Eval ev) {
+                auto setEvalBlack          = [r](PatternCode pcode, Eval ev) {
                     Evaluation::EVALS[r + BLACK][pcode] = ev;
                 };
                 auto setEvalWhite = [r](PatternCode pcode, Eval ev) {
@@ -451,7 +518,7 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
             };
             for (Rule r : Rules) {
                 bool hasAsymmetryRenjuScore = false;
-                auto ruleScore = score->get_table(RuleName[r]);
+                auto ruleScore              = score->get_table(RuleName[r]);
                 if (!ruleScore)  // fallback
                     ruleScore = score;
                 else if (r == RENJU) {
@@ -479,8 +546,29 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
     }
 
     // Read scalingFactor
-    Evaluation::ScalingFactor =
-        (float)t.get_as<double>("scaling_factor").value_or(Evaluation::ScalingFactor);
+    double configuredScalingFactor =
+        t.get_as<double>("scaling_factor").value_or(Evaluation::ScalingFactor);
+    float runtimeScalingFactor = static_cast<float>(configuredScalingFactor);
+    auto  readoutKnots         = t.get_array_of<double>("value_readout_knots");
+    if (readoutKnots) {
+        if (readoutKnots->size() != Evaluation::ClassicalValueReadout::KnotCount)
+            throw std::runtime_error("value_readout_knots must contain 6 values");
+        for (size_t i = 0; i < readoutKnots->size(); i++) {
+            double value = (*readoutKnots)[i];
+            if (!std::isfinite(value) || value < 0.0 || value > 64.0 || (i == 0 && value != 0.0)
+                || (i != 0 && value < (*readoutKnots)[i - 1]))
+                throw std::runtime_error("value_readout_knots must be finite, monotone, start at "
+                                         "zero, and not exceed 64");
+            pending.valueReadout.knots[i] = value;
+        }
+        pending.valueReadout.knotsActive = true;
+    }
+
+    if (pending.valueReadout.knotsActive
+        && (!std::isfinite(runtimeScalingFactor) || runtimeScalingFactor <= 0.0f))
+        throw std::runtime_error(
+            "classical value readout requires a finite positive scaling_factor");
+    Evaluation::ScalingFactor = runtimeScalingFactor;
 
     // Read evaluator
     if (auto evaluator = t.get_table("evaluator"))
@@ -492,8 +580,13 @@ void Config::readEvaluator(const cpptoml::table &t, PendingConfig &pending)
 {
     auto evaluatorType = t.get_as<std::string>("type");
     auto weights       = t.get_table_array("weights");
-    if (!evaluatorType || !weights || weights->begin() == weights->end())
-        return;
+    // A present-but-partial evaluator table is always a config mistake (an intentional
+    // classical setup omits the table entirely); silently falling back to classical
+    // eval here would corrupt any match or test built on this config.
+    if (!evaluatorType)
+        throw std::runtime_error("evaluator table must specify a type");
+    if (!weights || weights->begin() == weights->end())
+        throw std::runtime_error("evaluator " + *evaluatorType + " has no weights entries");
 
     Evaluation::EvaluatorWeightsConfig weightsCfg;
     weightsCfg.type      = *evaluatorType;
@@ -514,9 +607,9 @@ void Config::readEvaluator(const cpptoml::table &t, PendingConfig &pending)
     pending.evaluatorName = *evaluatorType;
 
     // Read classical/evaluator switching margin
-    auto &evalCfg               = pending.eval;
-    evalCfg.marginWinLossScale  = (float)t.get_as<double>("margin_winloss_scale")
-                                     .value_or(evalCfg.marginWinLossScale);
+    auto &evalCfg = pending.eval;
+    evalCfg.marginWinLossScale =
+        (float)t.get_as<double>("margin_winloss_scale").value_or(evalCfg.marginWinLossScale);
     evalCfg.marginWinLossExponent =
         (float)t.get_as<double>("margin_winloss_exp").value_or(evalCfg.marginWinLossExponent);
     evalCfg.marginScale = (float)t.get_as<double>("margin_scale").value_or(evalCfg.marginScale);
@@ -563,8 +656,8 @@ void Config::readDatabase(const cpptoml::table &t, PendingConfig &pending)
     }
 
     if (auto s = t.get_table("search")) {
-        auto &dbs        = cfg.search;
-        dbs.readonlyMode = s->get_as<bool>("readonly_mode").value_or(false);
+        auto &dbs                = cfg.search;
+        dbs.readonlyMode         = s->get_as<bool>("readonly_mode").value_or(false);
         dbs.mandatoryParentWrite = s->get_as<bool>("mandatory_parent_write").value_or(true);
         dbs.queryPly             = s->get_as<int>("query_ply").value_or(dbs.queryPly);
         dbs.queryPVIterPerPlyIncrement =
@@ -584,10 +677,9 @@ void Config::readDatabase(const cpptoml::table &t, PendingConfig &pending)
         dbs.mateWritePly = s->get_as<int>("mate_write_ply").value_or(dbs.mateWritePly);
         dbs.mateWriteMinDepthExact =
             s->get_as<int>("mate_write_min_depth_exact").value_or(dbs.mateWriteMinDepthExact);
-        dbs.mateWriteMinDepthNonExact = s->get_as<int>("mate_write_min_depth_nonexact")
-                                            .value_or(dbs.mateWriteMinDepthNonExact);
-        dbs.mateWriteMinStep =
-            s->get_as<int>("mate_write_min_step").value_or(dbs.mateWriteMinStep);
+        dbs.mateWriteMinDepthNonExact =
+            s->get_as<int>("mate_write_min_depth_nonexact").value_or(dbs.mateWriteMinDepthNonExact);
+        dbs.mateWriteMinStep = s->get_as<int>("mate_write_min_step").value_or(dbs.mateWriteMinStep);
 
         dbs.exactOverwritePly =
             s->get_as<int>("exact_overwrite_ply").value_or(dbs.exactOverwritePly);
@@ -763,25 +855,68 @@ bool Config::loadModel(std::istream &inStream)
         return false;
 
     double scalingFactorF64;
+    Eval   evals[RULE_NB + 1][PCODE_NB];
+    Eval   evalsThreat[RULE_NB + 1][THREAT_NB];
+    Score  scores[RULE_NB + 1][PCODE_NB][2];
     in->read(reinterpret_cast<char *>(&scalingFactorF64), sizeof(scalingFactorF64));
-    Evaluation::ScalingFactor = scalingFactorF64;
+    in->read(reinterpret_cast<char *>(evals), sizeof(evals));
+    in->read(reinterpret_cast<char *>(evalsThreat), sizeof(evalsThreat));
+    in->read(reinterpret_cast<char *>(scores), sizeof(scores));
 
-    in->read(reinterpret_cast<char *>(Evaluation::EVALS), sizeof(Evaluation::EVALS));
-    in->read(reinterpret_cast<char *>(Evaluation::EVALS_THREAT),
-             sizeof(Evaluation::EVALS_THREAT));
+    if (!*in)
+        return false;
 
-    Score scores[PCODE_NB][2];
-    for (int rule = 0; rule < RULE_NB + 1; rule++) {
-        in->read(reinterpret_cast<char *>(scores), sizeof(scores));
+    auto publishBaseTables = [&]() {
+        Evaluation::ScalingFactor = static_cast<float>(scalingFactorF64);
+        std::memcpy(Evaluation::EVALS, evals, sizeof(Evaluation::EVALS));
+        std::memcpy(Evaluation::EVALS_THREAT, evalsThreat, sizeof(Evaluation::EVALS_THREAT));
+        std::memcpy(Evaluation::P4SCORES, scores, sizeof(Evaluation::P4SCORES));
+    };
 
-        // Set score table to P4SCORES
-        for (size_t pcode = 0; pcode < PCODE_NB; pcode++) {
-            Evaluation::P4SCORES[rule][pcode][0] = scores[pcode][0];
-            Evaluation::P4SCORES[rule][pcode][1] = scores[pcode][1];
-        }
+    // Files produced before the context-policy extension end after the score
+    // tables. They remain valid and use the engine's compiled blend rows.
+    if (in->peek() == std::ios::traits_type::eof()) {
+        if (in->bad())
+            return false;
+        publishBaseTables();
+        Evaluation::resetPolicyCross();
+        return true;
     }
 
-    return *in && in->peek() == std::ios::traits_type::eof();
+    std::array<char, ClassicalModelExtensionMagic.size()> magic;
+    uint32_t version, payloadBytes, tableCount, contextCount, componentCount, patternCount;
+    in->read(magic.data(), magic.size());
+    in->read(reinterpret_cast<char *>(&version), sizeof(version));
+    in->read(reinterpret_cast<char *>(&payloadBytes), sizeof(payloadBytes));
+    in->read(reinterpret_cast<char *>(&tableCount), sizeof(tableCount));
+    in->read(reinterpret_cast<char *>(&contextCount), sizeof(contextCount));
+    in->read(reinterpret_cast<char *>(&componentCount), sizeof(componentCount));
+    in->read(reinterpret_cast<char *>(&patternCount), sizeof(patternCount));
+    if (!*in || magic != ClassicalModelExtensionMagic || version != ClassicalModelCompactP3Version
+        || tableCount != ModelPolicyTableCount || contextCount != ModelPolicyContextCount
+        || patternCount != PolicyCrossPatternCount
+        || payloadBytes != ClassicalModelCompactP3PayloadBytes
+        || componentCount != ModelBlendComponentCount)
+        return false;
+
+    StoredPolicyCross policyCross;
+    in->read(reinterpret_cast<char *>(policyCross), sizeof(policyCross));
+    if (!*in)
+        return false;
+
+    if (in->peek() != std::ios::traits_type::eof() || in->bad())
+        return false;
+    publishBaseTables();
+    Evaluation::resetPolicyCross();
+    for (size_t context = 0; context < ModelPolicyContextCount; context++)
+        for (size_t self = 0; self < PolicyCrossPatternCount; self++)
+            for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
+                Evaluation::POLICY_CROSS[FREESTYLE][context]
+                                        [Evaluation::policyPatternFromStorageIndex(self)]
+                                        [Evaluation::policyPatternFromStorageIndex(opponent)] =
+                                            policyCross[context][self][opponent];
+    Evaluation::activatePolicyCross();
+    return true;
 }
 
 void Config::exportModel(std::ostream &outStream)
@@ -806,4 +941,32 @@ void Config::exportModel(std::ostream &outStream)
 
         out->write(reinterpret_cast<char *>(scores), sizeof(scores));
     }
+
+    bool writePolicyCross =
+        Evaluation::isPolicyCrossPresent() || !Evaluation::hasDefaultPolicyCross();
+    if (!writePolicyCross)
+        return;
+    out->write(ClassicalModelExtensionMagic.data(), ClassicalModelExtensionMagic.size());
+    uint32_t version        = ClassicalModelCompactP3Version;
+    uint32_t payloadBytes   = ClassicalModelCompactP3PayloadBytes;
+    uint32_t tableCount     = ModelPolicyTableCount;
+    uint32_t contextCount   = ModelPolicyContextCount;
+    uint32_t componentCount = ModelBlendComponentCount;
+    uint32_t patternCount   = PolicyCrossPatternCount;
+    out->write(reinterpret_cast<const char *>(&version), sizeof(version));
+    out->write(reinterpret_cast<const char *>(&payloadBytes), sizeof(payloadBytes));
+    out->write(reinterpret_cast<const char *>(&tableCount), sizeof(tableCount));
+    out->write(reinterpret_cast<const char *>(&contextCount), sizeof(contextCount));
+    out->write(reinterpret_cast<const char *>(&componentCount), sizeof(componentCount));
+    out->write(reinterpret_cast<const char *>(&patternCount), sizeof(patternCount));
+
+    StoredPolicyCross policyCross;
+    for (size_t context = 0; context < ModelPolicyContextCount; context++)
+        for (size_t self = 0; self < PolicyCrossPatternCount; self++)
+            for (size_t opponent = 0; opponent < PolicyCrossPatternCount; opponent++)
+                policyCross[context][self][opponent] =
+                    Evaluation::POLICY_CROSS[FREESTYLE][context]
+                                            [Evaluation::policyPatternFromStorageIndex(self)]
+                                            [Evaluation::policyPatternFromStorageIndex(opponent)];
+    out->write(reinterpret_cast<const char *>(policyCross), sizeof(policyCross));
 }

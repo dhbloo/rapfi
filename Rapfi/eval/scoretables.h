@@ -22,9 +22,12 @@
 #include "../core/types.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 
 /// Classical evaluation tables and the engine's value scale.
 ///
@@ -42,29 +45,41 @@ constexpr uint32_t PCODE_NB = combineNumber(PATTERN_NB, 4);
 /// Total count of threat masks (see makeThreatMask() in eval/eval.cpp)
 constexpr uint32_t THREAT_NB = power(2, 11);
 
-/// Move-ordering scores of one pattern code: `self` is the score for the pcode's owner
-/// playing this cell, `oppo` is the score credited to the opponent for taking it away.
+/// Move-ordering scores of one pattern code: `byOwner` is the score when the color that owns
+/// the pattern plays this cell, while `byOpponent` is the score when the other color takes it.
 /// Plain int16 fields (no bitfields) so reads are single sign-extending loads; indexed
-/// access ([0] self, [1] oppo) is kept for the config/tuner serialization surface.
+/// access ([0] owner, [1] opponent) is kept for the config/tuner serialization surface.
 struct MoveScorePair
 {
-    Score self;
-    Score oppo;
+    Score byOwner;
+    Score byOpponent;
 
     Score &operator[](size_t idx)
     {
         assert(idx < 2);
-        return idx != 0 ? oppo : self;
+        return idx != 0 ? byOpponent : byOwner;
     }
     Score operator[](size_t idx) const
     {
         assert(idx < 2);
-        return idx != 0 ? oppo : self;
+        return idx != 0 ? byOpponent : byOwner;
     }
 };
 static_assert(sizeof(MoveScorePair) == sizeof(int32_t));
 
 namespace Evaluation {
+
+/// Convert a wide move-ordering score to its stored representation. Intermediate arithmetic
+/// must remain wide; reaching either limit indicates saturation rather than signed wraparound.
+constexpr Score clampMoveScore(int score)
+{
+    return static_cast<Score>(std::clamp(score,
+                                         static_cast<int>(std::numeric_limits<Score>::min()),
+                                         static_cast<int>(std::numeric_limits<Score>::max())));
+}
+
+static_assert(clampMoveScore(40000) == std::numeric_limits<Score>::max());
+static_assert(clampMoveScore(-40000) == std::numeric_limits<Score>::min());
 
 /// Scaling factor of the sigmoid that maps Value to winning rate.
 extern float ScalingFactor;
@@ -79,6 +94,28 @@ extern float ScalingFactor;
 extern Eval          EVALS[RULE_NB + 1][PCODE_NB];
 extern Eval          EVALS_THREAT[RULE_NB + 1][THREAT_NB];
 extern MoveScorePair P4SCORES[RULE_NB + 1][PCODE_NB];
+
+/// Optional low-dimensional post-processing for the freestyle classical value.
+/// The readout is an odd monotone piecewise-linear map over normalized value,
+/// with fixed x knots {0, 0.5, 1, 2, 4, 8}. The knots live in config.toml so
+/// the underlying model artifact remains independently reproducible.
+struct ClassicalValueReadout
+{
+    static constexpr size_t KnotCount = 6;
+
+    bool                          knotsActive = false;
+    std::array<double, KnotCount> knots {};
+};
+
+extern ClassicalValueReadout CLASSICAL_VALUE_READOUT;
+
+void  refreshClassicalValueReadoutCache();
+Value mapClassicalValue(Value rawValue);
+
+inline bool isClassicalValueReadoutActive(Rule rule)
+{
+    return rule == FREESTYLE && CLASSICAL_VALUE_READOUT.knotsActive;
+}
 
 /// Get table index for rule and color.
 constexpr int tableIndex(Rule r, Color c)

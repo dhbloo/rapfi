@@ -23,9 +23,11 @@
 #include "../core/utils.h"
 #include "../search/searchthread.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -35,12 +37,8 @@
     #include <windows.h>
 #endif
 
-#ifdef _WIN32
-    #include <direct.h>
-    #define GETCWD _getcwd
-#else
+#ifndef _WIN32
     #include <unistd.h>
-    #define GETCWD getcwd
 #endif
 
 namespace Command {
@@ -48,46 +46,92 @@ namespace Command {
 namespace CommandLine {
 
     std::filesystem::path binaryDirectory;
+    std::filesystem::path executablePath;
+
+    namespace {
+
+#ifdef _WIN32
+        std::filesystem::path resolveExecutablePath(const char *)
+        {
+            std::vector<wchar_t> pathBuffer(256);
+            while (pathBuffer.size() <= 32768) {
+                DWORD length = GetModuleFileNameW(
+                    nullptr, pathBuffer.data(), static_cast<DWORD>(pathBuffer.size()));
+                if (length == 0)
+                    throw std::runtime_error("unable to resolve the executable path");
+                if (length < pathBuffer.size())
+                    return std::filesystem::path(pathBuffer.data(), pathBuffer.data() + length);
+                pathBuffer.resize(pathBuffer.size() * 2);
+            }
+            throw std::runtime_error("executable path exceeds the Windows path limit");
+        }
+#else
+        std::filesystem::path resolveExecutablePath(const char *argv0)
+        {
+#ifdef __EMSCRIPTEN__
+            // Emscripten uses a synthetic program name that has no backing file.
+            return std::filesystem::absolute(argv0);
+#else
+#ifdef __linux__
+            std::vector<char> procPath(256);
+            while (procPath.size() <= (1U << 20)) {
+                ssize_t length = readlink("/proc/self/exe", procPath.data(), procPath.size());
+                if (length < 0)
+                    break;
+                if (static_cast<size_t>(length) < procPath.size())
+                    return std::filesystem::path(procPath.data(),
+                                                 procPath.data() + length);
+                procPath.resize(procPath.size() * 2);
+            }
+#endif
+
+            std::filesystem::path argument(argv0);
+            std::error_code       ec;
+            if (argument.has_parent_path()) {
+                if (!std::filesystem::is_regular_file(argument, ec)
+                    || access(argument.c_str(), X_OK) != 0)
+                    throw std::runtime_error("argv[0] does not name an executable file");
+                auto resolved = std::filesystem::weakly_canonical(
+                    std::filesystem::absolute(argument), ec);
+                if (ec)
+                    throw std::runtime_error("unable to canonicalize the executable path");
+                return resolved;
+            }
+
+            if (const char *pathEnv = std::getenv("PATH")) {
+                std::string pathList(pathEnv);
+                if (pathList.empty() || pathList.back() == ':')
+                    pathList += '.';
+                std::stringstream paths(pathList);
+                std::string       directory;
+                while (std::getline(paths, directory, ':')) {
+                    std::filesystem::path candidate =
+                        (directory.empty() ? std::filesystem::current_path()
+                                           : std::filesystem::path(directory))
+                        / argument;
+                    if (!std::filesystem::is_regular_file(candidate, ec)
+                        || access(candidate.c_str(), X_OK) != 0) {
+                        ec.clear();
+                        continue;
+                    }
+                    auto resolved = std::filesystem::weakly_canonical(candidate, ec);
+                    if (!ec)
+                        return resolved;
+                }
+            }
+
+            throw std::runtime_error("unable to resolve the executable path through PATH");
+#endif
+        }
+#endif
+
+    }  // namespace
 
     void init(int argc, char *argv[])
     {
         (void)argc;
-#ifdef _WIN32
-        wchar_t wpath[1024] = {0};
-        GetModuleFileNameW(NULL, wpath, MAX_PATH);
-        binaryDirectory = wpath;
-        binaryDirectory.remove_filename();
-#else
-        std::string argv0;             // path+name of the executable binary, as given by argv[0]
-        std::string binaryPath;        // path of the executable
-        std::string workingDirectory;  // path of the working directory
-
-        // extract the path+name of the executable binary
-        argv0 = argv[0];
-
-        // extract the working directory
-        workingDirectory = "";
-        char  buff[40000];
-        char *cwd = GETCWD(buff, 40000);
-        if (cwd)
-            workingDirectory = cwd;
-
-        const std::string pathSeparator = "/";
-
-        // extract the binary directory path from argv0
-        binaryPath = argv0;
-        size_t pos = binaryPath.find_last_of("\\/");
-        if (pos == std::string::npos)
-            binaryPath = "." + pathSeparator;
-        else
-            binaryPath.resize(pos + 1);
-
-        // pattern replacement: "./" at the start of path is replaced by the working directory
-        if (binaryPath.find("." + pathSeparator) == 0)
-            binaryPath.replace(0, 1, workingDirectory);
-
-        binaryDirectory = binaryPath;
-#endif
+        executablePath  = resolveExecutablePath(argv[0]);
+        binaryDirectory = executablePath.parent_path();
     }
 
 }  // namespace CommandLine
@@ -101,14 +145,16 @@ bool allowInternalConfig = true;
 bool loadConfig()
 {
     // Absolute path will be used directly
-    if (configPath.is_absolute())
+    if (configPath.is_absolute()) {
         resolvedConfigPath = configPath;
+    }
     // Try resolve relative path from the current working directory
     else if (std::filesystem::exists(configPath))
-        resolvedConfigPath = configPath;
+        resolvedConfigPath = std::filesystem::absolute(configPath);
     // If can not be found in current directory, try to resolve from the binary directory
     else if (std::filesystem::exists(CommandLine::binaryDirectory / configPath))
-        resolvedConfigPath = CommandLine::binaryDirectory / configPath;
+        resolvedConfigPath =
+            std::filesystem::absolute(CommandLine::binaryDirectory / configPath);
     // Otherwise, we will try to load from the internal config if allowed.
     else
         resolvedConfigPath.clear();
@@ -137,6 +183,11 @@ bool loadConfig()
     return success;
 }
 
+std::filesystem::path getConfigFullPath()
+{
+    return resolvedConfigPath;
+}
+
 std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
 {
     // First check if the modelPath is absolute
@@ -145,20 +196,20 @@ std::filesystem::path getModelFullPath(std::filesystem::path modelPath)
 
     // Then check if the modelPath is relative to the current working directory
     if (std::filesystem::exists(modelPath))
-        return modelPath;
+        return std::filesystem::absolute(modelPath);
 
     // If not found, and we did load from external config, check if the modelPath
     // is relative to the config file directory
     if (!resolvedConfigPath.empty()) {
         auto modelPathinConfigDir = resolvedConfigPath.parent_path() / modelPath;
         if (std::filesystem::exists(modelPathinConfigDir))
-            return modelPathinConfigDir;
+            return std::filesystem::absolute(modelPathinConfigDir);
     }
 
     // If not found, check if the modelPath is relative to the binary directory
     auto modelPathinBinaryDir = CommandLine::binaryDirectory / modelPath;
     if (std::filesystem::exists(modelPathinBinaryDir))
-        return modelPathinBinaryDir;
+        return std::filesystem::absolute(modelPathinBinaryDir);
 
     // If still not found, just return the original modelPath
     return modelPath;

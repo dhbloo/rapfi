@@ -178,6 +178,7 @@ set(CORE_SOURCES
     database/renlib.cpp
     database/yxdbstorage.cpp
 
+    eval/classicalpolicy.cpp
     eval/eval.cpp
     eval/evalconfig.cpp
     eval/evaluator.cpp
@@ -256,6 +257,7 @@ set(HEADERS
     database/renlib.h
     database/yxdbstorage.h
 
+    eval/classicalpolicy.h
     eval/eval.h
     eval/evalconfig.h
     eval/evaluator.h

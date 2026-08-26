@@ -60,12 +60,10 @@ public:
 private:
     enum PickType { Next, Best };
     enum ScoreType {
-        ATTACK       = 0b01,
-        DEFEND       = 0b10,
-        BALANCED     = ATTACK | DEFEND,
-        POLICY       = 0b100,
-        MAIN_HISTORY = 0b1000,
-        COUNTER_MOVE = 0b10000,
+        CLASSICAL    = 0b0001,
+        POLICY       = 0b0010,
+        MAIN_HISTORY = 0b0100,
+        COUNTER_MOVE = 0b1000,
     };
 
     template <PickType T, typename Pred>
@@ -80,23 +78,22 @@ private:
     ScoredMove *begin() { return curMove; }
     ScoredMove *end() { return endMove; }
 
-    const Board              &board;
-    const MainHistory        *mainHistory;
-    const CounterMoveHistory *counterMoveHistory;
-    int8_t                    stage;
-    Rule                      rule;
-    Pos                       ttMove;
-    bool                      allowPlainB4InVCF;
-    bool                      hasPolicy;
-    bool                      useNormalizedPolicy;
+    const Board       &board;
+    MoveHistoryScoring historyScoring;
+    int8_t             stage;
+    Rule               rule;
+    Pos                ttMove;
+    bool               allowPlainB4InVCF;
+    bool               hasPolicy;
+    bool               useNormalizedPolicy;
     // BUG: stored but not yet applied - scoreAllMoves() calls applySoftmax() at the
     // default temperature 1.0. Keep the plumbing; wiring it is a pending (SPRT-gated) fix.
-    float                     normalizedPolicyTemp;
-    Score                     curScore;
-    Score                     maxPolicyScore;
-    float                     curPolicy;
-    ScoredMove               *curMove, *endMove;
-    ScoredMove                moves[MAX_MOVES];
+    float       normalizedPolicyTemp;
+    Score       curScore;
+    Score       maxPolicyScore;
+    float       curPolicy;
+    ScoredMove *curMove, *endMove;
+    ScoredMove  moves[MAX_MOVES];
 };
 
 template <>
@@ -109,11 +106,10 @@ struct MovePicker::ExtraArgs<MovePicker::ROOT>
 template <>
 struct MovePicker::ExtraArgs<MovePicker::MAIN>
 {
-    Pos                 ttMove;
-    MainHistory        *mainHistory;
-    CounterMoveHistory *counterMoveHistory;
-    bool                useNormalizedPolicy  = false;
-    float               normalizedPolicyTemp = 1.0f;
+    Pos                ttMove;
+    MoveHistoryScoring historyScoring;
+    bool               useNormalizedPolicy  = false;
+    float              normalizedPolicyTemp = 1.0f;
 };
 
 template <>
