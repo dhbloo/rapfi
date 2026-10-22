@@ -35,7 +35,7 @@ class Evaluator;  // forward declaration (eval/evaluator.h)
 /// EvaluatorConfig groups the classical/evaluator switching margins and draw
 /// adjustments read from "[model.evaluator]". One mutable global instance
 /// (EvalCfg) holds the live configuration; config.cpp's readEvaluator fills it
-/// (behind the type+weights gate - a margins-only table has no effect), and
+/// (a present table must include a type and nonempty weights), and
 /// the gomocup INFO handlers assign the draw fields directly.
 struct EvaluatorConfig
 {

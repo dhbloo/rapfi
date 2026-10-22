@@ -23,6 +23,8 @@
 #include "searcher.h"
 #include "searchstack.h"
 
+#include <limits>
+
 namespace {
 
 /// History and stats update bonus, based on depth
@@ -31,9 +33,33 @@ constexpr int statBonus(Depth d)
     return std::min(static_cast<int>(25 * d * d + 105 * d - 157), 8927);
 }
 
+constexpr int MainHistoryAttackWeight[RULE_NB + 1] = {510, 512, 512, 512};
+constexpr int MainHistoryQuietWeight[RULE_NB + 1]  = {257, 256, 256, 256};
+constexpr int CounterMoveBonus[RULE_NB + 1]        = {21, 21, 21, 21};
+
+constexpr int historyTableIndex(Rule rule, Color sideToMove)
+{
+    return int(rule) + (rule == RENJU ? int(sideToMove) : 0);
+}
+
+static_assert(std::numeric_limits<int>::max() >= 1LL * 10692 * 2048);
+
 }  // namespace
 
 namespace Search::AB {
+
+MoveHistoryScoring makeMoveHistoryScoring(Rule                      rule,
+                                          Color                     sideToMove,
+                                          const MainHistory        &mainHistory,
+                                          const CounterMoveHistory &counterMoveHistory)
+{
+    int table = historyTableIndex(rule, sideToMove);
+    return {&mainHistory,
+            &counterMoveHistory,
+            MainHistoryAttackWeight[table],
+            MainHistoryQuietWeight[table],
+            CounterMoveBonus[table]};
+}
 
 void HistoryTracker::addSearchedMove(Pos move, Pos currentBestMove)
 {

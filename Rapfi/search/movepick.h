@@ -21,6 +21,7 @@
 #include "../game/movegen.h"
 #include "history.h"
 
+
 namespace Search {
 
 /// MovePicker class is used to pick one legal move at a time from the current
@@ -48,7 +49,8 @@ public:
     /// Gets the next move in the sorted move list.
     [[nodiscard]] Pos operator()();
 
-    /// Whether this movepicker has policy score from the evaluator.
+    /// Whether evaluator-policy search heuristics may use this picker's scores.
+    /// Classical scoring leaves this false; forced one-hot normalization also sets it.
     bool hasPolicyScore() const { return hasPolicy; }
     /// Whether this movepicker computes normalized policy score.
     bool hasNormalizedPolicy() const { return useNormalizedPolicy; }
@@ -60,12 +62,10 @@ public:
 private:
     enum PickType { Next, Best };
     enum ScoreType {
-        ATTACK       = 0b01,
-        DEFEND       = 0b10,
-        BALANCED     = ATTACK | DEFEND,
-        POLICY       = 0b100,
-        MAIN_HISTORY = 0b1000,
-        COUNTER_MOVE = 0b10000,
+        CLASSICAL_ONLY = 0,
+        POLICY         = 0b001,
+        MAIN_HISTORY   = 0b010,
+        COUNTER_MOVE   = 0b100,
     };
 
     template <PickType T, typename Pred>
@@ -73,30 +73,30 @@ private:
     template <ScoreType T>
     void scoreAllMoves();
     /// Score all generated moves and partial-sort them best-first: by policy when
-    /// normalized policy is enabled, otherwise by classical scores plus the extra
-    /// heuristic terms in `ExtraFlags`.
+    /// normalized policy is enabled, otherwise by source scores plus the extra
+    /// heuristic terms in `ExtraFlags`. The source is evaluator policy when available,
+    /// with Classical scoring as the fallback. Normalized priors omit history terms.
     template <ScoreType ExtraFlags>
-    void        scoreAndSortMoves();
+    void scoreAndSortMoves();
     ScoredMove *begin() { return curMove; }
     ScoredMove *end() { return endMove; }
 
-    const Board              &board;
-    const MainHistory        *mainHistory;
-    const CounterMoveHistory *counterMoveHistory;
-    int8_t                    stage;
-    Rule                      rule;
-    Pos                       ttMove;
-    bool                      allowPlainB4InVCF;
-    bool                      hasPolicy;
-    bool                      useNormalizedPolicy;
+    const Board       &board;
+    MoveHistoryScoring historyScoring;
+    int8_t             stage;
+    Rule               rule;
+    Pos                ttMove;
+    bool               allowPlainB4InVCF;
+    bool               hasPolicy;
+    bool               useNormalizedPolicy;
     // BUG: stored but not yet applied - scoreAllMoves() calls applySoftmax() at the
     // default temperature 1.0. Keep the plumbing; wiring it is a pending (SPRT-gated) fix.
-    float                     normalizedPolicyTemp;
-    Score                     curScore;
-    Score                     maxPolicyScore;
-    float                     curPolicy;
-    ScoredMove               *curMove, *endMove;
-    ScoredMove                moves[MAX_MOVES];
+    float       normalizedPolicyTemp;
+    Score       curScore;
+    Score       maxPolicyScore;
+    float       curPolicy;
+    ScoredMove *curMove, *endMove;
+    ScoredMove  moves[MAX_MOVES];
 };
 
 template <>
@@ -109,11 +109,10 @@ struct MovePicker::ExtraArgs<MovePicker::ROOT>
 template <>
 struct MovePicker::ExtraArgs<MovePicker::MAIN>
 {
-    Pos                 ttMove;
-    MainHistory        *mainHistory;
-    CounterMoveHistory *counterMoveHistory;
-    bool                useNormalizedPolicy  = false;
-    float               normalizedPolicyTemp = 1.0f;
+    Pos                ttMove;
+    MoveHistoryScoring historyScoring;
+    bool               useNormalizedPolicy  = false;
+    float              normalizedPolicyTemp = 1.0f;
 };
 
 template <>

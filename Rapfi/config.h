@@ -73,11 +73,13 @@ extern GeneralConfig GeneralCfg;
 /// @return True if config is loaded successfully.
 bool loadConfig(std::istream &configStream);
 
-/// Load a LZ4 compressed classical evaluation model from a binary stream.
+/// Load the current LZ4-compressed classical model: base tables and scale followed
+/// by the required v8 four-table compact policy payload.
 /// @return Returns true if loaded successfully, otherwise returns false.
 bool loadModel(std::istream &inStream);
 
-/// Exports current classic evaluation model to a binary stream.
+/// Export base tables, scale and all four compact policy tables in the current format.
+/// Compiled policy blend weights are not part of this binary.
 void exportModel(std::ostream &outStream);
 
 }  // namespace Config

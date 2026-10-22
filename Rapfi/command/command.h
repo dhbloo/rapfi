@@ -18,8 +18,11 @@
 
 #pragma once
 
+#include "../core/types.h"
+
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace Command {
 
@@ -65,6 +68,18 @@ bool loadModelFromFile(std::filesystem::path modelPath);
 
 // -------------------------------------------------
 // Command modules entry
+
+/// One position of the built-in benchmark suite: rule, board size, and the
+/// opening moves in the position-string format of parsePositionString().
+struct BenchPosition
+{
+    Rule        rule;
+    int         boardSize;
+    std::string position;
+};
+
+/// The built-in benchmark position set backing benchmark().
+const std::vector<BenchPosition> &benchPositions();
 
 void gomocupLoop();
 void benchmark();

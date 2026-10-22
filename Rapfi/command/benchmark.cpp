@@ -62,6 +62,18 @@ static const std::vector<BenchEntry> benchSet = {
     {RENJU, 15, 19, "h8h9h6i10i6i9g9g8j11i7"},
 };
 
+const std::vector<Command::BenchPosition> &Command::benchPositions()
+{
+    static const std::vector<BenchPosition> positions = [] {
+        std::vector<BenchPosition> list;
+        list.reserve(benchSet.size());
+        for (const BenchEntry &entry : benchSet)
+            list.push_back({entry.rule, entry.boardSize, entry.positionString});
+        return list;
+    }();
+    return positions;
+}
+
 struct EngineState
 {
     size_t                threadNum;

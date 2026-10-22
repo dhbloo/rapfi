@@ -18,6 +18,7 @@
 
 #include "movepick.h"
 
+#include "../eval/classicalpolicy.h"
 #include "../eval/evaluator.h"
 #include "../eval/scoretables.h"
 #include "../game/board.h"
@@ -25,6 +26,9 @@
 #include "searchthread.h"
 
 #include <algorithm>
+#include <optional>
+#include <array>
+#include <limits>
 
 namespace {
 
@@ -109,8 +113,7 @@ namespace Search {
 template <>
 MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT> args)
     : board(board)
-    , mainHistory(nullptr)
-    , counterMoveHistory(nullptr)
+    , historyScoring()
     , stage(ALLMOVES)
     , rule(rule)
     , ttMove(Pos::NONE)
@@ -141,7 +144,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
         endMove = generate<DEFEND_FOUR | ALL>(board, curMove);
         endMove = generateVCFMoves(rule, board, endMove);
         if (useNormalizedPolicy)
-            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            scoreAllMoves<POLICY>();
     }
     else if (board.p4Count(oppo, C_BLOCK4_FLEX3)
              && (rule != Rule::RENJU || validateOpponentCMove(board))) {
@@ -153,12 +156,12 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
             endMove = generateVCFMoves(rule, board, endMove);
 
         if (useNormalizedPolicy)
-            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            scoreAllMoves<POLICY>();
     }
     else {
         endMove = generate<ALL>(board, curMove);
         if (useNormalizedPolicy)
-            scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+            scoreAllMoves<POLICY>();
     }
 
     if (useNormalizedPolicy)
@@ -169,15 +172,14 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::ROOT
 template <>
 MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN> args)
     : board(board)
-    , mainHistory(args.mainHistory)
-    , counterMoveHistory(args.counterMoveHistory)
+    , historyScoring(args.historyScoring)
     , rule(rule)
     , allowPlainB4InVCF(false)
     , hasPolicy(false)
     , useNormalizedPolicy(args.useNormalizedPolicy)
     , normalizedPolicyTemp(args.normalizedPolicyTemp)
 {
-    Color oppo = ~board.sideToMove();
+    Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
 
     if (board.p4Count(oppo, A_FIVE)) {
@@ -212,7 +214,7 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
 template <>
 MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF> args)
     : board(board)
-    , mainHistory(nullptr)
+    , historyScoring()
     , rule(rule)
     , allowPlainB4InVCF(
           args.depth >= DEPTH_QVCF_FULL
@@ -255,8 +257,10 @@ Pos MovePicker::pickNextMove(Pred filter)
             std::swap(*curMove,
                       *std::min_element(curMove, endMove, ScoredMove::ScoreComparator {}));
 
-        if (curMove->pos != ttMove && (!forbidden || !board.checkForbiddenPoint(curMove->pos))
-            && filter()) {
+        const bool isTtMove    = curMove->pos == ttMove;
+        const bool isForbidden = forbidden && board.checkForbiddenPoint(curMove->pos);
+        const bool accepted    = !isTtMove && !isForbidden && filter();
+        if (accepted) {
             curScore = curMove->score;
             if (useNormalizedPolicy)
                 curPolicy = curMove->policy;
@@ -281,8 +285,12 @@ void MovePicker::scoreAllMoves()
     Color               self = board.sideToMove(), oppo = ~self;
     PolicyBuffer       *policyBuf = reinterpret_cast<PolicyBuffer *>(&policyBufferStorage);
     Evaluator *evaluator = board.thisThread() ? board.thisThread()->evaluator.get() : nullptr;
+    const bool useEvaluatorPolicy = bool(Type & POLICY) && evaluator;
+    std::optional<Evaluation::ClassicalPolicyScorer> classicalPolicy;
+    if (!useEvaluatorPolicy)
+        classicalPolicy.emplace(rule, board);
 
-    if (bool(Type & POLICY) && evaluator) {
+    if (useEvaluatorPolicy) {
         new (policyBuf) Evaluation::PolicyBuffer(board.size());
 
         // Set compute flag for all moves in move list
@@ -295,47 +303,44 @@ void MovePicker::scoreAllMoves()
     }
 
     for (auto &m : *this) {
-        if (bool(Type & POLICY) && evaluator) {
-            m.score = m.rawScore = policyBuf->score(m.pos);
-            maxPolicyScore       = std::max(maxPolicyScore, m.rawScore);
+        int score;
+        if (useEvaluatorPolicy) {
+            score = m.rawScore = policyBuf->score(m.pos);
+            maxPolicyScore     = std::max(maxPolicyScore, m.rawScore);
         }
         else {
-            // Scores are not cached on the cell: recompute both sides' move scores from the
-            // pattern codes (same values as Board::score(), batched for the whole list).
             const auto [pcodeBlack, pcodeWhite] = board.pcodePair(m.pos);
-            MoveScorePair scoreBlack      = Evaluation::getMoveScorePair(rule, BLACK, pcodeBlack);
-            MoveScorePair scoreWhite      = Evaluation::getMoveScorePair(rule, WHITE, pcodeWhite);
-            Score         scores[SIDE_NB] = {
-                Score(scoreBlack.self + scoreWhite.oppo),
-                Score(scoreWhite.self + scoreBlack.oppo),
-            };
-            if constexpr (bool(Type & BALANCED))
-                m.score = m.rawScore = scores[self];
-            else if constexpr (bool(Type & ATTACK))
-                m.score = m.rawScore = (scores[self] * 2 + scores[oppo]) / 3;
-            else if constexpr (bool(Type & DEFEND))
-                m.score = m.rawScore = (scores[self] + scores[oppo] * 2) / 3;
-            else
-                assert(false && "incorrect score type");
+            score = m.rawScore = classicalPolicy->score(pcodeBlack,
+                                                        pcodeWhite,
+                                                        board.pattern4(m.pos, self),
+                                                        board.pattern4(m.pos, oppo));
         }
 
-        if (bool(Type & MAIN_HISTORY) && mainHistory) {
-            if (board.pattern4(m.pos, self) >= H_FLEX3)
-                m.score += (*mainHistory)[self][m.pos][HIST_ATTACK] / 128;
-            else
-                m.score += (*mainHistory)[self][m.pos][HIST_QUIET] / 256;
-        }
-
-        if (bool(Type & COUNTER_MOVE) && counterMoveHistory) {
-            if (Pos lastMove = board.getLastMove(); board.isInBoard(lastMove)) {
-                const int CounterMoveBonus = 21;
-                auto [counterMove, counterMoveP4] =
-                    (*counterMoveHistory)[oppo][lastMove.moveIndex()].get();
-
-                if (counterMove == m.pos && counterMoveP4 <= board.pattern4(m.pos, self))
-                    m.score += CounterMoveBonus;
+        int historyBonus = 0;
+        if (bool(Type & MAIN_HISTORY) && historyScoring.mainHistory) {
+            if (board.pattern4(m.pos, self) >= H_FLEX3) {
+                historyBonus = (*historyScoring.mainHistory)[self][m.pos][HIST_ATTACK]
+                               * historyScoring.attackWeight / MoveHistoryScoring::WeightScale;
+            }
+            else {
+                historyBonus = (*historyScoring.mainHistory)[self][m.pos][HIST_QUIET]
+                               * historyScoring.quietWeight / MoveHistoryScoring::WeightScale;
             }
         }
+
+        int counterMoveBonus = 0;
+        if (bool(Type & COUNTER_MOVE) && historyScoring.counterMoveHistory) {
+            if (Pos lastMove = board.getLastMove(); board.isInBoard(lastMove)) {
+                auto [counterMove, counterMoveP4] =
+                    (*historyScoring.counterMoveHistory)[oppo][lastMove.moveIndex()].get();
+
+                if (counterMove == m.pos && counterMoveP4 <= board.pattern4(m.pos, self)) {
+                    counterMoveBonus = historyScoring.counterMoveBonus;
+                }
+            }
+        }
+
+        m.score = Evaluation::clampMoveScore(score + historyBonus + counterMoveBonus);
     }
 
     // Compute normalized policy score if needed
@@ -369,11 +374,11 @@ template <MovePicker::ScoreType ExtraFlags>
 void MovePicker::scoreAndSortMoves()
 {
     if (useNormalizedPolicy) {
-        scoreAllMoves<ScoreType(BALANCED | POLICY)>();
+        scoreAllMoves<POLICY>();
         fastPartialSort(curMove, endMove, 0, ScoredMove::PolicyComparator {});
     }
     else {
-        scoreAllMoves<ScoreType(BALANCED | POLICY | ExtraFlags)>();
+        scoreAllMoves<ScoreType(POLICY | ExtraFlags)>();
         fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
     }
 }
@@ -455,7 +460,7 @@ top:
                                                                     RANGE_SQUARE2_LINE4.size());
         }
 
-        scoreAllMoves<BALANCED>();
+        scoreAllMoves<CLASSICAL_ONLY>();
         fastPartialSort(curMove, endMove, 0, ScoredMove::ScoreComparator {});
 
         stage = ALLMOVES;
@@ -468,5 +473,6 @@ top:
     assert(false && "unknown MovePicker stage occurred");
     return Pos::NONE;
 }
+
 
 }  // namespace Search

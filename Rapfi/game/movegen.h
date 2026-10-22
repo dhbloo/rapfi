@@ -57,10 +57,11 @@ constexpr GenType operator|(GenType a, GenType b)
 struct ScoredMove
 {
     Pos   pos;
-    Score score;  ///< Sorting key: raw score blended with history and other heuristics.
+    Score score;  ///< Saturated sorting key: source score plus history and other heuristics.
+    // The source score is replaced by a prior when normalization is requested.
     union {
-        Score rawScore;  ///< Raw score from the pattern score table or evaluator.
-        float policy;    ///< Normalized policy prior from the neural network.
+        Score rawScore;  ///< Evaluator score, or saturated sum of Classical base and residual.
+        float policy;    ///< Normalized prior from either source; excludes history terms.
     };
 
          operator Pos() const { return pos; }

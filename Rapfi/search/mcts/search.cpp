@@ -82,10 +82,9 @@ Value vcf(Rule rule, Board &board, int ply)
 template <Rule Rule>
 Value vcfsearch(Board &board, SearchStack *ss, int ply, Value alpha, Value beta, Depth depth)
 {
-    Color                self = board.sideToMove(), oppo = ~self;
+    Color                self = board.sideToMove();
     SearchThread        *thisThread = board.thisThread();
     const SearchOptions &options    = thisThread->options();
-    int                  moveCount  = 0;
     Value                bestValue  = -VALUE_INFINITE;
     Value                oldAlpha   = alpha;  // Flag BOUND_EXACT when value above alpha in PVNode
     Pos                  bestMove   = Pos::NONE;
@@ -425,8 +424,7 @@ bool expandNode(Node &node, const SearchOptions &options, const Board &board, in
                       board,
                       MovePicker::ExtraArgs<MovePicker::MAIN> {
                           Pos::NONE,
-                          nullptr,
-                          nullptr,
+                          {},
                           true,
                           PolicyTemperature,
                       });
@@ -1237,8 +1235,7 @@ void MCTSSearcher::updateRootMovesData(SearchThread &th)
 
     std::vector<uint32_t> edgeIndices;
     std::vector<float>    selectionValues, lcbValues;
-    int                   bestChildIndex =
-        selectBestmoveOfChildNode(*graph.root, edgeIndices, selectionValues, lcbValues, true);
+    selectBestmoveOfChildNode(*graph.root, edgeIndices, selectionValues, lcbValues, true);
     uint32_t maxNumRootMovesToPrint =
         std::max<uint32_t>(th.options().multiPV, SearchCfg.maxNonPVRootmovesToPrint);
 

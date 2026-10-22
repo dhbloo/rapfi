@@ -27,6 +27,11 @@ namespace Search::AB {
 struct ABSearchData;  // forward declaration
 struct SearchStack;   // forward declaration
 
+MoveHistoryScoring makeMoveHistoryScoring(Rule                      rule,
+                                          Color                     sideToMove,
+                                          const MainHistory        &mainHistory,
+                                          const CounterMoveHistory &counterMoveHistory);
+
 /// HistoryTracker is used to record all information needed to update
 /// move heuristics in one search ply in ABSearch.
 struct HistoryTracker

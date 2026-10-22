@@ -528,8 +528,11 @@ Value search(Rule         rule,
                       board,
                       MovePicker::ExtraArgs<MovePicker::MAIN> {
                           thisThread->rootMoves[0].pv[0],
-                          &thisThread->searchDataAs<ABSearchData>()->mainHistory,
-                          &thisThread->searchDataAs<ABSearchData>()->counterMoveHistory,
+                          makeMoveHistoryScoring(
+                              rule,
+                              board.sideToMove(),
+                              thisThread->searchDataAs<ABSearchData>()->mainHistory,
+                              thisThread->searchDataAs<ABSearchData>()->counterMoveHistory),
                       });
 
         // Refresh root move index in balance2Moves
@@ -1018,7 +1021,7 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     }
 
     int            moveCount = 0, nonMatedCount = 0;
-    Value          bestValue = -VALUE_INFINITE, maxValue = VALUE_INFINITE, value;
+    Value          bestValue = -VALUE_INFINITE, value;
     Pos            bestMove = Pos::NONE;
     HistoryTracker histTracker(board, ss);
 
@@ -1214,8 +1217,10 @@ moves_loop:
                   board,
                   MovePicker::ExtraArgs<MovePicker::MAIN> {
                       ttMove,
-                      &searchData->mainHistory,
-                      &searchData->counterMoveHistory,
+                      makeMoveHistoryScoring(Rule,
+                                             board.sideToMove(),
+                                             searchData->mainHistory,
+                                             searchData->counterMoveHistory),
                   });
 
     // Step 11. Loop through all legal moves until no moves remain

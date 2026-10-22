@@ -18,8 +18,8 @@
 
 #include "eval.h"
 
-#include "evalconfig.h"
 #include "../game/board.h"
+#include "evalconfig.h"
 #include "evaluator.h"
 
 #include <algorithm>
@@ -68,7 +68,8 @@ int makeThreatMask(const StateInfo &st, Color self)
 template <Rule R>
 inline Value evaluateThreat(const StateInfo &st, Color self)
 {
-    return (Value)Evaluation::EVALS_THREAT[Evaluation::tableIndex(R, self)][makeThreatMask(st, self)];
+    return (
+        Value)Evaluation::EVALS_THREAT[Evaluation::tableIndex(R, self)][makeThreatMask(st, self)];
 }
 
 /// Evaluates basic patterns on board.
@@ -84,13 +85,21 @@ inline int classicalEvalMargin(Value bound)
     float winLossRate = 2 * (Evaluation::valueToWinRate(bound) - 0.5f);
     float x           = EvalCfg.marginWinLossScale * winLossRate;
     float x2          = x * x;
-    return (int)(EvalCfg.marginScale
-                 * ::expf(-::powf(x2, EvalCfg.marginWinLossExponent)));
+    return (int)(EvalCfg.marginScale * ::expf(-::powf(x2, EvalCfg.marginWinLossExponent)));
 }
 
 }  // namespace
 
 namespace Evaluation {
+
+// Scaling factor shared by value/win-rate conversions and model installation.
+float ScalingFactor = 200.0f;
+
+void setScalingFactor(float scale)
+{
+    assert(std::isfinite(scale) && scale > 0.0f);
+    ScalingFactor = scale;
+}
 
 /// Calculates the final evaluation of a board.
 /// @note Board must have at least one stone placed (`ply() > 0`).
@@ -103,18 +112,18 @@ Value evaluate(const Board &board, Value alpha, Value beta)
     const StateInfo &st0 = board.stateInfo();
     const StateInfo &st1 = board.stateInfo(1);
 
-    Value basicEval  = (evaluateBasic(st0, self) + evaluateBasic(st1, self)) / 2;
-    Value threatEval = evaluateThreat<R>(st0, self);
-    Value eval       = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+    Value basicEval     = (evaluateBasic(st0, self) + evaluateBasic(st1, self)) / 2;
+    Value threatEval    = evaluateThreat<R>(st0, self);
+    Value classicalEval = std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
 
     if (board.evaluator()) {
         // Use evaluator eval if classical eval are in alpha-beta window margin
-        int margin = classicalEvalMargin(eval);
-        if (eval >= alpha - margin && eval <= beta + margin)
+        int margin = classicalEvalMargin(classicalEval);
+        if (classicalEval >= alpha - margin && classicalEval <= beta + margin)
             return computeEvaluatorValue(board).value();
     }
 
-    return eval;
+    return classicalEval;
 }
 
 template Value evaluate<FREESTYLE>(const Board &, Value, Value);
@@ -146,9 +155,7 @@ Value evaluate(const Board &board, Rule rule)
         case Rule::RENJU: threatEval = evaluateThreat<Rule::RENJU>(st, self); break;
         }
 
-        Value eval = basicEval + threatEval;
-
-        return std::clamp(eval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
+        return std::clamp(basicEval + threatEval, VALUE_EVAL_MIN, VALUE_EVAL_MAX);
     }
 }
 
