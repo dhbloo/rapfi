@@ -23,6 +23,7 @@
 #include "core/iohelper.h"
 #include "database/dbconfig.h"
 #include "eval/classicalpolicy.h"
+#include "eval/eval.h"
 #include "eval/evalconfig.h"
 #include "eval/scoretables.h"
 #include "game/pattern.h"
@@ -109,6 +110,7 @@ struct PendingConfig
     Search::TimeConfig                                     time     = Search::TimeCfg;
     Database::DatabaseConfig                               database = Database::DatabaseCfg;
     Evaluation::EvaluatorConfig                            eval     = Evaluation::EvalCfg;
+    Evaluation::ClassicalValueReadouts valueReadouts = Evaluation::classicalValueReadouts();
 
     /// "[search] default_searcher" was present: switch the searcher at commit.
     std::optional<std::string> searcherName;
@@ -193,6 +195,7 @@ bool Config::loadConfig(std::istream &configStream)
     Search::TimeCfg                      = pending.time;
     Database::DatabaseCfg                = pending.database;
     Evaluation::EvalCfg                  = pending.eval;
+    Evaluation::installClassicalValueReadouts(pending.valueReadouts);
 
     // The searcher switch precedes the TT resize: setupSearcher carries the
     // old searcher's memory limit onto the new one, and the resize then
@@ -411,6 +414,8 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
     const Rule  Rules[]    = {FREESTYLE, STANDARD, RENJU};
     const char *RuleName[] = {"freestyle", "standard", "renju"};
 
+    pending.valueReadouts = {};
+
     std::string modelPath = t.get_as<std::string>("binary_file").value_or("");
     if (!modelPath.empty()) {
         if (!Command::loadModelFromFile(modelPath))
@@ -474,6 +479,28 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
     double configuredScalingFactor =
         t.get_as<double>("scaling_factor").value_or(Evaluation::ScalingFactor);
     float runtimeScalingFactor = static_cast<float>(configuredScalingFactor);
+    auto  readReadoutKnots     = [&](const char *key, size_t readoutIndex) {
+        auto readoutKnots = t.get_array_of<double>(key);
+        if (!readoutKnots)
+            return;
+        if (readoutKnots->size() != Evaluation::ClassicalValueReadout::KnotCount)
+            throw std::runtime_error(std::string(key) + " must contain 6 values");
+        for (size_t i = 0; i < readoutKnots->size(); i++) {
+            double value = (*readoutKnots)[i];
+            if (!std::isfinite(value) || value < 0.0 || value > 64.0 || (i == 0 && value != 0.0)
+                || (i != 0 && value < (*readoutKnots)[i - 1]))
+                throw std::runtime_error(std::string(key)
+                                         + " must be finite, monotone, start at zero, and not "
+                                                "exceed 64");
+            pending.valueReadouts[readoutIndex].knots[i] = value;
+        }
+        pending.valueReadouts[readoutIndex].knotsActive = true;
+    };
+    readReadoutKnots("value_readout_knots", FREESTYLE);
+    readReadoutKnots("value_readout_knots_standard", STANDARD);
+    readReadoutKnots("value_readout_knots_renju_black", Evaluation::tableIndex(RENJU, BLACK));
+    readReadoutKnots("value_readout_knots_renju_white", Evaluation::tableIndex(RENJU, WHITE));
+
     if (!std::isfinite(runtimeScalingFactor) || runtimeScalingFactor <= 0.0f)
         throw std::runtime_error("classical model requires a finite positive scaling_factor");
     Evaluation::setScalingFactor(runtimeScalingFactor);

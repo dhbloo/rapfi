@@ -83,7 +83,7 @@ static_assert(clampMoveScore(-40000) == std::numeric_limits<Score>::min());
 
 /// Scaling factor of the sigmoid that maps Value to winning rate.
 extern float ScalingFactor;
-/// Install the finite positive scale used by value/win-rate conversions.
+/// Install a finite positive scale and refresh scale-dependent readout caches.
 void setScalingFactor(float scale);
 
 /// Eval and score tables. Renju is asymmetric, so it gets separate black/white

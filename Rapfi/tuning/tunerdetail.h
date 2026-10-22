@@ -30,7 +30,7 @@
 
 namespace Tuning::detail {
 
-inline constexpr Float  CoeffScale = 8;
+inline constexpr Float  CoeffScale = 256;
 inline constexpr size_t MiB        = 1024 * 1024;
 
 inline constexpr size_t WorstTermsPerSample = 4 * MAX_MOVES + 1;

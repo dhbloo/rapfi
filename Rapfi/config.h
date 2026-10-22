@@ -74,12 +74,13 @@ extern GeneralConfig GeneralCfg;
 bool loadConfig(std::istream &configStream);
 
 /// Load the current LZ4-compressed classical model: base tables and scale followed
-/// by the required v8 four-table compact policy payload.
+/// by the required v8 four-table compact policy payload. Retains configured readout
+/// knots and rebuilds their lookup for the installed scale.
 /// @return Returns true if loaded successfully, otherwise returns false.
 bool loadModel(std::istream &inStream);
 
 /// Export base tables, scale and all four compact policy tables in the current format.
-/// Compiled policy blend weights are not part of this binary.
+/// Compiled blend weights and TOML readout knots are not part of this binary.
 void exportModel(std::ostream &outStream);
 
 }  // namespace Config

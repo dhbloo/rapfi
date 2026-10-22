@@ -61,25 +61,53 @@ inline bool checkEqual(Float a, Float b)
 template <typename Collector>
 void collectEvalCoeffs(Rule r, const Evaluation::EvalInfo &evalInfo, Collector collect)
 {
-    Color self = evalInfo.self, opponent = ~self;
+    Color      self = evalInfo.self, opponent = ~self;
+    const int *blendWeights =
+        Evaluation::ClassicalValueBlendWeights[Evaluation::tableIndex(r, self)];
+
+    auto collectWeighted = [&](int coeff, int weight, void *addr) {
+        int64_t weightedCoeff = int64_t(coeff) * int64_t(weight);
+        while (weightedCoeff != 0) {
+            int64_t chunk = std::clamp(weightedCoeff,
+                                       int64_t(std::numeric_limits<int16_t>::min()),
+                                       int64_t(std::numeric_limits<int16_t>::max()));
+            collect(int(chunk), Evaluation::ClassicalValueBlend::Scale, addr);
+            weightedCoeff -= chunk;
+        }
+    };
+
     for (size_t pcode = 0; pcode < PCODE_NB; pcode++) {
         int coeff[2][SIDE_NB] = {{evalInfo.plyBack[0].pcodeCount[BLACK][pcode],
                                   evalInfo.plyBack[0].pcodeCount[WHITE][pcode]},
                                  {evalInfo.plyBack[1].pcodeCount[BLACK][pcode],
                                   evalInfo.plyBack[1].pcodeCount[WHITE][pcode]}};
         if (r == RENJU) {
-            collect(coeff[0][self] + coeff[1][self], 2, &Evaluation::EVALS[r + self][pcode]);
-            collect(-coeff[0][opponent] - coeff[1][opponent],
-                    2,
-                    &Evaluation::EVALS[r + opponent][pcode]);
+            collectWeighted(coeff[0][self],
+                            blendWeights[Evaluation::ClassicalValueBlend::CURRENT_BASIC],
+                            &Evaluation::EVALS[r + self][pcode]);
+            collectWeighted(coeff[1][self],
+                            blendWeights[Evaluation::ClassicalValueBlend::PREVIOUS_BASIC],
+                            &Evaluation::EVALS[r + self][pcode]);
+            collectWeighted(-coeff[0][opponent],
+                            blendWeights[Evaluation::ClassicalValueBlend::CURRENT_BASIC],
+                            &Evaluation::EVALS[r + opponent][pcode]);
+            collectWeighted(-coeff[1][opponent],
+                            blendWeights[Evaluation::ClassicalValueBlend::PREVIOUS_BASIC],
+                            &Evaluation::EVALS[r + opponent][pcode]);
         }
-        else
-            collect(coeff[0][self] - coeff[0][opponent] + coeff[1][self]
-                        - coeff[1][opponent],
-                    2,
-                    &Evaluation::EVALS[r][pcode]);
+        else {
+            collectWeighted(coeff[0][self] - coeff[0][opponent],
+                            blendWeights[Evaluation::ClassicalValueBlend::CURRENT_BASIC],
+                            &Evaluation::EVALS[r][pcode]);
+            collectWeighted(coeff[1][self] - coeff[1][opponent],
+                            blendWeights[Evaluation::ClassicalValueBlend::PREVIOUS_BASIC],
+                            &Evaluation::EVALS[r][pcode]);
+        }
     }
-    collect(1, 1, &Evaluation::EVALS_THREAT[Evaluation::tableIndex(r, self)][evalInfo.threatMask]);
+    collectWeighted(
+        1,
+        blendWeights[Evaluation::ClassicalValueBlend::CURRENT_THREAT],
+        &Evaluation::EVALS_THREAT[Evaluation::tableIndex(r, self)][evalInfo.threatMask]);
 }
 
 template <typename Collector>
