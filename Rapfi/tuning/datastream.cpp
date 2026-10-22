@@ -19,13 +19,32 @@
 #include "datastream.h"
 
 #include "../core/compressor.h"
+#include "../core/filesystem.h"
 
 #include <cassert>
 #include <stdexcept>
 
 namespace Tuning {
 
+namespace {
+
+std::vector<std::filesystem::path> pathsFromConsoleStrings(const std::vector<std::string> &paths)
+{
+    std::vector<std::filesystem::path> nativePaths;
+    nativePaths.reserve(paths.size());
+    for (const std::string &path : paths)
+        nativePaths.push_back(pathFromConsoleString(path));
+    return nativePaths;
+}
+
+}  // namespace
+
 MultiFileInputStream::MultiFileInputStream(const std::vector<std::string> &filenames)
+    : MultiFileInputStream(pathsFromConsoleStrings(filenames))
+{}
+
+MultiFileInputStream::MultiFileInputStream(
+    const std::vector<std::filesystem::path> &filenames)
     : filenames_(filenames)
     , nextFileIdx_(0)
     , istream_(nullptr)
@@ -35,10 +54,10 @@ MultiFileInputStream::MultiFileInputStream(const std::vector<std::string> &filen
 
     // Preserve the old fail-fast constructor contract without retaining one
     // file handle and stream buffer for every source file.
-    for (const std::string &filename : filenames_) {
+    for (const std::filesystem::path &filename : filenames_) {
         std::ifstream fileStream(filename, std::ios::binary);
         if (!fileStream.is_open())
-            throw std::runtime_error("unable to open file " + filename);
+            throw std::runtime_error("unable to open file " + filename.u8string());
     }
 
     nextFile();
@@ -61,10 +80,10 @@ bool MultiFileInputStream::nextFile()
     }
     file_.clear();
 
-    const std::string &filename = filenames_[nextFileIdx_];
+    const std::filesystem::path &filename = filenames_[nextFileIdx_];
     file_.open(filename, std::ios::binary);
     if (!file_.is_open())
-        throw std::runtime_error("unable to open file " + filename);
+        throw std::runtime_error("unable to open file " + filename.u8string());
     file_.exceptions(std::istream::badbit | std::istream::failbit);
 
     try {
@@ -85,11 +104,12 @@ bool MultiFileInputStream::nextFile()
         nextFileIdx_++;
     }
     catch (const std::exception &e) {
-        throw std::runtime_error("unable to open dataset stream " + filename + ": " + e.what());
+        throw std::runtime_error("unable to open dataset stream " + filename.u8string() + ": "
+                                 + e.what());
     }
 
     if (!istream_)
-        throw std::runtime_error("unable to open dataset stream " + filename);
+        throw std::runtime_error("unable to open dataset stream " + filename.u8string());
 
     return true;
 }

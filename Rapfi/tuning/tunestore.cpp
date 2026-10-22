@@ -10,7 +10,6 @@
 
 #include "tunestore.h"
 
-#include "tunedigest.h"
 #include "tuneshard.h"
 
 #include <algorithm>
@@ -23,7 +22,6 @@
 #include <stdexcept>
 #include <streambuf>
 #include <system_error>
-#include <unordered_set>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -35,7 +33,7 @@
 namespace Tuning {
 namespace {
 
-    constexpr uint32_t    ManifestVersion         = 3;
+    constexpr uint32_t    ManifestVersion         = 6;
     constexpr uint32_t    GenerationMarkerVersion = 1;
     constexpr const char *GenerationMarkerName    = ".rftune-generation";
     constexpr size_t      MaxManifestBytes        = 8 * 1024 * 1024;
@@ -184,38 +182,6 @@ namespace {
         }
     }
 
-    void validateCurrentSource(const PreparedSourceInfo &expected)
-    {
-        std::filesystem::path configured = std::filesystem::u8path(expected.configuredPath);
-        std::error_code       error;
-        std::filesystem::path path = std::filesystem::weakly_canonical(configured, error);
-        if (error || path.generic_u8string() != expected.canonicalPath)
-            throw std::runtime_error(
-                "tuning dataset alias target changed before cache publication: "
-                + configured.string());
-        uintmax_t size = std::filesystem::file_size(path, error);
-        if (error || size != expected.size)
-            throw std::runtime_error("tuning dataset source size changed before cache publication: "
-                                     + path.string());
-        auto modified = std::filesystem::last_write_time(path, error);
-        if (error)
-            throw std::runtime_error("unable to inspect tuning dataset source before publication: "
-                                     + path.string());
-        std::string digest = sha256Hex(sha256File(path));
-        error.clear();
-        uintmax_t verifiedSize = std::filesystem::file_size(path, error);
-        if (error)
-            throw std::runtime_error("unable to recheck tuning dataset source before publication: "
-                                     + path.string());
-        auto verifiedModified = std::filesystem::last_write_time(path, error);
-        if (error || verifiedSize != size || verifiedModified != modified)
-            throw std::runtime_error("tuning dataset source changed during cache publication: "
-                                     + path.string());
-        if (digest != expected.sha256)
-            throw std::runtime_error(
-                "tuning dataset source content changed before cache publication: " + path.string());
-    }
-
     std::string readManifest(const std::filesystem::path &path)
     {
         std::error_code error;
@@ -329,30 +295,12 @@ bool FileBackedCorpus::tryReuse()
         if (!(input >> std::quoted(generation)) || !isSafeGenerationName(generation, label_))
             throw std::runtime_error("prepared manifest generation is invalid");
         if (fingerprint != cacheKey_.fingerprint) {
-            cacheStatus_ = "prepared-cache miss: strict fingerprint changed";
+            cacheStatus_ = "prepared-cache miss: prepared inputs changed";
             return false;
         }
         std::filesystem::path generationDirectory = root_ / generation;
         if (!hasMatchingGenerationMarker(root_, generationDirectory, label_, cacheKey_.fingerprint))
             throw std::runtime_error("prepared generation ownership marker is invalid");
-
-        expectToken(input, "sources");
-        uint64_t sourceCount;
-        if (!(input >> sourceCount) || sourceCount != cacheKey_.sources.size())
-            throw std::runtime_error("prepared manifest source count is invalid");
-        for (const PreparedSourceInfo &expected : cacheKey_.sources) {
-            expectToken(input, "source");
-            PreparedSourceInfo actual;
-            uint64_t           size;
-            if (!(input >> std::quoted(actual.configuredPath) >> std::quoted(actual.canonicalPath)
-                  >> size >> actual.modifiedTicks >> actual.sha256))
-                throw std::runtime_error("prepared manifest source record is incomplete");
-            actual.size = size;
-            if (actual.configuredPath != expected.configuredPath
-                || actual.canonicalPath != expected.canonicalPath || actual.size != expected.size
-                || actual.sha256 != expected.sha256)
-                throw std::runtime_error("prepared manifest source record does not match");
-        }
 
         expectToken(input, "shards");
         uint64_t declaredShardCount;
@@ -370,40 +318,57 @@ bool FileBackedCorpus::tryReuse()
         uint64_t declaredMaxStorage;
         if (!(input >> declaredMaxStorage))
             throw std::runtime_error("prepared manifest maximum shard size is missing");
+        expectToken(input, "boards");
+        uint64_t declaredBoardCount;
+        if (!(input >> declaredBoardCount) || declaredBoardCount > boardSampleCounts_.size())
+            throw std::runtime_error("prepared manifest board count is invalid");
+        std::array<size_t, 256> validatedBoardCounts {};
+        size_t                  boardSamples = 0;
+        for (uint64_t i = 0; i < declaredBoardCount; i++) {
+            expectToken(input, "board");
+            uint64_t boardSize, samples;
+            if (!(input >> boardSize >> samples) || boardSize >= validatedBoardCounts.size()
+                || validatedBoardCounts[boardSize] != 0)
+                throw std::runtime_error("prepared manifest board record is invalid");
+            size_t sampleCount = checkedSize(samples, "board sample count");
+            if (sampleCount == 0 || sampleCount > std::numeric_limits<size_t>::max() - boardSamples)
+                throw std::runtime_error("prepared manifest board sample count is invalid");
+            validatedBoardCounts[boardSize] = sampleCount;
+            boardSamples += sampleCount;
+        }
 
-        directory_                 = std::move(generationDirectory);
         size_t validatedShards     = checkedSize(declaredShardCount, "shard count");
+        if (validatedShards > manifestContents.size())
+            throw std::runtime_error("prepared manifest shard count is invalid");
         size_t validatedSamples    = 0;
         size_t validatedDiskBytes  = 0;
         size_t validatedMaxStorage = 0;
+        std::vector<ShardInfo> validatedShardInfo;
+        validatedShardInfo.reserve(validatedShards);
         for (size_t shard = 0; shard < validatedShards; shard++) {
             expectToken(input, "shard");
-            std::string filename, expectedDigest;
+            std::string filename;
             uint64_t    ordinal, declaredShardSamples, declaredFileBytes, declaredStorageBytes;
             if (!(input >> std::quoted(filename) >> ordinal >> declaredShardSamples
-                  >> declaredFileBytes >> declaredStorageBytes >> expectedDigest)
+                  >> declaredFileBytes >> declaredStorageBytes)
                 || filename != shardFilename(shard) || ordinal != shard)
                 throw std::runtime_error("prepared manifest shard order is invalid");
-            std::filesystem::path path     = directory_ / filename;
-            uintmax_t             fileSize = std::filesystem::file_size(path);
-            if (fileSize > std::numeric_limits<size_t>::max())
-                throw std::runtime_error("prepared shard file size exceeds size_t");
-            if (fileSize != declaredFileBytes)
+            std::filesystem::path path = generationDirectory / filename;
+            std::error_code       fileError;
+            uintmax_t             fileSize = std::filesystem::file_size(path, fileError);
+            if (fileError || fileSize != declaredFileBytes)
                 throw std::runtime_error("prepared manifest shard file size does not match");
-            if (sha256Hex(sha256File(path)) != expectedDigest)
-                throw std::runtime_error("prepared manifest shard content digest does not match");
-
-            PreparedCorpus corpus =
-                readPreparedShard(path, true, maxShardBytes_, cacheKey_.fingerprint, ordinal);
-            if (corpus.size() != checkedSize(declaredShardSamples, "shard sample count")
-                || corpus.storageBytes() != checkedSize(declaredStorageBytes, "shard storage size"))
-                throw std::runtime_error("prepared manifest shard metadata does not match");
-            if (corpus.size() > std::numeric_limits<size_t>::max() - validatedSamples
-                || fileSize > std::numeric_limits<size_t>::max() - validatedDiskBytes)
+            ShardInfo info {checkedSize(declaredShardSamples, "shard sample count"),
+                            checkedSize(declaredFileBytes, "shard file size"),
+                            checkedSize(declaredStorageBytes, "shard storage size")};
+            if (info.storageBytes > maxShardBytes_
+                || info.samples > std::numeric_limits<size_t>::max() - validatedSamples
+                || info.fileBytes > std::numeric_limits<size_t>::max() - validatedDiskBytes)
                 throw std::runtime_error("prepared cache aggregate size overflows");
-            validatedSamples += corpus.size();
-            validatedDiskBytes += static_cast<size_t>(fileSize);
-            validatedMaxStorage = std::max(validatedMaxStorage, corpus.storageBytes());
+            validatedSamples += info.samples;
+            validatedDiskBytes += info.fileBytes;
+            validatedMaxStorage = std::max(validatedMaxStorage, info.storageBytes);
+            validatedShardInfo.push_back(info);
         }
         expectToken(input, "end");
         std::string trailing;
@@ -412,20 +377,28 @@ bool FileBackedCorpus::tryReuse()
 
         if (validatedSamples != checkedSize(declaredSamples, "sample count")
             || validatedDiskBytes != checkedSize(declaredDiskBytes, "disk size")
-            || validatedMaxStorage != checkedSize(declaredMaxStorage, "maximum shard size"))
+            || validatedMaxStorage != checkedSize(declaredMaxStorage, "maximum shard size")
+            || boardSamples != validatedSamples)
             throw std::runtime_error("prepared manifest aggregate metadata does not match shards");
 
+        directory_             = std::move(generationDirectory);
         shardCount_           = validatedShards;
         sampleCount_          = validatedSamples;
         diskBytes_            = validatedDiskBytes;
         maxShardStorageBytes_ = validatedMaxStorage;
+        boardSampleCounts_    = validatedBoardCounts;
+        shards_               = std::move(validatedShardInfo);
+        validatedShards_.assign(shardCount_, uint8_t(0));
         reused_               = true;
         published_            = true;
-        cacheStatus_          = "reused strict prepared cache";
+        cacheStatus_          = "reused prepared cache";
         return true;
     }
     catch (const std::exception &error) {
         directory_.clear();
+        boardSampleCounts_.fill(0);
+        shards_.clear();
+        validatedShards_.clear();
         cacheStatus_ = std::string("prepared-cache rebuild: ") + error.what();
         return false;
     }
@@ -449,6 +422,8 @@ void FileBackedCorpus::append(PreparedCorpus &&corpus)
     size_t storageBytes = corpus.storageBytes();
     if (storageBytes > maxShardBytes_)
         throw std::runtime_error("prepared shard exceeds its allocation credit");
+    for (uint8_t boardSize : corpus.boardSizes())
+        boardSampleCounts_[boardSize]++;
     std::filesystem::path path = shardPath(shardCount_);
     writePreparedShard(path, corpus, cacheKey_.fingerprint, shardCount_);
 
@@ -459,12 +434,9 @@ void FileBackedCorpus::append(PreparedCorpus &&corpus)
     if (diskBytes_ > std::numeric_limits<size_t>::max() - fileBytes)
         throw std::length_error("prepared corpus disk byte count overflows size_t");
 
+    shards_.push_back({samples, fileBytes, storageBytes});
+    validatedShards_.push_back(uint8_t(0));
     corpus = PreparedCorpus {};
-    PreparedCorpus verified =
-        readPreparedShard(path, true, maxShardBytes_, cacheKey_.fingerprint, shardCount_);
-    if (verified.size() != samples || verified.storageBytes() != storageBytes)
-        throw std::runtime_error("prepared corpus shard metadata mismatch");
-
     shardCount_++;
     sampleCount_ += samples;
     diskBytes_ += fileBytes;
@@ -475,6 +447,8 @@ void FileBackedCorpus::publish()
 {
     if (reused_ || published_)
         return;
+    if (shards_.size() != shardCount_ || validatedShards_.size() != shardCount_)
+        throw std::logic_error("prepared corpus shard metadata is incomplete");
 
     std::filesystem::path tempPath = directory_ / "manifest.tmp";
     try {
@@ -486,40 +460,22 @@ void FileBackedCorpus::publish()
         output << "RFTUNE_MANIFEST " << ManifestVersion << '\n';
         output << "fingerprint " << cacheKey_.fingerprint << '\n';
         output << "generation " << std::quoted(directory_.filename().string()) << '\n';
-        output << "sources " << cacheKey_.sources.size() << '\n';
-        for (const PreparedSourceInfo &source : cacheKey_.sources)
-            output << "source " << std::quoted(source.configuredPath) << ' '
-                   << std::quoted(source.canonicalPath) << ' ' << source.size << ' '
-                   << source.modifiedTicks << ' ' << source.sha256 << '\n';
         output << "shards " << shardCount_ << '\n';
         output << "samples " << sampleCount_ << '\n';
         output << "disk_bytes " << diskBytes_ << '\n';
         output << "max_shard_storage " << maxShardStorageBytes_ << '\n';
-        size_t publishedSamples = 0, publishedDiskBytes = 0, publishedMaxStorage = 0;
+        size_t activeBoards = std::count_if(boardSampleCounts_.begin(),
+                                            boardSampleCounts_.end(),
+                                            [](size_t count) { return count != 0; });
+        output << "boards " << activeBoards << '\n';
+        for (size_t boardSize = 0; boardSize < boardSampleCounts_.size(); boardSize++)
+            if (boardSampleCounts_[boardSize] != 0)
+                output << "board " << boardSize << ' ' << boardSampleCounts_[boardSize] << '\n';
         for (size_t shard = 0; shard < shardCount_; shard++) {
-            std::filesystem::path path = shardPath(shard);
-            PreparedCorpus        corpus =
-                readPreparedShard(path, true, maxShardBytes_, cacheKey_.fingerprint, shard);
-            uintmax_t fileSize = std::filesystem::file_size(path);
-            if (fileSize > std::numeric_limits<size_t>::max()
-                || corpus.size() > std::numeric_limits<size_t>::max() - publishedSamples
-                || fileSize > std::numeric_limits<size_t>::max() - publishedDiskBytes)
-                throw std::runtime_error("prepared shard metadata overflows during publication");
-            publishedSamples += corpus.size();
-            publishedDiskBytes += static_cast<size_t>(fileSize);
-            publishedMaxStorage = std::max(publishedMaxStorage, corpus.storageBytes());
+            const ShardInfo &info = shards_[shard];
             output << "shard " << std::quoted(shardFilename(shard)) << ' ' << shard << ' '
-                   << corpus.size() << ' ' << fileSize << ' ' << corpus.storageBytes() << ' '
-                   << sha256Hex(sha256File(path)) << '\n';
+                   << info.samples << ' ' << info.fileBytes << ' ' << info.storageBytes << '\n';
         }
-        if (publishedSamples != sampleCount_ || publishedDiskBytes != diskBytes_
-            || publishedMaxStorage != maxShardStorageBytes_)
-            throw std::runtime_error("prepared shard aggregates changed before publication");
-
-        std::unordered_set<std::string> validatedSources;
-        for (const PreparedSourceInfo &source : cacheKey_.sources)
-            if (validatedSources.emplace(source.configuredPath).second)
-                validateCurrentSource(source);
 
         output << "end\n";
         output.flush();
@@ -551,11 +507,17 @@ PreparedCorpus FileBackedCorpus::load(size_t shardIndex) const
 {
     if (shardIndex >= shardCount_)
         throw std::out_of_range("prepared corpus shard index is out of range");
-    return readPreparedShard(shardPath(shardIndex),
-                             false,
-                             maxShardBytes_,
-                             cacheKey_.fingerprint,
-                             shardIndex);
+    bool verifyChecksum = validatedShards_[shardIndex] == 0;
+    PreparedCorpus corpus = readPreparedShard(shardPath(shardIndex),
+                                               verifyChecksum,
+                                               maxShardBytes_,
+                                               cacheKey_.fingerprint,
+                                               shardIndex);
+    const ShardInfo &expected = shards_[shardIndex];
+    if (corpus.size() != expected.samples || corpus.storageBytes() != expected.storageBytes)
+        throw std::runtime_error("prepared corpus shard metadata does not match its manifest");
+    validatedShards_[shardIndex] = uint8_t(1);
+    return corpus;
 }
 
 }  // namespace Tuning
