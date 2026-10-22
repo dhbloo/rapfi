@@ -39,11 +39,11 @@ class Evaluator;  // forward declaration (eval/evaluator.h)
 /// the gomocup INFO handlers assign the draw fields directly.
 struct EvaluatorConfig
 {
-    float marginWinLossScale    = 1.18f;
-    float marginWinLossExponent = 3.07f;
-    float marginScale           = 395.0f;
-    float drawBlackWinRate      = 0.5f;
-    float drawRatio             = 1.0f;
+    float marginWinLossScale[RULE_NB]    = {1.22f, 0.86f, 1.24f};
+    float marginWinLossExponent[RULE_NB] = {3.04f, 3.44f, 2.56f};
+    float marginScale[RULE_NB]           = {351.0f, 379.2f, 389.4f};
+    float drawBlackWinRate               = 0.5f;
+    float drawRatio                      = 1.0f;
 };
 
 /// The global live evaluator configuration.
