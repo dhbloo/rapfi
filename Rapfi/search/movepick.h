@@ -21,6 +21,9 @@
 #include "../game/movegen.h"
 #include "history.h"
 
+#ifdef POLICY_TRAINING
+    #include "../tuning/policytrace.h"
+#endif
 
 namespace Search {
 
@@ -58,6 +61,12 @@ public:
     float curMoveNormalizePolicy() const { return curPolicy; }
     /// Get adjusted score of current move.
     Score curMoveScore() const { return curScore; }
+#ifdef POLICY_TRAINING
+    Tuning::PolicyTraceEvent     *policyTraceEvent() { return traceEvent.get(); }
+    Tuning::PolicyTraceCandidate *policyTraceCandidate(Pos move);
+    void                          commitPolicyTrace();
+    void                          discardPolicyTrace() { traceEvent.reset(); }
+#endif
 
 private:
     enum PickType { Next, Best };
@@ -78,6 +87,11 @@ private:
     /// with Classical scoring as the fallback. Normalized priors omit history terms.
     template <ScoreType ExtraFlags>
     void scoreAndSortMoves();
+#ifdef POLICY_TRAINING
+    void beginPolicyTrace();
+    void recordPolicyTraceCandidate(const ScoredMove &move, int historyBonus, int counterMoveBonus);
+    void capturePolicyTraceOrder();
+#endif
     ScoredMove *begin() { return curMove; }
     ScoredMove *end() { return endMove; }
 
@@ -97,6 +111,11 @@ private:
     float       curPolicy;
     ScoredMove *curMove, *endMove;
     ScoredMove  moves[MAX_MOVES];
+#ifdef POLICY_TRAINING
+    bool                                      traceEligible;
+    uint16_t                                  tracePolicyOrdinal = 0;
+    std::unique_ptr<Tuning::PolicyTraceEvent> traceEvent;
+#endif
 };
 
 template <>

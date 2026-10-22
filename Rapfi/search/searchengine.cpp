@@ -32,6 +32,9 @@
 #include "opening.h"
 #include "searcher.h"
 #include "searchthread.h"
+#ifdef POLICY_TRAINING
+    #include "../tuning/policytrace.h"
+#endif
 
 #include <algorithm>
 #include <unordered_set>
@@ -343,7 +346,21 @@ void SearchEngine::startThinking(const Board          &board,
 
     // Start the main search thread
     main()->runTask([this, onStop = std::move(onStop)](SearchThread &th) {
+#ifdef POLICY_TRAINING
+        if (!policyTraceSessionPtr)
+            runSearch(th);
+        else {
+            try {
+                runSearch(th);
+            }
+            catch (...) {
+                policyTraceSessionPtr->captureFailure(std::current_exception());
+                terminate.store(true, std::memory_order_relaxed);
+            }
+        }
+#else
         runSearch(th);
+#endif
         if (onStop)  // If onStop is set, queue a tail task to call it
             main()->runTask([onStop = std::move(onStop)](SearchThread &th) { onStop(); });
     });

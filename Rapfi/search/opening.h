@@ -109,6 +109,7 @@ private:
     PRNG             prng;
     std::vector<int> numMoveChoices;
 
+    bool isRuleLegalMove(Pos pos) const;
     void putRandomMoves(int numMoves, CandArea area);
     bool putBalance1Move();
     bool putBalance2Move();

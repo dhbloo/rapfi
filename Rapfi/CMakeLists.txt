@@ -131,6 +131,7 @@ endif()
 option(NO_MULTI_THREADING "Disable multi-threading" OFF)
 option(NO_COMMAND_MODULES "Disable command modules" OFF)
 option(NO_PREFETCH "Disable prefetch in search" OFF)
+option(ENABLE_POLICY_TRAINING "Enable engine-native alpha-beta policy trace collection" OFF)
 
 option(USE_SSE  "Enable SSE2/SSSE3/SSE4.1 instruction" ${DEFAULT_USE_SSE})
 option(USE_AVX2 "Enable AVX2/FMA instruction" ${DEFAULT_USE_AVX2})
@@ -221,6 +222,7 @@ set(MODULE_SOURCES
     tuning/featureencoder.cpp
     tuning/numpywriter.cpp
     tuning/optimizer.cpp
+    tuning/policytrace.cpp
     tuning/tunecorpus.cpp
     tuning/tunedigest.cpp
     tuning/tuneshard.cpp
@@ -287,6 +289,7 @@ set(HEADERS
     tuning/datawriter.h
     tuning/featureencoder.h
     tuning/optimizer.h
+    tuning/policytrace.h
     tuning/tunemap.h
     tuning/tunecorpus.h
     tuning/tuner.h
@@ -449,6 +452,12 @@ if(NOT NO_MULTI_THREADING)
 endif()
 if(NOT NO_COMMAND_MODULES)
     target_compile_definitions(rapfi PRIVATE COMMAND_MODULES)
+endif()
+if(ENABLE_POLICY_TRAINING)
+    if(NO_COMMAND_MODULES)
+        message(FATAL_ERROR "ENABLE_POLICY_TRAINING requires command modules.")
+    endif()
+    target_compile_definitions(rapfi PRIVATE POLICY_TRAINING)
 endif()
 if(NO_PREFETCH)
     target_compile_definitions(rapfi PRIVATE NO_PREFETCH)
