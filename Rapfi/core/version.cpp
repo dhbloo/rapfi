@@ -22,8 +22,8 @@
 #include <sstream>
 
 #define RAPFI_MAJOR_VER    0
-#define RAPFI_MINOR_VER    43
-#define RAPFI_REVISION_VER 2
+#define RAPFI_MINOR_VER    44
+#define RAPFI_REVISION_VER 1
 
 // Two-step stringify so macro arguments are themselves expanded before becoming text. Used to
 // format compiler version macros like __clang_major__.
