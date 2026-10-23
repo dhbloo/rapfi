@@ -99,6 +99,12 @@ Pos decodeU16Move(uint16_t move)
 {
     int x = (move >> 5) & 0x1f;
     int y = move & 0x1f;
+    // Wire fields cover [0,31] but only [0, MAX_BOARD_SIZE) is a coordinate
+    // (UINT16_MAX marks an absent move). Map anything else to Pos::NONE so
+    // readers reject it through their isInBoard checks and throw the typed
+    // DatasetError instead of tripping the Pos constructor's debug asserts.
+    if (x >= MAX_BOARD_SIZE || y >= MAX_BOARD_SIZE)
+        return Pos::NONE;
     return Pos {x, y};
 }
 

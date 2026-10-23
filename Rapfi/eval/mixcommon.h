@@ -335,7 +335,8 @@ inline void queueMoveCache(std::vector<MoveCache> (&moveCache)[2],
         else
             moveCache[c].pop_back();  // cancel out the last move cache
 
-        assert(moveCache[c].size() < (size_t)numCells);
+        // A cache can span undoing a full board and replaying a different continuation.
+        assert(moveCache[c].size() <= 2 * (size_t)numCells);
     }
 }
 

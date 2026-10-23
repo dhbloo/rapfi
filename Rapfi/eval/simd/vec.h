@@ -1088,10 +1088,11 @@ namespace detail {
     #if defined(USE_NEON_DOTPROD)
             acc = vdotq_s32(acc, a, b);
     #else
+            // Widen before adding: two (-128)*(-128) products overflow an i16 sum.
             int16x8_t product0 = vmull_s8(vget_low_s8(a), vget_low_s8(b));
             int16x8_t product1 = vmull_high_s8(a, b);
-            int16x8_t sum      = vpaddq_s16(product0, product1);
-            acc                = vpadalq_s16(acc, sum);
+            int32x4_t sum01    = vpaddq_s32(vpaddlq_s16(product0), vpaddlq_s16(product1));
+            acc                = vaddq_s32(acc, sum01);
     #endif
         }
     };

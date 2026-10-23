@@ -451,10 +451,11 @@ void Accumulator::move(const Weight &w, Color pieceColor, int x, int y)
     for (int i = 0; i < changeCount; i++) {
         const OnePointChange &c = changeTable[i];
         if (i + 1 < changeCount) {
+            const OnePointChange &cnext = changeTable[i + 1];
             multiPrefetch<FeatureDim * sizeof(int16_t)>(
-                w.mapping[c.mappingIdx][changeTable[i + 1].oldShape]);
+                w.mapping[cnext.mappingIdx][cnext.oldShape]);
             multiPrefetch<FeatureDim * sizeof(int16_t)>(
-                w.mapping[c.mappingIdx][changeTable[i + 1].newShape]);
+                w.mapping[cnext.mappingIdx][cnext.newShape]);
         }
 
         // Update mapSum

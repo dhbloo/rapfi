@@ -62,6 +62,10 @@ Pos inputCoordConvert(int x, int y, int boardsize, CoordConversionMode mode)
     if (x == PASS_COORD_X && y == PASS_COORD_Y)
         return Pos::PASS;
 
+    // Validate before packing: oversized coordinates can wrap into another valid cell.
+    if (x < 0 || x >= boardsize || y < 0 || y >= boardsize)
+        return Pos::NONE;
+
     switch (mode) {
     case CoordConversionMode::FLIPY_X: return {y, boardsize - 1 - x};
     case CoordConversionMode::X_FLIPY: return {x, boardsize - 1 - y};

@@ -592,9 +592,12 @@ void Board::expandCandArea(Pos pos, int fillDist, int lineDist)
             setCandidateBits(p >> 6, uint64_t(1) << (p & 63));
     };
 
+    // The four canonical line directions each have a positive and negative ray.
     for (int i = std::max(3, fillDist + 1); i <= lineDist; i++) {
-        for (int dir = 0; dir < 4; dir++)
+        for (int dir = 0; dir < 4; dir++) {
             markCandidate(pos + DIRECTION[dir] * i);
+            markCandidate(pos - DIRECTION[dir] * i);
+        }
     }
     for (int xi = -fillDist; xi <= fillDist; xi++) {
         for (int yi = -fillDist; yi <= fillDist; yi++)
