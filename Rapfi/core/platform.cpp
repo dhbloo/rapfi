@@ -61,6 +61,10 @@ typedef BOOL(WINAPI *fun6_t)(HANDLE, PGROUP_AFFINITY, USHORT);
     #include <unistd.h>
 #endif
 
+#if defined(__linux__)
+    #include <sys/mman.h>  // madvise, MADV_HUGEPAGE
+#endif
+
 #if defined(__APPLE__) || defined(__ANDROID__) || defined(__OpenBSD__) \
     || (defined(__GLIBCXX__) && !defined(_GLIBCXX_HAVE_ALIGNED_ALLOC) && !defined(_WIN32))
     #define POSIXALIGNEDALLOC
@@ -437,7 +441,8 @@ void *alignedLargePageAlloc(size_t size)
     size      = ((size + alignment - 1) / alignment) * alignment;
     void *mem = alignedAlloc(alignment, size);
     #if defined(MADV_HUGEPAGE)
-    madvise(mem, size, MADV_HUGEPAGE);
+    if (mem)
+        madvise(mem, size, MADV_HUGEPAGE);
     #endif
 
     return mem;
