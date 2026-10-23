@@ -456,6 +456,11 @@ void SearchEngine::clear(bool clearAllMemory)
     if (threads_.empty())
         setNumThreads(Config::GeneralCfg.defaultThreadNum);
 
+    // A stop request only sets the terminate flag; threads drain their
+    // current search asynchronously. Wait for them to go idle before the
+    // searcher mutates state they still read (TT, reduction tables).
+    waitForIdle();
+
     if (searcher())
         searcher()->clear(*this, clearAllMemory);
 }

@@ -172,7 +172,8 @@ void getDatabasePosition(DBCommandContext &ctx)
     // Read position sequence
     while (true) {
         std::string coordStr;
-        ctx.in >> coordStr;
+        if (!(ctx.in >> coordStr))
+            break;
         upperInplace(coordStr);
 
         if (coordStr == "DONE")

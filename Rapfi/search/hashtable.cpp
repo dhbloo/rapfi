@@ -309,6 +309,13 @@ bool HashTable::load(std::istream &inStream)
     // ample headroom for any page/alignment round-up inside the allocator.
     if (!*in || newNumBuckets == 0 || newNumBuckets > (SIZE_MAX / 2) / sizeof(TTBucket))
         return false;
+
+    // The live table is about to be replaced. A stopped search is drained
+    // asynchronously, so wait for all threads to go idle before changing
+    // numBuckets or freeing the storage they may still probe (the same
+    // discipline as resize()).
+    Engine.waitForIdle();
+
     numBuckets = newNumBuckets;
     generation = newGeneration;
 

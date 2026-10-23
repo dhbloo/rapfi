@@ -51,7 +51,11 @@ class SearchThread
 private:
     friend class SearchEngine;
     Numa::NumaNodeId numaId;
-    bool             running, exit;
+    // Atomic: waitForIdle() reads `running` and ~SearchThread writes `exit`
+    // without holding the mutex. All wakeup-relevant writes stay under the
+    // mutex and are paired with a notify, so the cv predicates cannot miss
+    // a transition.
+    std::atomic<bool> running, exit;
 
 #ifdef MULTI_THREADING
     std::function<void(SearchThread &)> taskFunc;

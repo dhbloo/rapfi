@@ -266,6 +266,10 @@ size_t ABSearcher::getMemoryLimit() const
 
 void ABSearcher::clear(SearchEngine &pool, bool clearAllMemory)
 {
+    // The reduction LUT and the shared TT are read by search threads; make
+    // sure none is still draining a stopped search before rewriting them.
+    pool.waitForIdle();
+
     // Clear time control variables for one game
     previousTimeReduction = 1.0f;
     previousBestValue     = VALUE_NONE;
