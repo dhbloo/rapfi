@@ -114,14 +114,20 @@ class TuneMap
                 }
             }
             else {
-                T newValue;
-                if (is >> newValue) {
-                    if (std::is_integral_v<T> && is.peek() == '.') {
-                        double fraction;
-                        // Round to next int if the fraction part is larger than 0.5
-                        if (is >> fraction && std::round(fraction) > 0)
-                            newValue += 1;
-                    }
+                // External tuners may send fractional values for integer
+                // parameters; parse the whole token as a double and round to
+                // the nearest integer, which keeps the sign correct
+                double parsedValue;
+                if (is >> parsedValue) {
+                    // Clamp before narrowing so the conversion to T cannot overflow
+                    parsedValue = std::clamp(parsedValue,
+                                             static_cast<double>(range.first),
+                                             static_cast<double>(range.second));
+                    T newValue;
+                    if constexpr (std::is_integral_v<T>)
+                        newValue = static_cast<T>(std::llround(parsedValue));
+                    else
+                        newValue = static_cast<T>(parsedValue);
 
                     value = std::clamp<T>(newValue, range.first, range.second);
                     if (postUpdate)

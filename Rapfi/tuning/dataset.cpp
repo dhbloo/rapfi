@@ -52,10 +52,13 @@ void unpackBytesToBits(const uint8_t *bytes, size_t numBits, uint8_t *bits)
         bits += 8;
     }
 
-    // Deals with remaining bits that less than a byte
-    uint8_t byte = *bytes;
-    for (size_t bitIdx = 0; bitIdx < numBitsRemained; bitIdx++)
-        bits[bitIdx] = (byte >> (7 - bitIdx)) & 0x1;
+    // Deals with remaining bits that less than a byte; when numBits is
+    // byte-aligned there is no tail byte and the source ends here
+    if (numBitsRemained) {
+        uint8_t byte = *bytes;
+        for (size_t bitIdx = 0; bitIdx < numBitsRemained; bitIdx++)
+            bits[bitIdx] = (byte >> (7 - bitIdx)) & 0x1;
+    }
 }
 
 /// Converting a board array to a pos sequence (in arbitrary order).

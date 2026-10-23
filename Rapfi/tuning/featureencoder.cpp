@@ -42,10 +42,13 @@ void packBitsToBytes(const uint8_t *bits, size_t numBits, uint8_t *bytes)
         bits += 8;
     }
 
-    // Deals with remaining bits that less than a byte
-    *bytes = 0;
-    for (size_t bitIdx = 0; bitIdx < numBitsRemained; bitIdx++)
-        *bytes |= bits[bitIdx] << (7 - bitIdx);
+    // Deals with remaining bits that less than a byte; when numBits is
+    // byte-aligned there is no tail byte and the destination ends here
+    if (numBitsRemained) {
+        *bytes = 0;
+        for (size_t bitIdx = 0; bitIdx < numBitsRemained; bitIdx++)
+            *bytes |= bits[bitIdx] << (7 - bitIdx);
+    }
 }
 
 uint16_t quantizePolicy(float policy)

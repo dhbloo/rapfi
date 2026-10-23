@@ -45,6 +45,11 @@ public:
     /// multiple data entries for writing (which is the default behaviour for base class).
     virtual void writeGame(const GameEntry &gameEntry);
 
+    /// Flushes any buffered data and completes outstanding write jobs, throwing on
+    /// failure. Callers that need write errors to reach their exit code must call
+    /// this before destruction: a destructor can only log, never propagate.
+    virtual void flush() {}
+
     /// Decomposed a game entry into multiple data entries for writing.
     /// Filter can be used to filter out part of data entries.
     void writeEntriesInGame(const GameEntry                       &gameEntry,
@@ -191,6 +196,9 @@ public:
     /// incrementally-updated board per game (one move() per entry) at flush,
     /// instead of replaying every entry's position from an empty board.
     void writeGame(const GameEntry &gameEntry) override;
+    /// Schedules the remaining buffered batch and joins every pending save
+    /// job, rethrowing the first failure.
+    void flush() override;
     void writeEntryWithSoftValueTarget(const DataEntry &entry,
                                        float            winprob,
                                        float            loseprob,

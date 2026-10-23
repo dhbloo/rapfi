@@ -22,6 +22,7 @@
 #include "../core/compressor.h"
 #include "../core/filesystem.h"
 #include "../core/hash.h"
+#include "../core/iohelper.h"
 #include "../game/board.h"
 #include "datawriter.h"
 #include "featureencoder.h"
@@ -29,6 +30,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <future>
 #include <iomanip>
@@ -187,11 +189,20 @@ public:
              filename          = filename,
              writeSparseInputs = writeSparseInputs,
              policyConfig      = policyConfig]() mutable {
-                flushToStream(os,
-                              std::move(localGameBuffer),
-                              numEntries,
-                              writeSparseInputs,
-                              policyConfig);
+                try {
+                    flushToStream(os,
+                                  std::move(localGameBuffer),
+                                  numEntries,
+                                  writeSparseInputs,
+                                  policyConfig);
+                }
+                catch (...) {
+                    // A partially written npz is indistinguishable from valid
+                    // output; remove it before reporting the failure
+                    os.close();
+                    std::remove(filename.c_str());
+                    throw;
+                }
 
                 if (finishedCallback)
                     finishedCallback(filename);
@@ -202,6 +213,25 @@ public:
         hash               = 0;
         numBufferedEntries = 0;
         gameBuffer.clear();  // moved-from; make the reset explicit
+    }
+
+    /// Joins all pending flush jobs, then rethrows the first failure. Without
+    /// an explicit join the future destructors would wait but swallow errors.
+    void joinAllResults()
+    {
+        std::exception_ptr firstError;
+        for (auto &result : results) {
+            try {
+                result.get();
+            }
+            catch (...) {
+                if (!firstError)
+                    firstError = std::current_exception();
+            }
+        }
+        results.clear();
+        if (firstError)
+            std::rethrow_exception(firstError);
     }
 
 private:
@@ -374,8 +404,39 @@ NumpyDataWriter::NumpyDataWriter(std::string                      dirpath,
 
 NumpyDataWriter::~NumpyDataWriter()
 {
+    // Flush the remaining buffer and join every outstanding save job before
+    // the buffer is destroyed: future destructors would only wait, discarding
+    // any error from the final (often largest) batch. A destructor cannot
+    // propagate, so report the failure here; the failed job has already
+    // removed its partial output file. The two steps get separate try blocks
+    // so earlier jobs are still joined (and their errors reported) even when
+    // the final batch fails to schedule.
+    try {
+        if (buffer->bufferedSize())
+            buffer->asyncSaveToDir(dirpath, flushCallback, writeSparseInputs);
+    }
+    catch (const std::exception &e) {
+        ERRORL("Failed to save numpy data to " << dirpath << ": " << e.what());
+    }
+    catch (...) {
+        ERRORL("Failed to save numpy data to " << dirpath);
+    }
+    try {
+        buffer->joinAllResults();
+    }
+    catch (const std::exception &e) {
+        ERRORL("Failed to save numpy data to " << dirpath << ": " << e.what());
+    }
+    catch (...) {
+        ERRORL("Failed to save numpy data to " << dirpath);
+    }
+}
+
+void NumpyDataWriter::flush()
+{
     if (buffer->bufferedSize())
         buffer->asyncSaveToDir(dirpath, flushCallback, writeSparseInputs);
+    buffer->joinAllResults();
 }
 
 void NumpyDataWriter::writeEntry(const DataEntry &entry)

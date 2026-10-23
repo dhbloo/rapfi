@@ -27,6 +27,7 @@
 
 #define CXXOPTS_NO_REGEX
 #include <cmath>
+#include <cstdlib>
 #include <ctime>
 #include <cxxopts.hpp>
 #include <filesystem>
@@ -181,10 +182,18 @@ void Command::dataprep(int argc, char *argv[])
             }
         }
 
-        dataWriter.reset();  // flush entries in buffer
+        // Flush inside the try so a failed final batch reaches the nonzero-exit
+        // path instead of being swallowed by the destructor's logging.
+        dataWriter->flush();
+        dataWriter.reset();
         MESSAGEL("Finished processing " << numEntriesProcessed << " entries.");
     }
     catch (const std::exception &e) {
         ERRORL("Error occurred when preparing data: " << e.what());
+        // Join pending writes before process exit, including batches queued before
+        // an input error, so their final filenames cannot contain partial archives.
+        dataWriter.reset();
+        // Exit nonzero so that pipelines do not mistake partial output for success
+        std::exit(EXIT_FAILURE);
     }
 }

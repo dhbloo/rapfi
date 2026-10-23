@@ -117,6 +117,8 @@ bool readBinEntry(std::istream &is, DataEntry *entry, BinDecodeScratch &scratch)
 
     BinEntryHead ehead;
     is.read(reinterpret_cast<char *>(&ehead), sizeof(BinEntryHead));
+    if (!is)
+        throw DatasetError("truncated entry head in dataset");
 
     // Check legality of the entry head
     if (ehead.boardsize < 5 || ehead.boardsize > MAX_BOARD_SIZE)
@@ -130,8 +132,11 @@ bool readBinEntry(std::istream &is, DataEntry *entry, BinDecodeScratch &scratch)
         throw DatasetError("wrong ply in dataset");
 
     if (!entry) {
-        // Just skip the position move sequence
+        // Just skip the position move sequence. A short skip only sets eofbit,
+        // so the skipped length must be checked explicitly.
         is.ignore(ehead.ply * sizeof(uint16_t));
+        if (is.gcount() != std::streamsize(ehead.ply * sizeof(uint16_t)))
+            throw DatasetError("truncated entry in dataset");
         return true;
     }
 
@@ -211,6 +216,8 @@ bool readPackedGame(std::istream        &is,
 
     PackedEntryHead ehead;
     is.read(reinterpret_cast<char *>(&ehead), sizeof(PackedEntryHead));
+    if (!is)
+        throw DatasetError("truncated game head in dataset");
 
     // Check legality of the entry head
     if (ehead.boardSize < 5 || ehead.boardSize > 22)
