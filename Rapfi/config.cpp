@@ -201,6 +201,7 @@ bool Config::loadConfig(std::istream &configStream)
     Search::TimeCfg                      = pending.time;
     Database::DatabaseCfg                = pending.database;
     Evaluation::EvalCfg                  = pending.eval;
+    Evaluation::refreshClassicalMarginTables();
     Evaluation::installClassicalValueReadouts(pending.valueReadouts);
 
     // The searcher switch precedes the TT resize: setupSearcher carries the

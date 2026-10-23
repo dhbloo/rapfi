@@ -82,12 +82,40 @@ inline Value evaluateBasic(const StateInfo &st, Color self)
 /// Finds a margin for switching to classical evaluation if
 /// it falls outside alpha-beta window with this margin.
 template <Rule R>
-inline int classicalEvalMargin(Value bound)
+inline int computeClassicalEvalMargin(Value bound)
 {
     float winLossRate = 2 * (Evaluation::valueToWinRate(bound) - 0.5f);
     float x           = EvalCfg.marginWinLossScale[R] * winLossRate;
     float x2          = x * x;
     return (int)(EvalCfg.marginScale[R] * ::expf(-::powf(x2, EvalCfg.marginWinLossExponent[R])));
+}
+
+using ClassicalMarginTables =
+    std::array<std::array<int, VALUE_EVAL_MAX - VALUE_EVAL_MIN + 1>, RULE_NB>;
+
+ClassicalMarginTables makeClassicalMarginTables()
+{
+    ClassicalMarginTables tables;
+    for (int value = VALUE_EVAL_MIN; value <= VALUE_EVAL_MAX; value++) {
+        const int index = value - VALUE_EVAL_MIN;
+        tables[FREESTYLE][index] = computeClassicalEvalMargin<FREESTYLE>(Value(value));
+        tables[STANDARD][index]  = computeClassicalEvalMargin<STANDARD>(Value(value));
+        tables[RENJU][index]     = computeClassicalEvalMargin<RENJU>(Value(value));
+    }
+    return tables;
+}
+
+// EvalCfg and ScalingFactor have constant-initialized defaults. Populate every rule
+// before search can use the table, including callers without an external config.
+ClassicalMarginTables classicalMarginTables = makeClassicalMarginTables();
+
+template <Rule R>
+inline int classicalEvalMargin(Value bound)
+{
+    assert(VALUE_EVAL_MIN <= bound && bound <= VALUE_EVAL_MAX);
+    const int margin = classicalMarginTables[R][bound - VALUE_EVAL_MIN];
+    assert(margin == computeClassicalEvalMargin<R>(bound));
+    return margin;
 }
 
 }  // namespace
@@ -96,6 +124,11 @@ namespace Evaluation {
 
 // Value/win-rate conversions and readout construction share this scale.
 float ScalingFactor = 200.0f;
+
+void refreshClassicalMarginTables()
+{
+    classicalMarginTables = makeClassicalMarginTables();
+}
 
 namespace {
 
@@ -149,6 +182,7 @@ void setScalingFactor(float scale)
     assert(std::isfinite(scale) && scale > 0.0f);
     ScalingFactor = scale;
     refreshClassicalValueReadoutCaches();
+    refreshClassicalMarginTables();
 }
 
 const ClassicalValueReadouts &classicalValueReadouts()

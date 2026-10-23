@@ -29,6 +29,10 @@ template <Rule R>
 Value evaluate(const Board &board, Value alpha = -VALUE_INFINITE, Value beta = VALUE_INFINITE);
 Value evaluate(const Board &board, Rule rule);
 
+/// Rebuild rule-specific switching margins after publishing EvalCfg parameters.
+/// Scaling-factor changes refresh these tables through setScalingFactor().
+void refreshClassicalMarginTables();
+
 class ValueType;
 ValueType computeEvaluatorValue(const Board &board);
 
