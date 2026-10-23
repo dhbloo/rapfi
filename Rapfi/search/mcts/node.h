@@ -165,8 +165,20 @@ public:
     Node &operator=(Node &&rhs)      = delete;
 
     /// Set this node to be a terminal node and set num visits to 1.
+    /// Must only be called by the evaluating thread on a node that has not
+    /// been published yet (num visits is still zero); use tryMarkTerminal()
+    /// for a node that may already have accumulated visits.
     /// @param value The terminal value of this node.
     void setTerminal(Value value);
+
+    /// One-shot leaf-to-terminal transition for an already-published node.
+    /// Several threads may discover concurrently that this node has no valid
+    /// move; only the thread that wins the claim on the terminal value writes
+    /// the terminal statistics, and the visit count is left untouched so that
+    /// visits accumulated by concurrent threads are preserved.
+    /// @param value The terminal value of this node.
+    /// @return Whether this thread won the transition.
+    bool tryMarkTerminal(Value value);
 
     /// Set this node to be a non-terminal node and set num visits to 1.
     /// @param utility The raw utility value of this node.
@@ -186,12 +198,14 @@ public:
     HashKey getHash() const { return hash; }
 
     /// Returns whether this node has no children.
-    bool isLeaf() const { return edges.load(std::memory_order_relaxed) == nullptr; }
+    /// Acquire pairs with the release CAS in createEdges() so that a non-null
+    /// edge array is always observed fully constructed before being dereferenced.
+    bool isLeaf() const { return edges.load(std::memory_order_acquire) == nullptr; }
 
     /// Returns the edge array at the given index.
     /// If this node has no edges, returns nullptr.
-    EdgeArray       *getEdges() { return edges.load(std::memory_order_relaxed); }
-    const EdgeArray *getEdges() const { return edges.load(std::memory_order_relaxed); }
+    EdgeArray       *getEdges() { return edges.load(std::memory_order_acquire); }
+    const EdgeArray *getEdges() const { return edges.load(std::memory_order_acquire); }
 
     /// Returns the average utility value of this node.
     float getQ() const { return q.load(std::memory_order_relaxed); }
@@ -221,7 +235,7 @@ public:
     ValueBound getBound() const { return bound.load(std::memory_order_relaxed); }
 
     /// Returns if this node is terminal.
-    bool isTerminal() const { return terminalValue != VALUE_NONE; }
+    bool isTerminal() const { return terminalValue.load(std::memory_order_relaxed) != VALUE_NONE; }
 
     /// Update the average utility and the average draw rate from childrens.
     /// @param board The corresponding board of this node.
@@ -285,10 +299,17 @@ private:
     /// (from current side to move).
     float drawRate;
 
+    /// Write the terminal statistics (utility, draw rate, mean value stats
+    /// and bound) derived from the given terminal value. Does not touch the
+    /// visit count or terminalValue itself.
+    void writeTerminalStats(Value value);
+
     /// For terminal node, this stores the theoretical value (from current
     /// side to move), including the game ply to mate/mated. If this node is
-    /// not a terminal node, this value is VALUE_NONE.
-    Eval terminalValue;
+    /// not a terminal node, this value is VALUE_NONE. After the node has
+    /// been published, it transitions at most once from VALUE_NONE to a
+    /// terminal value (see tryMarkTerminal()).
+    std::atomic<Eval> terminalValue;
 };
 
 /// Estimated heap footprint in bytes of one node stored in the node table.

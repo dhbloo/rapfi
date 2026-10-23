@@ -21,7 +21,18 @@
 #include "../../eval/scoretables.h"
 #include "nodetable.h"
 
+#include <type_traits>
+
 namespace Search::MCTS {
+
+namespace {
+
+/// Raw storage type backing every EdgeArray allocation. The flexible-length
+/// edge array is allocated as an array of this type, so all deallocation
+/// paths must free it as an array of this same type.
+using EdgeArrayAlloc = std::aligned_storage_t<sizeof(EdgeArray), alignof(EdgeArray)>;
+
+}  // namespace
 
 Node::Node(HashKey hash, uint32_t age)
     : hash(hash)
@@ -33,20 +44,18 @@ Node::Node(HashKey hash, uint32_t age)
     , d(0.0f)
     , age(age)
     , bound()
+    , terminalValue(static_cast<Eval>(VALUE_NONE))
 {}
 
 Node::~Node()
 {
     EdgeArray *edgeArray = edges.exchange(nullptr, std::memory_order_relaxed);
     if (edgeArray)
-        delete edgeArray;
+        delete[] reinterpret_cast<EdgeArrayAlloc *>(edgeArray);
 }
 
-void Node::setTerminal(Value value)
+void Node::writeTerminalStats(Value value)
 {
-    assert(value != VALUE_NONE);
-    assert(-VALUE_INFINITE <= value && value <= VALUE_INFINITE);
-    terminalValue = value;
     if (value >= VALUE_MATE_IN_MAX_PLY) {
         utility  = 1.0;
         drawRate = 0.0f;
@@ -67,7 +76,40 @@ void Node::setTerminal(Value value)
     qSqr.store(utility * utility, std::memory_order_relaxed);
     d.store(drawRate, std::memory_order_relaxed);
     bound.store(ValueBound {value}, std::memory_order_relaxed);
+}
+
+void Node::setTerminal(Value value)
+{
+    assert(value != VALUE_NONE);
+    assert(-VALUE_INFINITE <= value && value <= VALUE_INFINITE);
+    // This publication path is reserved for the single evaluating thread:
+    // other threads discard their visits until the release store below.
+    assert(getVisits() == 0);
+    terminalValue.store(static_cast<Eval>(value), std::memory_order_relaxed);
+    writeTerminalStats(value);
     n.store(1, std::memory_order_release);
+}
+
+bool Node::tryMarkTerminal(Value value)
+{
+    assert(value != VALUE_NONE);
+    assert(-VALUE_INFINITE <= value && value <= VALUE_INFINITE);
+
+    // Invariant: after publication, terminalValue moves away from VALUE_NONE
+    // at most once in a node's lifetime. Claiming the transition with this
+    // CAS makes the winner the only writer of the terminal statistics, and
+    // the visit count is deliberately left untouched so visits accumulated
+    // by concurrent playouts are preserved (a reader may transiently observe
+    // a terminal node whose mean stats still hold the evaluated values; the
+    // parent's next updateStats() recomputes from the terminal stats).
+    Eval expected = static_cast<Eval>(VALUE_NONE);
+    if (!terminalValue.compare_exchange_strong(expected,
+                                               static_cast<Eval>(value),
+                                               std::memory_order_relaxed))
+        return false;
+
+    writeTerminalStats(value);
+    return true;
 }
 
 void Node::setNonTerminal(float utility, float drawRate)
@@ -75,9 +117,9 @@ void Node::setNonTerminal(float utility, float drawRate)
     assert(utility >= -1.0f && utility <= 1.0f);
     assert(drawRate >= 0.0f && drawRate <= 1.0f);
 
-    this->utility       = utility;
-    this->drawRate      = drawRate;
-    this->terminalValue = VALUE_NONE;
+    this->utility  = utility;
+    this->drawRate = drawRate;
+    terminalValue.store(static_cast<Eval>(VALUE_NONE), std::memory_order_relaxed);
 
     q.store(utility, std::memory_order_relaxed);
     qSqr.store(utility * utility, std::memory_order_relaxed);
@@ -103,9 +145,8 @@ bool Node::createEdges(MovePicker &movePicker, std::atomic<size_t> *allocCounter
     if (numEdges == 0)
         return true;
 
-    using AllocType      = std::aligned_storage_t<sizeof(EdgeArray), alignof(EdgeArray)>;
-    size_t     numAllocs = (sizeof(EdgeArray) + numEdges * sizeof(Edge)) / sizeof(AllocType);
-    EdgeArray *tempEdges = reinterpret_cast<EdgeArray *>(new AllocType[numAllocs]);
+    size_t     numAllocs = (sizeof(EdgeArray) + numEdges * sizeof(Edge)) / sizeof(EdgeArrayAlloc);
+    EdgeArray *tempEdges = reinterpret_cast<EdgeArray *>(new EdgeArrayAlloc[numAllocs]);
 
     // Copy the move and policy array to the allocated edge array
     tempEdges->numEdges = numEdges;
@@ -116,7 +157,7 @@ bool Node::createEdges(MovePicker &movePicker, std::atomic<size_t> *allocCounter
     bool       suc = edges.compare_exchange_strong(expected, tempEdges, std::memory_order_release);
     // If we are not the one that sets the edge array, then we need to delete the temp edge array
     if (!suc)
-        delete[] tempEdges;
+        delete[] reinterpret_cast<EdgeArrayAlloc *>(tempEdges);
     else if (allocCounter)
         allocCounter->fetch_add(edgeArrayFootprint(numEdges), std::memory_order_relaxed);
 
