@@ -99,11 +99,17 @@ OnnxDevice getDefaultDevice()
 }
 
 /// Arguments for creating a onnx model instance.
+/// Include the validated board size and rule in the registry cache key.
 struct OnnxModelArguments
 {
     OnnxDevice device;
+    int        boardSize;
+    Rule       rule;
 
-    bool operator==(const OnnxModelArguments &other) const { return device == other.device; }
+    bool operator==(const OnnxModelArguments &other) const
+    {
+        return device == other.device && boardSize == other.boardSize && rule == other.rule;
+    }
 };
 
 /// Wrapper interface for an onnx session instance.
@@ -494,6 +500,8 @@ OnnxEvaluator::OnnxEvaluator(int                   boardSize,
     args.device = parseDeviceString(device);
     if (args.device == DEFAULT_DEV)
         args.device = getDefaultDevice();
+    args.boardSize = boardSize;
+    args.rule      = rule;
 
     OnnxModelLoader loader {boardSize, rule, onnxModelPath};
     model =

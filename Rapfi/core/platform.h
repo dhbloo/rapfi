@@ -287,6 +287,13 @@ LargePagePtr<T> make_unique_large_page(Args &&...args)
     void *raw_memory = MemAlloc::alignedLargePageAlloc(sizeof(T));
     if (!raw_memory)
         throw std::bad_alloc {};  // never placement-new into a null pointer
-    T *obj = new (raw_memory) T(std::forward<Args>(args)...);
+    T *obj;
+    try {
+        obj = new (raw_memory) T(std::forward<Args>(args)...);
+    }
+    catch (...) {
+        MemAlloc::alignedLargePageFree(raw_memory);
+        throw;
+    }
     return LargePagePtr<T>(obj);
 }

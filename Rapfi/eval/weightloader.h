@@ -125,14 +125,21 @@ struct StandardHeaderLoader
         } headerData;
 
         is.read(reinterpret_cast<char *>(&headerData), sizeof(RawHeaderData));
-        if (headerData.magic != 0xacd8cc6a)
+        if (!is || headerData.magic != 0xacd8cc6a)
+            return nullptr;
+
+        // Bound allocations from a corrupt header before reading its description.
+        constexpr uint32_t MaxDescLen = 1048576;
+        if (headerData.desc_len > MaxDescLen)
             return nullptr;
 
         // Read or skip description text
         if (headerValidator) {
             std::string description;
-            description.resize(headerData.desc_len + 1);
+            description.resize(static_cast<size_t>(headerData.desc_len) + 1);
             is.read(description.data(), headerData.desc_len);
+            if (!is)
+                return nullptr;
             auto header = StandardHeader {headerData.arch_hash,
                                           parseRuleMask(headerData.rule_mask),
                                           parseBoardSizeMask(headerData.boardsize_mask),
@@ -142,6 +149,8 @@ struct StandardHeaderLoader
         }
         else {
             is.ignore(headerData.desc_len);
+            if (!is || is.gcount() != headerData.desc_len)
+                return nullptr;
         }
 
         return baseLoader.load(is, args);
@@ -260,24 +269,27 @@ WeightRegistry<WeightLoader>::loadWeightFromFile(
 {
     std::lock_guard<std::mutex> lock(poolMutex);
 
-    // Find weights in loaded weight weightPool
+    // Reuse a weight already loaded on the current NUMA node before making another copy.
+    for (auto &w : weightPool) {
+        if (w.filepath == filepath && w.loadArgs == loadArgs && w.numaNodeId == numaNodeId) {
+            w.refCount++;
+            return w.weight.get();
+        }
+    }
+
+    // Copy a remote weight using first-touch allocation on the current NUMA node.
     for (auto &w : weightPool) {
         if (w.filepath == filepath && w.loadArgs == loadArgs) {
-            if (w.numaNodeId != numaNodeId) {
-                // If weight is loaded on a different NUMA node, copy it to the current NUMA node
-                // We rely on the first-touch policy to allocate memory on the current NUMA node.
-                LargePagePtr<WeightType> copiedWeight {nullptr};
-                if constexpr (std::is_copy_constructible_v<WeightType>)
-                    copiedWeight = make_unique_large_page<WeightType>(*w.weight);
+            LargePagePtr<WeightType> copiedWeight {nullptr};
+            if constexpr (std::is_copy_constructible_v<WeightType>)
+                copiedWeight = make_unique_large_page<WeightType>(*w.weight);
 
-                // If the copy was successful, add it to the weight pool, and return the pointer.
-                // Otherwise if we fail to copy, we use the original weight without local NUMA copy.
-                if (copiedWeight) {
-                    auto copiedWeightPtr = copiedWeight.get();
-                    weightPool.push_back(
-                        {std::move(copiedWeight), 1, filepath, numaNodeId, std::move(loadArgs)});
-                    return copiedWeightPtr;
-                }
+            // Non-copyable weights are shared across NUMA nodes.
+            if (copiedWeight) {
+                auto copiedWeightPtr = copiedWeight.get();
+                weightPool.push_back(
+                    {std::move(copiedWeight), 1, filepath, numaNodeId, std::move(loadArgs)});
+                return copiedWeightPtr;
             }
 
             w.refCount++;
