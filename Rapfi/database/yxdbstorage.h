@@ -22,45 +22,50 @@
 
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <shared_mutex>
 
 namespace Database {
 
 /// CompactDBKey is a compact version of database key, which requires less memory
 /// by allocaing the minimal needed memory to store stone positions on the fly.
+/// The stone array is uniquely owned, so keys are move-only.
 struct CompactDBKey
 {
-    Rule      rule;
-    int8_t    boardWidth;
-    int8_t    boardHeight;
-    Color     sideToMove;
-    uint16_t  numBlackStones;
-    uint16_t  numWhiteStones;
-    StonePos *stones;
+    Rule     rule;
+    int8_t   boardWidth;
+    int8_t   boardHeight;
+    Color    sideToMove;
+    uint16_t numBlackStones;
+    uint16_t numWhiteStones;
+
+    std::unique_ptr<StonePos[]> stones;
 
     explicit CompactDBKey(const DBKey &key);
-    explicit CompactDBKey(Rule      rule,
-                          int       width,
-                          int       height,
-                          Color     sideToMove,
-                          uint16_t  numBlackStones,
-                          uint16_t  numWhiteStones,
-                          StonePos *stones)
+    explicit CompactDBKey(Rule                        rule,
+                          int                         width,
+                          int                         height,
+                          Color                       sideToMove,
+                          uint16_t                    numBlackStones,
+                          uint16_t                    numWhiteStones,
+                          std::unique_ptr<StonePos[]> stones)
         : rule(rule)
         , boardWidth(width)
         , boardHeight(height)
         , sideToMove(sideToMove)
         , numBlackStones(numBlackStones)
         , numWhiteStones(numWhiteStones)
-        , stones(stones)
+        , stones(std::move(stones))
     {}
-    ~CompactDBKey();
     explicit operator DBKey() const;
 
-    const StonePos *blackStonesBegin() const { return stones; }
-    const StonePos *blackStonesEnd() const { return stones + numBlackStones; }
-    const StonePos *whiteStonesBegin() const { return stones + numBlackStones; }
-    const StonePos *whiteStonesEnd() const { return stones + numBlackStones + numWhiteStones; }
+    const StonePos *blackStonesBegin() const { return stones.get(); }
+    const StonePos *blackStonesEnd() const { return stones.get() + numBlackStones; }
+    const StonePos *whiteStonesBegin() const { return stones.get() + numBlackStones; }
+    const StonePos *whiteStonesEnd() const
+    {
+        return stones.get() + numBlackStones + numWhiteStones;
+    }
 
     /// Equal comparator of two database key.
     friend bool operator==(const CompactDBKey &a, const CompactDBKey &b)

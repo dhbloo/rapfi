@@ -24,6 +24,7 @@
 #include "dbconfig.h"
 #include "dbtypes.h"
 
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -38,14 +39,9 @@ CompactDBKey::CompactDBKey(const DBKey &key)
     , sideToMove(key.sideToMove)
     , numBlackStones(key.numBlackStones)
     , numWhiteStones(key.numWhiteStones)
+    , stones(std::make_unique<StonePos[]>(key.numStones()))
 {
-    stones = new StonePos[numBlackStones + numWhiteStones];
-    std::copy(key.blackStonesBegin(), key.whiteStonesEnd(), stones);
-}
-
-CompactDBKey::~CompactDBKey()
-{
-    delete[] stones;
+    std::copy(key.blackStonesBegin(), key.whiteStonesEnd(), stones.get());
 }
 
 CompactDBKey::operator DBKey() const
@@ -57,7 +53,7 @@ CompactDBKey::operator DBKey() const
     key.sideToMove     = sideToMove;
     key.numBlackStones = numBlackStones;
     key.numWhiteStones = numWhiteStones;
-    std::copy(stones, stones + numBlackStones + numWhiteStones, key.stones);
+    std::copy(blackStonesBegin(), whiteStonesEnd(), key.stones);
     return key;
 }
 
@@ -283,13 +279,18 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                                                     + std::to_string(recordIdx));
         }
 
-        uint16_t numBlackStones = (numStones + 1) / 2;
-        uint16_t numWhiteStones = numStones / 2;
-        Color    sideToMove     = numBlackStones == numWhiteStones ? BLACK : WHITE;
+        // Slot counts of the two key sections in the file. A section may end with
+        // a pass slot when the side to move disagrees with stone parity (which is
+        // how the side to move is encoded), so slots are not necessarily stones.
+        uint16_t numBlackSlots = (numStones + 1) / 2;
+        uint16_t numWhiteSlots = numStones / 2;
+        Color    sideToMove    = numBlackSlots == numWhiteSlots ? BLACK : WHITE;
 
-        auto   stones   = std::make_unique<StonePos[]>(numStones);
-        size_t stoneIdx = 0;
-        for (uint16_t blackIdx = 0; blackIdx < numBlackStones; blackIdx++) {
+        auto     stones         = std::make_unique<StonePos[]>(numStones);
+        size_t   stoneIdx       = 0;
+        uint16_t numBlackStones = 0;
+        uint16_t numWhiteStones = 0;
+        for (uint16_t blackIdx = 0; blackIdx < numBlackSlots; blackIdx++) {
             int8_t x = byteBuffer[3 + blackIdx * 2];
             int8_t y = byteBuffer[4 + blackIdx * 2];
             if (x == -1 && y == -1)  // the last pass move
@@ -303,9 +304,10 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                                                     "with invalid black pos at index "
                                                         + std::to_string(recordIdx));
         }
-        for (uint16_t whiteIdx = 0; whiteIdx < numWhiteStones; whiteIdx++) {
-            int8_t x = byteBuffer[3 + (numBlackStones + whiteIdx) * 2];
-            int8_t y = byteBuffer[4 + (numBlackStones + whiteIdx) * 2];
+        numBlackStones = uint16_t(stoneIdx);
+        for (uint16_t whiteIdx = 0; whiteIdx < numWhiteSlots; whiteIdx++) {
+            int8_t x = byteBuffer[3 + (numBlackSlots + whiteIdx) * 2];
+            int8_t y = byteBuffer[4 + (numBlackSlots + whiteIdx) * 2];
             if (x == -1 && y == -1)  // the last pass move
                 break;
             else if (x >= 0 && y >= 0 && x < boardXLen && y < boardYLen)
@@ -316,6 +318,15 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                 throw DBStorageCorruptedRecordError(pathToConsoleString(filePath),
                                                     "with invalid white pos at index "
                                                         + std::to_string(recordIdx));
+        }
+        numWhiteStones = uint16_t(stoneIdx) - numBlackStones;
+
+        // The key must hold exactly the parsed stones: a pass slot kept in the
+        // counts or the array would never match a key constructed from a board.
+        if (stoneIdx < numStones) {
+            auto parsedStones = std::make_unique<StonePos[]>(stoneIdx);
+            std::copy(stones.get(), stones.get() + stoneIdx, parsedStones.get());
+            stones = std::move(parsedStones);
         }
 
         // Read record message
@@ -344,7 +355,7 @@ void YXDBStorage::load(std::istream &is, bool ignoreCorrupted)
                                   sideToMove,
                                   numBlackStones,
                                   numWhiteStones,
-                                  stones.release()),
+                                  std::move(stones)),
             std::forward_as_tuple(DBRecord {
                 numRecordBytes > 0 ? static_cast<DBLabel>(byteBuffer[0]) : DBLabel(0),
                 numRecordBytes > 2 ? DBValue(readInt16At(1)) : DBValue(0),
@@ -417,13 +428,20 @@ void YXDBStorage::save(std::ostream &os) noexcept
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
         }
         else {
-            const std::string &utf8Text       = record.text;
-            uint16_t           numRecordBytes = 5 + utf8Text.length();
+            const std::string &utf8Text = record.text;
+            // The record length header is 16-bit; write a truncated text rather
+            // than a wrapped length that misaligns every following record.
+            size_t textLength = utf8Text.length();
+            if (5 + textLength > UINT16_MAX) {
+                ERRORL("Database record text is too long, saving truncated text.");
+                textLength = UINT16_MAX - 5;
+            }
+            uint16_t numRecordBytes = uint16_t(5 + textLength);
             os.write(reinterpret_cast<char *>(&numRecordBytes), sizeof(numRecordBytes));
             os.write(reinterpret_cast<const char *>(&record.label), sizeof(DBLabel));
             os.write(reinterpret_cast<const char *>(&record.value), sizeof(DBValue));
             os.write(reinterpret_cast<const char *>(&record.depthbound), sizeof(DBDepthBound));
-            os.write(utf8Text.c_str(), utf8Text.length());
+            os.write(utf8Text.c_str(), textLength);
         }
     }
 }

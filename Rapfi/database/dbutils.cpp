@@ -168,13 +168,15 @@ size_t mergeDatabase(DBStorage &dbDst, DBStorage &dbSrc, OverwriteRule owRule)
     DBStorage::Cursor                       cursor;
     std::vector<std::pair<DBKey, DBRecord>> dbRecords;
 
-    size_t   writeCount = 0;
-    DBRecord oldRecord;
+    size_t writeCount = 0;
     do {
         dbRecords.clear();
         cursor = dbSrc.scan(cursor, BatchSize, dbRecords);
 
         for (auto &[dbKey, dbRecord] : dbRecords) {
+            // Scoped per key so a failed lookup merges against an empty record
+            // instead of the previous key's contents.
+            DBRecord oldRecord {};
             if (!dbDst.get(dbKey, oldRecord, RECORD_MASK_ALL)
                 || checkOverwrite(oldRecord,
                                   dbRecord,

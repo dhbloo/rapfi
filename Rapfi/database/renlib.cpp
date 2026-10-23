@@ -90,7 +90,8 @@ private:
     size_t  processNode(Board                                   &board,
                         Rule                                     rule,
                         const LibNode                           *node,
-                        std::function<Renlib::TraverseCallback> &callback);
+                        std::function<Renlib::TraverseCallback> &callback,
+                        int                                      depth);
 };
 
 // Renlib Tree Writing code following the same pattern as RenlibReader.
@@ -151,7 +152,7 @@ size_t RenlibReader::traverse(int                                     boardSize,
         auto board = std::make_unique<Board>(boardSize);
         board->newGame(rule);
 
-        nodeCount += processNode(*board, rule, &rootNode, callback);
+        nodeCount += processNode(*board, rule, &rootNode, callback, 0);
     }
     else
         throw std::runtime_error("no root node in lib");
@@ -219,6 +220,10 @@ RenlibReader::LibNode RenlibReader::readNode()
                 break;
         }
         node.comment = ss.str();
+        // Comments are stored with a leading 0x08 marker byte; it is part of
+        // the encoding, not of the comment itself.
+        if (!node.comment.empty() && node.comment.front() == '\b')
+            node.comment.erase(0, 1);
     }
 
     if (node.hasText()) {
@@ -243,8 +248,15 @@ RenlibReader::LibNode RenlibReader::readNode()
 size_t RenlibReader::processNode(Board                                   &board,
                                  Rule                                     rule,
                                  const LibNode                           *node,
-                                 std::function<Renlib::TraverseCallback> &callback)
+                                 std::function<Renlib::TraverseCallback> &callback,
+                                 int                                      depth)
 {
+    // A well-formed tree is bounded by the board capacity (stones plus passes);
+    // ignored branches add a little extra. Anything deeper is malformed input
+    // and must not be allowed to exhaust the native stack.
+    if (depth > 2 * board.cellCount() + 64)
+        throw std::runtime_error("lib tree too deep");
+
     size_t  nodeCount = 0;
     LibNode siblingNode;
 
@@ -282,10 +294,10 @@ size_t RenlibReader::processNode(Board                                   &board,
 
                 if (ignoreChildren) {
                     std::function<Renlib::TraverseCallback> emptyCallback;
-                    nodeCount += processNode(board, rule, &childNode, emptyCallback);
+                    nodeCount += processNode(board, rule, &childNode, emptyCallback, depth + 1);
                 }
                 else
-                    nodeCount += processNode(board, rule, &childNode, callback);
+                    nodeCount += processNode(board, rule, &childNode, callback, depth + 1);
             }
             else
                 throw std::runtime_error("no left child node in lib");

@@ -207,7 +207,7 @@ void DBRecord::copyBoardTextFrom(const DBRecord &rhs, bool overwrite)
     if (!hasBoardText()) {
         size_t boardTextSegmentSize = std::min(rhs.text.find('\b'), rhs.text.size());
         if (text.empty()) {
-            text = std::string_view {text.data(), boardTextSegmentSize};
+            text.assign(rhs.text, 0, boardTextSegmentSize);
         }
         else {
             text.insert(0, rhs.text, 0, boardTextSegmentSize);

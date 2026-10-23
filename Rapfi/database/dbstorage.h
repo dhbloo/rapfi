@@ -70,7 +70,8 @@ int databaseKeyCompare(const DBKey1 &lhs, const DBKey2 &rhs)
     int numBytesRhs = 2 * ((int)rhs.numBlackStones + (int)rhs.numWhiteStones);
     if (int diff = numBytesLhs - numBytesRhs; diff != 0)
         return diff;
-    if (int diff = std::memcmp(lhs.stones, rhs.stones, numBytesLhs); diff != 0)
+    if (int diff = std::memcmp(lhs.blackStonesBegin(), rhs.blackStonesBegin(), numBytesLhs);
+        diff != 0)
         return diff;
 
     return (int)lhs.sideToMove - (int)rhs.sideToMove;
