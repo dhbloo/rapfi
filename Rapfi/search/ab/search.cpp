@@ -595,8 +595,10 @@ void aspirationSearch(Rule rule, Board &board, SearchStack *ss, Value prevValue,
     int            failHighCnt = 0;
 
     // Reset aspiration window starting size if aspiration windows is enabled and
-    // we are not in balance move mode. (no aspiration window for balance move mode).
-    if (depth >= ASPIRATION_DEPTH && SearchCfg.aspirationWindow
+    // we are not in balance move mode (no aspiration window for balance move mode).
+    // A window needs a real previous value to center on: the first search of a PV
+    // line (e.g. a high startDepth) has none and must use the full window.
+    if (depth >= ASPIRATION_DEPTH && SearchCfg.aspirationWindow && prevValue != VALUE_NONE
         && !thisThread->options().balanceMode) {
         delta = nextAspirationWindowDelta(rule, prevValue);
         alpha = std::max(prevValue - delta, -VALUE_INFINITE);
@@ -861,10 +863,25 @@ void writeDatabaseRecord(Board              &board,
     Pos                         skipMove   = ss->skipMove;
 
     if (thisThread->dbClient && !dbParams.readonlyMode  // Never write in database readonly mode
-        && !options.balanceMode               // Never write when we are doing balanced search
-        && (!skipMove || ss->dbChildWritten)  // Never write when in singular extension
-        && ss->numNullMoves == 0              // Never write when in null move search
+        && !options.balanceMode   // Never write when we are doing balanced search
+        && ss->numNullMoves == 0  // Never write when in null move search
         && !(RootNode && (searchData->pvIdx || options.blockMoves.size()))) {
+        // A singular-exclusion search skips the (likely best) ttMove, so its
+        // bestValue and bound do not describe this position: a fail-low there
+        // must not become a determined WIN label. If children wrote records
+        // during it, keep the parent chain consistent with a null placeholder
+        // (never overwriting an existing record), but do not persist the
+        // exclusion result itself.
+        if (skipMove) {
+            if (ss->dbChildWritten && !db.hit) {
+                Database::DBRecord nullRecord {Database::LABEL_NULL, 0, 0};
+                thisThread->dbClient->save(board, Rule, nullRecord, dbParams.overwriteRule);
+                if (dbParams.mandatoryParentWrite)
+                    (ss - 1)->dbChildWritten = true;
+            }
+            return;
+        }
+
         bool exact  = PvNode && bound == BOUND_EXACT;
         bool isWin  = bestValue > VALUE_MATE_IN_MAX_PLY && (bound & BOUND_LOWER);
         bool isLoss = bestValue < VALUE_MATED_IN_MAX_PLY && (bound & BOUND_UPPER);
@@ -1251,8 +1268,12 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
     Pos     ttMove   = Pos::NONE;
     int     ttDepth  = 0;
     bool    ttHit    = TT.probe(posKey, ttValue, ttEval, ttIsPv, ttBound, ttMove, ttDepth, ss->ply);
+    // At the root, seed ttMove with the PV line currently being searched:
+    // earlier lines are excluded from this line's move loop, so rootMoves[0]
+    // would name a move that is guaranteed to be skipped in MultiPV mode.
     if (RootNode && searchData->completedDepth.load(std::memory_order_relaxed))
-        ttMove = thisThread->rootMoves[0].pv[options.balanceMode == SearchOptions::BALANCE_TWO];
+        ttMove = thisThread->rootMoves[searchData->pvIdx]
+                     .pv[options.balanceMode == SearchOptions::BALANCE_TWO];
     if (!skipMove)
         ss->ttPv = PvNode || ttHit && ttIsPv;
     (ss + 1)->ttPv = false;
@@ -1327,9 +1348,11 @@ Value search(Board &board, SearchStack *ss, Value alpha, Value beta, Depth depth
             if (std::abs(beta) < VALUE_MATE_IN_MAX_PLY)
                 return value;
             else {
-                // Do verification search at high depths, with null move pruning disabled
+                // Do verification search at high depths, with null move pruning disabled.
+                // An all-blocked sentinel from this same-frame call carries no real
+                // score and must not confirm the cutoff.
                 Value v = search<Rule, NonPV>(board, ss, beta - 1, beta, depth - r, false);
-                if (v >= beta)
+                if (v >= beta && v != -VALUE_BLOCKED)
                     return value;
             }
         }
@@ -1612,6 +1635,12 @@ moves_loop:
                                         cutNode);
             ss->skipMove = Pos::NONE;
 
+            // Every non-ttMove alternative was blocked by database records: the
+            // exclusion search produced no real score, so treat the ttMove as
+            // singular (nothing else is playable) rather than as a multi-cut.
+            if (value == -VALUE_BLOCKED)
+                value = singularBeta - 1;
+
             // Extend if only the ttMove fails high, while other moves fails low.
             if (value < singularBeta) {
                 // Extend two ply if current non-pv position is highly singular.
@@ -1882,6 +1911,15 @@ moves_loop:
     // Set singularRoot flag to true if we have only one singular move
     if (RootNode && nonMatedCount == 1 && (moveCount > 1 || thisThread->rootMoves.size() == 1))
         searchData->singularRoot = true;
+
+    // If moves were generated but none produced a value, every one of them
+    // was blocked by a database record: propagate the block to the parent
+    // instead of treating -VALUE_INFINITE as a searched score (which would
+    // poison the TT and could persist a fabricated loss record). The root
+    // has no caller that understands the block sentinel, so fall back to a
+    // draw score there.
+    if (moveCount && bestValue == -VALUE_INFINITE)
+        return RootNode ? getDrawValue(board, options, ss->ply) : -VALUE_BLOCKED;
 
     // Step 19. Check for mate
     // All legal moves have been searched and if there are no legal moves, it must be a mate

@@ -188,6 +188,12 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::MAIN
     Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
 
+    // A TT probe can decode Pos::PASS from an aliased empty entry. PASS does
+    // not address a board cell, so normalize it to NONE before any pattern
+    // lookup (isLegal alone would accept it as a passable move).
+    if (args.ttMove == Pos::PASS)
+        args.ttMove = Pos::NONE;
+
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;
         ttmValid = board.pattern4(args.ttMove, oppo) == A_FIVE;
@@ -234,6 +240,12 @@ MovePicker::MovePicker(Rule rule, const Board &board, ExtraArgs<MovePicker::QVCF
 {
     Color self = board.sideToMove(), oppo = ~self;
     bool  ttmValid;
+
+    // A TT probe can decode Pos::PASS from an aliased empty entry. PASS does
+    // not address a board cell, so normalize it to NONE before any pattern
+    // lookup (isLegal alone would accept it as a passable move).
+    if (args.ttMove == Pos::PASS)
+        args.ttMove = Pos::NONE;
 
     if (board.p4Count(oppo, A_FIVE)) {
         stage    = DEFENDFIVE_TT;

@@ -109,8 +109,10 @@ void HistoryTracker::updateBestmoveStats(Depth depth, Pos bestMove, Value bestVa
 
 void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, Value beta)
 {
-    // Validate ttMove first
-    if (!board.isLegal(ttMove))
+    // Validate ttMove first. A TT probe can decode Pos::PASS from an aliased
+    // empty entry; isLegal accepts PASS as passable, but it addresses no
+    // board cell and has no history slot.
+    if (ttMove == Pos::PASS || !board.isLegal(ttMove))
         return;
 
     Color    self = board.sideToMove(), oppo = ~self;

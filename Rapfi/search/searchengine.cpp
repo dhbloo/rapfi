@@ -397,10 +397,12 @@ bool SearchEngine::tryTrivialBestmove(SearchThread &main)
 
         return true;  // abnormal case: GUI might have a bug
     }
-    // If we are winning, return directly
-    else if (main.board->p4Count(main.board->sideToMove(), A_FIVE)) {
-        assert(main.board->pattern4(main.rootMoves[0].pv[0], main.board->sideToMove())
-               == A_FIVE);
+    // If we are winning, return directly. The winning square can be absent
+    // from the root move list (e.g. filtered by blockMoves), in which case
+    // rootMoves[0] is an arbitrary candidate and the normal search must run.
+    else if (main.board->p4Count(main.board->sideToMove(), A_FIVE)
+             && main.board->pattern4(main.rootMoves[0].pv[0], main.board->sideToMove())
+                    == A_FIVE) {
         main.rootMoves[0].value = mate_in(1);
         ctx.bestMove            = main.rootMoves[0].pv[0];
 

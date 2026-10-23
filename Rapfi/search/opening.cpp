@@ -273,13 +273,29 @@ void filterSymmetryMoves(const Board &board, std::vector<Pos> &moveList)
         }
     }
 
-    // Remove all redundant symmetry moves (which is not root in ds)
+    // Keep one member per symmetry class: the class root when it is in the
+    // move list, otherwise the first listed member. The disjoint set spans
+    // all empty cells, so the root may be absent from an already-filtered
+    // list (e.g. block moves), which must not erase the whole orbit.
+    std::unordered_map<size_t, Pos> classKeeper;
+    for (Pos move : moveList) {
+        auto it = posToIndexMap.find(move);
+        if (it == posToIndexMap.end())
+            continue;
+
+        size_t root = ds.find(it->second);
+        if (it->second == root)
+            classKeeper[root] = move;
+        else
+            classKeeper.try_emplace(root, move);
+    }
+
     auto pred = [&](Pos move) -> bool {
-        if (posToIndexMap.find(move) == posToIndexMap.end())
+        auto it = posToIndexMap.find(move);
+        if (it == posToIndexMap.end())
             return true;
 
-        size_t idx = posToIndexMap[move];
-        return ds.find(idx) != idx;
+        return classKeeper[ds.find(it->second)] != move;
     };
     moveList.erase(std::remove_if(moveList.begin(), moveList.end(), pred), moveList.end());
 }
