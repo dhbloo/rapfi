@@ -142,8 +142,18 @@ bool allowInternalConfig = true;
 
 bool loadConfig()
 {
+    // An empty config path (e.g. a bare RELOADCONFIG) means "no external
+    // config": appending it to the binary directory would name the directory
+    // itself, which exists but cannot be opened as a file, blocking the
+    // internal-config fallback below.
+    if (configPath.empty())
+        resolvedConfigPath.clear();
     // Absolute path will be used directly
-    if (configPath.is_absolute()) {
+    else if (configPath.is_absolute()) {
+        if (!std::filesystem::exists(configPath)) {
+            ERRORL("Config file does not exist: " << pathToConsoleString(configPath));
+            return false;
+        }
         resolvedConfigPath = configPath;
     }
     // Try resolve relative path from the current working directory
@@ -161,6 +171,10 @@ bool loadConfig()
     // Try to load from the resolved config path.
     if (!resolvedConfigPath.empty()) {
         std::ifstream configFile(resolvedConfigPath);
+        if (!configFile.is_open()) {
+            ERRORL("Unable to open config file: " << pathToConsoleString(resolvedConfigPath));
+            return false;
+        }
         MESSAGEL("Load config from " << pathToConsoleString(resolvedConfigPath));
         success = Config::loadConfig(configFile);
     }

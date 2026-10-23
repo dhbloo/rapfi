@@ -152,12 +152,18 @@ void readValueModel(const cpptoml::table &t, SetterType setter);
 /// evaluator maker install. A load that fails in any way leaves the previous
 /// configuration and engine state fully intact. The one exception is the
 /// classical model surface written by readModel (EVALS / P4SCORES /
-/// ScalingFactor, and binary_file via loadModelFromFile): those tables are
-/// still written in place during parse.
+/// ScalingFactor and related tables): those values are still written in place
+/// during parse. Binary model loads publish only after the whole file validates;
+/// an inline TOML model can still leave partial changes on a parse failure.
 /// @param configStream A input stream that contains a config file.
 /// @return Returns true if loading succeeded, otherwise returns false.
 bool Config::loadConfig(std::istream &configStream)
 {
+    if (!configStream || configStream.peek() == std::istream::traits_type::eof()) {
+        ERRORL("Failed to load config: config stream is unreadable or empty");
+        return false;
+    }
+
     // Callers signal stopThinking() but do not wait, so quiesce the search
     // threads before touching any state they read: the classical model tables
     // are written in place during parse, and the commit publishes the config
@@ -224,18 +230,20 @@ void Config::readRequirement(const cpptoml::table &t)
 {
     auto [major, minor, revision] = getVersionNumbers();
     uint64_t rapVer = ((uint64_t)major << 32) | ((uint64_t)minor << 16) | (uint64_t)revision;
+    auto composeVersion = [](const std::vector<int64_t> &ver, const char *key) {
+        if (ver.size() != 3)
+            throw std::runtime_error(std::string("illegal ") + key);
+        for (int64_t component : ver)
+            if (component < 0 || component > 0xFFFF)
+                throw std::runtime_error(std::string("illegal ") + key);
+        return ((uint64_t)ver[0] << 32) | ((uint64_t)ver[1] << 16) | (uint64_t)ver[2];
+    };
     if (auto minVer = t.get_array_of<int64_t>("min_version")) {
-        if (minVer->size() != 3)
-            throw std::runtime_error("illegal min_version");
-        uint64_t cfgVer = ((*minVer)[0] << 32) | ((*minVer)[1] << 16) | (*minVer)[2];
-        if (cfgVer > rapVer)
+        if (composeVersion(*minVer, "min_version") > rapVer)
             throw std::runtime_error("config requires newer version of rapfi");
     }
     if (auto maxVer = t.get_array_of<int64_t>("max_version")) {
-        if (maxVer->size() != 3)
-            throw std::runtime_error("illegal max_version");
-        uint64_t cfgVer = ((*maxVer)[0] << 32) | ((*maxVer)[1] << 16) | (*maxVer)[2];
-        if (cfgVer < rapVer)
+        if (composeVersion(*maxVer, "max_version") < rapVer)
             throw std::runtime_error("config requires older version of rapfi");
     }
 }
@@ -316,7 +324,15 @@ void Config::readGeneral(const cpptoml::table &t, PendingConfig &pending)
 
     // Read memory reserved for each rule
     if (auto table = t.get_array("memory_reserved_mb")) {
-        if (auto array = table->get_array_of<int64_t>()) {
+        auto array = table->get_array_of<int64_t>();
+        if (!array)
+            MESSAGEL("Warning: memory_reserved_mb array must hold only integers, ignored.");
+        else if (array->empty())
+            throw std::runtime_error("memory_reserved_mb array must not be empty");
+        else {
+            for (int64_t reservedMB : *array)
+                if (reservedMB < 0)
+                    throw std::runtime_error("memory_reserved_mb must not be negative");
             for (int i = 0; i < RULE_NB; i++)
                 cfg.memoryReservedMB[i] = array->at(std::min<size_t>(i, array->size() - 1));
         }

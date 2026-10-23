@@ -108,6 +108,32 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         }
     }
+#else
+    // Command modules are compiled out, but --config and --force-utf8 must still take
+    // effect in the static Gomocup/WASM builds; any other argument selects a mode this
+    // build does not contain, so fail loudly instead of silently entering the protocol
+    // loop with a default config.
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc) {
+            Command::configPath          = argv[++i];
+            Command::allowInternalConfig = false;
+        }
+        else if (arg.rfind("--config=", 0) == 0) {
+            Command::configPath          = arg.substr(9);
+            Command::allowInternalConfig = false;
+        }
+        else if (arg == "--force-utf8") {
+    #ifdef _WIN32
+            SetConsoleCP(CP_UTF8);
+            SetConsoleOutputCP(CP_UTF8);
+    #endif
+        }
+        else {
+            ERRORL("unsupported argument in this build: " << arg);
+            return EXIT_FAILURE;
+        }
+    }
 #endif
 
     if (!Command::loadConfig()) {
